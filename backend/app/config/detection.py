@@ -1,0 +1,6 @@
+"""检测配置模块（Day 8+ 使用，当前为占位）"""
+
+# 检测模型默认配置
+DEFAULT_CONF_THRESHOLD = 0.25
+DEFAULT_IOU_THRESHOLD = 0.45
+DEFAULT_IMAGE_SIZE = 640
