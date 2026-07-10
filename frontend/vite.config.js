@@ -33,6 +33,41 @@ export default defineConfig({
     },
   },
 
+  build: {
+    rolldownOptions: {
+      onLog(level, log, defaultHandler) {
+        if (
+          log.code === 'INVALID_ANNOTATION' &&
+          typeof log.loc?.file === 'string' &&
+          log.loc.file.includes('@vueuse/core')
+        ) {
+          return
+        }
+
+        defaultHandler(level, log)
+      },
+      output: {
+        codeSplitting: {
+          maxSize: 450000,
+          groups: [
+            {
+              name: 'vendor-vue',
+              test: /[\\/]node_modules[\\/](vue|vue-router|pinia)[\\/]/,
+            },
+            {
+              name: 'vendor-element',
+              test: /[\\/]node_modules[\\/](element-plus|@element-plus|@vueuse)[\\/]/,
+            },
+            {
+              name: 'vendor-utils',
+              test: /[\\/]node_modules[\\/](axios|markdown-it)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
+
   test: {
     environment: 'happy-dom',
     setupFiles: ['./tests/setup.js'],
