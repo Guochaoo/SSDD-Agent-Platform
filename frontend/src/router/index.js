@@ -78,11 +78,11 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   // 设置页面标题
   document.title = to.meta.title
-    ? `${to.meta.title} - RSOD Agent Platform`
-    : 'RSOD Agent Platform'
+    ? `${to.meta.title} - G19 Agent Platform`
+    : 'G19 Agent Platform'
 
   // 检查是否需要认证
-  const token = localStorage.getItem('rsod_token')
+  const token = localStorage.getItem('g19_token')
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false)
 
   if (requiresAuth && !token) {

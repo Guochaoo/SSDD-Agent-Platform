@@ -3,15 +3,15 @@
  * 用于 Day 11 智能体对话的流式渲染
  *
  * 使用方式：
- *   const stop = streamChat(
- *     '/api/chat/stream',
- *     { message: '你好' },
- *     {
- *       onMessage: (chunk) => { content += chunk },
- *       onDone: () => { console.log('完成') },
- *       onError: (err) => { console.error(err) },
- *     }
- *   )
+ *  const stop = streamChat(
+ *    '/api/chat/stream',
+ *    { message: '你好' },
+ *    {
+ *      onMessage: (chunk) => { content += chunk },
+ *      onDone: () => { console.log('完成') },
+ *      onError: (err) => { console.error(err) },
+ *    }
+ *  )
  */
 
 /**
@@ -29,7 +29,7 @@ export function streamChat(url, body, callbacks) {
   const { onMessage, onDone, onError } = callbacks
 
   // 从 localStorage 获取 Token
-  const token = localStorage.getItem('rsod_token')
+  const token = localStorage.getItem('g19_token')
 
   // 使用 fetch + ReadableStream 实现 SSE
   const controller = new AbortController()

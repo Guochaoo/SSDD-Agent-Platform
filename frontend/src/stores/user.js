@@ -5,8 +5,8 @@
 import { defineStore } from 'pinia'
 import { loginApi, getUserInfoApi } from '@/api/auth'
 
-const TOKEN_KEY = 'rsod_token'
-const USER_KEY = 'rsod_user'
+const TOKEN_KEY = 'g19_token'
+const USER_KEY = 'g19_user'
 
 export const useUserStore = defineStore('user', {
   state: () => ({

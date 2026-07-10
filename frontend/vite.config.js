@@ -1,18 +1,19 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   plugins: [vue()],
 
-  // ── 路径别名 ─────────────────────────────────────
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
     },
   },
 
-  // ── CSS 预处理器配置 ──────────────────────────────
   css: {
     preprocessorOptions: {
       scss: {
@@ -21,17 +22,24 @@ export default defineConfig({
     },
   },
 
-  // ── 开发服务器配置 ────────────────────────────────
   server: {
     port: 5173,
-    open: true, // 启动时自动打开浏览器
-
-    // API 代理：将 /api 开头的请求转发到后端
+    open: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+    },
+  },
+
+  test: {
+    environment: 'happy-dom',
+    setupFiles: ['./tests/setup.js'],
+    include: ['tests/**/*.{test,spec}.{js,ts}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
     },
   },
 })
