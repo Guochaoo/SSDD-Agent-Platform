@@ -86,6 +86,17 @@ class ChangePassword(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
 
 
+class PasswordResetRequest(BaseModel):
+    """忘记密码：申请重置令牌"""
+    email: str = Field(..., description="注册邮箱")
+
+
+class PasswordResetConfirm(BaseModel):
+    """忘记密码：使用令牌设置新密码"""
+    token: str = Field(..., description="重置令牌明文")
+    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+
+
 # --- 角色权限 ---
 
 class RoleResponse(BaseModel):
@@ -407,7 +418,55 @@ class OperationLogResponse(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════
-# 六、通用模型
+# 六、RAG 知识库
+# ══════════════════════════════════════════════════════════════
+
+class KnowledgeDocumentCreate(BaseModel):
+    """创建知识文档（原文件已上传至 MinIO 之后调用）"""
+    title: str = Field(..., description="文档标题")
+    filename: str = Field(..., description="原始文件名")
+    file_url: str = Field(..., description="MinIO 原文件 URL")
+    file_type: Optional[str] = Field(None, description="pdf/docx/txt/md")
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    """知识文档响应"""
+    id: int
+    user_id: Optional[int] = None
+    title: str
+    filename: str
+    file_url: str
+    file_type: Optional[str] = None
+    status: str
+    chunk_count: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class KnowledgeChunkResponse(BaseModel):
+    """知识分块响应（不含 embedding 向量本身，体积大且前端用不上）"""
+    id: int
+    document_id: int
+    chunk_index: int
+    content: str
+    token_count: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """RAG 相似度检索请求"""
+    query: str = Field(..., min_length=1, description="检索问题原文，后端负责转 embedding")
+    top_k: int = Field(default=5, ge=1, le=20, description="返回最相似的分块数量")
+    document_id: Optional[int] = Field(None, description="限定在某一篇文档内检索")
+
+
+# ══════════════════════════════════════════════════════════════
+# 七、通用模型
 # ══════════════════════════════════════════════════════════════
 
 class ApiResponse(BaseModel):

@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import settings
 from app.api.auth import router as auth_router
+from app.api.history import router as history_router
+from app.api.scenes import router as scenes_router
+from app.api.training import router as training_router
 
 
 def init_minio():
@@ -50,6 +53,9 @@ app.add_middleware(
 
 # ── 注册路由 ─────────────────────────────────────────
 app.include_router(auth_router)
+app.include_router(history_router)
+app.include_router(scenes_router)
+app.include_router(training_router)
 
 
 @app.get("/")

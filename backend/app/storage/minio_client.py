@@ -85,3 +85,23 @@ class MinIOClient:
             bucket_name=self.bucket_name,
             object_name=object_name,
         )
+
+    def delete_by_url(self, url: str | None):
+        """
+        按已保存的（预签名）URL 删除文件，删除类服务里统一调这个方法即可。
+        从 URL 中解析出 bucket 之后的 object_name 部分，解析失败或 url 为空时静默跳过，
+        不让文件清理失败阻断上层的数据库删除事务。
+        """
+        if not url:
+            return
+        try:
+            from urllib.parse import urlparse
+            path = urlparse(url).path.lstrip("/")
+            # path 形如 "{bucket_name}/{object_name...}"
+            object_name = path.split("/", 1)[1] if "/" in path else None
+            if object_name:
+                self.delete_file(object_name)
+        except S3Error as e:
+            print(f"[warn] MinIO 删除失败 url={url}: {e}")
+        except Exception as e:
+            print(f"[warn] 无法从 URL 解析 object_name url={url}: {e}")
