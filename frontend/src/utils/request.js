@@ -8,11 +8,12 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import router from '@/router'
+import { reportError } from '@/utils/errorReporter'
 
 // ── 创建 Axios 实例 ──────────────────────────────────
 const request = axios.create({
-  baseURL: '/api',          // 配合 Vite proxy，实际请求转发到后端
-  timeout: 30000,           // 请求超时 30 秒
+  baseURL: '/api',    // 配合 Vite proxy，实际请求转发到后端
+  timeout: 30000,     // 请求超时 30 秒
   headers: {
     'Content-Type': 'application/json',
   },
@@ -41,6 +42,12 @@ request.interceptors.response.use(
   },
   (error) => {
     const { response } = error
+    reportError(error, {
+      type: 'api_error',
+      method: error.config?.method,
+      url: error.config?.url,
+      status: response?.status,
+    })
 
     if (response) {
       switch (response.status) {
