@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'g19_error_logs'
+const STORAGE_KEY = 'ssdd_error_logs'
 const MAX_LOGS = 50
 
 function normalizeError(error, extra = {}) {

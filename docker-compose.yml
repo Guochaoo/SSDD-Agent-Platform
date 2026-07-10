@@ -1,10 +1,10 @@
 services:
   postgres:
     image: pgvector/pgvector:pg15
-    container_name: G19-postgres
+    container_name: ssdd-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: G19_agent
+      POSTGRES_DB: ssdd_agent
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
     ports:
@@ -12,14 +12,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d G19_agent"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d ssdd_agent"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: G19-redis
+    container_name: ssdd-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -33,7 +33,7 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: G19-minio
+    container_name: ssdd-minio
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -52,7 +52,7 @@ services:
 
   ollama:
     image: ollama/ollama:latest
-    container_name: G19-ollama
+    container_name: ssdd-ollama
     restart: unless-stopped
     profiles:
       - optional
@@ -63,7 +63,7 @@ services:
 
 networks:
   default:
-    name: G19-network
+    name: ssdd-network
 
 volumes:
   postgres_data:

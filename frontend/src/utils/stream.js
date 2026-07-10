@@ -1,37 +1,37 @@
 /**
- * SSE (Server-Sent Events) 流式处理工具
- * 用于 Day 11 智能体对话的流式渲染
+ * SSE (Server-Sent Events) 娴佸紡澶勭悊宸ュ叿
+ * 鐢ㄤ簬 Day 11 鏅鸿兘浣撳璇濈殑娴佸紡娓叉煋
  *
- * 使用方式：
+ * 浣跨敤鏂瑰紡锛?
  *  const stop = streamChat(
  *    '/api/chat/stream',
- *    { message: '你好' },
+ *    { message: '浣犲ソ' },
  *    {
  *      onMessage: (chunk) => { content += chunk },
- *      onDone: () => { console.log('完成') },
+ *      onDone: () => { console.log('瀹屾垚') },
  *      onError: (err) => { console.error(err) },
  *    }
  *  )
  */
 
 /**
- * 发起 SSE 流式请求
+ * 鍙戣捣 SSE 娴佸紡璇锋眰
  *
- * @param {string} url - 请求地址（相对路径，会经过 Vite proxy）
- * @param {Object} body - 请求体
- * @param {Object} callbacks - 回调函数
- * @param {Function} callbacks.onMessage - 收到消息片段时的回调
- * @param {Function} callbacks.onDone - 流结束时的回调
- * @param {Function} callbacks.onError - 错误时的回调
- * @returns {Function} stop - 调用此函数可中断连接
+ * @param {string} url - 璇锋眰鍦板潃锛堢浉瀵硅矾寰勶紝浼氱粡杩?Vite proxy锛?
+ * @param {Object} body - 璇锋眰浣?
+ * @param {Object} callbacks - 鍥炶皟鍑芥暟
+ * @param {Function} callbacks.onMessage - 鏀跺埌娑堟伅鐗囨鏃剁殑鍥炶皟
+ * @param {Function} callbacks.onDone - 娴佺粨鏉熸椂鐨勫洖璋?
+ * @param {Function} callbacks.onError - 閿欒鏃剁殑鍥炶皟
+ * @returns {Function} stop - 璋冪敤姝ゅ嚱鏁板彲涓柇杩炴帴
  */
 export function streamChat(url, body, callbacks) {
   const { onMessage, onDone, onError } = callbacks
 
-  // 从 localStorage 获取 Token
-  const token = localStorage.getItem('g19_token')
+  // 浠?localStorage 鑾峰彇 Token
+  const token = localStorage.getItem('ssdd_token')
 
-  // 使用 fetch + ReadableStream 实现 SSE
+  // 浣跨敤 fetch + ReadableStream 瀹炵幇 SSE
   const controller = new AbortController()
 
   fetch(url, {
@@ -58,13 +58,13 @@ export function streamChat(url, body, callbacks) {
           break
         }
 
-        // 解析 SSE 数据
+        // 瑙ｆ瀽 SSE 鏁版嵁
         const text = decoder.decode(value, { stream: true })
         const lines = text.split('\n')
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const data = line.slice(6) // 去掉 "data: " 前缀
+            const data = line.slice(6) // 鍘绘帀 "data: " 鍓嶇紑
 
             if (data === '[DONE]') {
               onDone?.()
@@ -75,7 +75,7 @@ export function streamChat(url, body, callbacks) {
               const parsed = JSON.parse(data)
               onMessage?.(parsed)
             } catch {
-              // 非 JSON 数据，直接作为文本片段
+              // 闈?JSON 鏁版嵁锛岀洿鎺ヤ綔涓烘枃鏈墖娈?
               onMessage?.(data)
             }
           }
@@ -88,6 +88,6 @@ export function streamChat(url, body, callbacks) {
       }
     })
 
-  // 返回中断函数
+  // 杩斿洖涓柇鍑芥暟
   return () => controller.abort()
 }
