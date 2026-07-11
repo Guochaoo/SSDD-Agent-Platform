@@ -197,17 +197,17 @@ class DatasetSplitter:
     ) -> str:
         """
         自动生成 data.yaml 配置文件
-    
+
         Args:
             output_dir: 数据集根目录
             class_names: 类别名称列表（英文，按 class_id 顺序）
             class_names_cn: 类别中文名称列表（可选，用于前端显示）
-    
+
         Returns:
             生成的 data.yaml 文件路径
         """
         import yaml
-    
+
         data_config = {
             "path": f"./{os.path.basename(output_dir)}",
             "train": "images/train",
@@ -216,10 +216,10 @@ class DatasetSplitter:
             "nc": len(class_names),
             "names": {i: name for i, name in enumerate(class_names)},
         }
-    
+
         if class_names_cn:
             data_config["names_cn"] = {i: name for i, name in enumerate(class_names_cn)}
-    
+
         yaml_path = Path(output_dir) / "data.yaml"
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.dump(
@@ -229,6 +229,6 @@ class DatasetSplitter:
                 allow_unicode=True,
                 sort_keys=False,
             )
-    
+
         logger.info("data.yaml 已生成：%s", yaml_path)
         return str(yaml_path)

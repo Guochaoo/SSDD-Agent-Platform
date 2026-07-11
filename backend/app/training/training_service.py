@@ -191,7 +191,7 @@ class TrainingService:
             # 临时修改 data.yaml 的 path 为绝对路径（训练后恢复）
             with open(data_yaml, "r", encoding="utf-8") as f:
                 original_content = f.read()
-            
+
             modified_content = original_content.replace(
                 "path: .",
                 f"path: {data_yaml_dir}"

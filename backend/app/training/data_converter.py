@@ -207,27 +207,27 @@ class DataConverter:
     ) -> dict:
         """
         COCO JSON 格式 → YOLO TXT 格式
-    
+
         转换逻辑：
           1. 读取整个 COCO JSON 文件
           2. 构建 category_id → class_id 映射
           3. 按 image_id 分组所有标注
           4. 遍历每张图像，将 COCO bbox 转换为 YOLO 归一化坐标
           5. 每张图像输出一个 .txt 文件
-    
+
         Args:
             json_file: COCO 标注 JSON 文件路径
             output_dir: YOLO TXT 输出目录
             class_mapping: 可选的类别重映射
                           如果为 None，则按 categories 中的顺序自动编号（从 0 开始）
                           如果提供，格式为 {category_name: class_id}
-    
+
         Returns:
             转换统计信息字典
         """
         os.makedirs(output_dir, exist_ok=True)
         stats = {"total": 0, "converted": 0, "skipped": 0, "errors": []}
-    
+
         # 读取 COCO JSON
         try:
             with open(json_file, "r", encoding="utf-8") as f:
@@ -236,7 +236,7 @@ class DataConverter:
             logger.error("COCO JSON 读取失败 %s: %s", json_file, str(e))
             stats["errors"].append(str(e))
             return stats
-    
+
         # 构建类别映射
         if class_mapping is None:
             # 自动按 categories 顺序编号（从 0 开始）
@@ -256,7 +256,7 @@ class DataConverter:
                     category_mapping[cat_name_to_id[cat_name]] = class_id
                 else:
                     logger.warning("COCO categories 中未找到类别 '%s'", cat_name)
-    
+
         # 按 image_id 分组标注
         image_annotations = {}
         for ann in coco_data.get("annotations", []):
@@ -264,63 +264,63 @@ class DataConverter:
             if img_id not in image_annotations:
                 image_annotations[img_id] = []
             image_annotations[img_id].append(ann)
-    
+
         # 遍历每张图像
         images = coco_data.get("images", [])
         stats["total"] = len(images)
         logger.info("COCO 转换开始：%d 张图像 → %s", len(images), output_dir)
-    
+
         for img_info in images:
             img_id = img_info["id"]
             img_width = img_info["width"]
             img_height = img_info["height"]
             file_name = img_info["file_name"]
-    
+
             if img_width <= 0 or img_height <= 0:
                 logger.warning("图像 %s 尺寸无效，跳过", file_name)
                 stats["skipped"] += 1
                 continue
-    
+
             yolo_lines = []
             for ann in image_annotations.get(img_id, []):
                 # 检查类别是否在映射中
                 cat_id = ann["category_id"]
                 if cat_id not in category_mapping:
                     continue
-    
+
                 class_id = category_mapping[cat_id]
-    
+
                 # COCO bbox: [x_min, y_min, width, height]（像素坐标）
                 x_min, y_min, bbox_w, bbox_h = ann["bbox"]
-    
+
                 # 过滤无效框
                 if bbox_w <= 0 or bbox_h <= 0:
                     continue
-    
+
                 # 边界值裁剪
                 x_min = max(0, min(x_min, img_width))
                 y_min = max(0, min(y_min, img_height))
                 bbox_w = min(bbox_w, img_width - x_min)
                 bbox_h = min(bbox_h, img_height - y_min)
-    
+
                 # COCO [x_min, y_min, w, h] → YOLO [x_center, y_center, w, h]
                 x_center = (x_min + bbox_w / 2.0) / img_width
                 y_center = (y_min + bbox_h / 2.0) / img_height
                 width = bbox_w / img_width
                 height = bbox_h / img_height
-    
+
                 yolo_lines.append(
                     f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}"
                 )
-    
+
             # 保存 YOLO 标注文件
             img_stem = Path(file_name).stem
             txt_file = Path(output_dir) / f"{img_stem}.txt"
             with open(txt_file, "w", encoding="utf-8") as f:
                 f.write("\n".join(yolo_lines))
-    
+
             stats["converted"] += 1
-    
+
         logger.info(
             "COCO 转换完成：总计 %d, 成功 %d, 跳过 %d",
             stats["total"],
@@ -333,53 +333,53 @@ class DataConverter:
     def labelme_to_yolo(json_dir: str, output_dir: str, class_mapping: dict) -> dict:
       """
       LabelMe JSON 格式 → YOLO TXT 格式
-    
+
       转换逻辑：
         1. 遍历 json_dir 下所有 .json 文件
         2. 解析每个 JSON 获取图像尺寸和标注形状
         3. 只处理 shape_type 为 "rectangle" 的标注
         4. 从 points 中提取边界框，转换为 YOLO 归一化坐标
-    
+
       Args:
           json_dir: LabelMe JSON 文件目录
           output_dir: YOLO TXT 输出目录
           class_mapping: 类别映射 {类别名: 类别ID}
-    
+
       Returns:
           转换统计信息字典
       """
       os.makedirs(output_dir, exist_ok=True)
       stats = {"total": 0, "converted": 0, "skipped": 0, "errors": []}
-    
+
       json_files = list(Path(json_dir).glob("*.json"))
       if not json_files:
           logger.warning("LabelMe 转换：目录 %s 下未找到 .json 文件", json_dir)
           return stats
-    
+
       logger.info(
           "LabelMe 转换开始：%d 个 JSON 文件 → %s", len(json_files), output_dir
       )
-    
+
       for json_file in json_files:
           stats["total"] += 1
           try:
               with open(json_file, "r", encoding="utf-8") as f:
                   labelme_data = json.load(f)
-    
+
               img_width = labelme_data.get("imageWidth", 0)
               img_height = labelme_data.get("imageHeight", 0)
-    
+
               if img_width <= 0 or img_height <= 0:
                   logger.warning("JSON %s 图像尺寸无效，跳过", json_file.name)
                   stats["skipped"] += 1
                   continue
-    
+
               yolo_lines = []
               for shape in labelme_data.get("shapes", []):
                   # 只处理矩形标注
                   if shape.get("shape_type") != "rectangle":
                       continue
-    
+
                   class_name = shape.get("label", "").strip()
                   if class_name not in class_mapping:
                       logger.warning(
@@ -388,13 +388,13 @@ class DataConverter:
                           class_name,
                       )
                       continue
-    
+
                   class_id = class_mapping[class_name]
                   points = shape.get("points", [])
-    
+
                   if len(points) < 2:
                       continue
-    
+
                   # 从 points 中提取最小和最大坐标
                   # 处理两种情况：
                   # 1. 只有 2 个点（左上角和右下角）
@@ -405,35 +405,35 @@ class DataConverter:
                   ymin = min(all_y)
                   xmax = max(all_x)
                   ymax = max(all_y)
-    
+
                   # 边界值裁剪
                   xmin = max(0, min(xmin, img_width))
                   ymin = max(0, min(ymin, img_height))
                   xmax = max(0, min(xmax, img_width))
                   ymax = max(0, min(ymax, img_height))
-    
+
                   # 过滤无效框
                   if xmax <= xmin or ymax <= ymin:
                       continue
-    
+
                   # 像素坐标 → YOLO 归一化坐标
                   x_center = (xmin + xmax) / 2.0 / img_width
                   y_center = (ymin + ymax) / 2.0 / img_height
                   width = (xmax - xmin) / img_width
                   height = (ymax - ymin) / img_height
-    
+
                   yolo_lines.append(
                       f"{class_id} {x_center:.6f} {y_center:.6f} "
                       f"{width:.6f} {height:.6f}"
                   )
-    
+
               # 保存 YOLO 标注文件
               txt_file = Path(output_dir) / f"{json_file.stem}.txt"
               with open(txt_file, "w", encoding="utf-8") as f:
                   f.write("\n".join(yolo_lines))
-    
+
               stats["converted"] += 1
-    
+
           except json.JSONDecodeError as e:
               logger.error("JSON 解析失败 %s: %s", json_file.name, str(e))
               stats["errors"].append(str(json_file.name))
@@ -442,7 +442,7 @@ class DataConverter:
               logger.error("LabelMe 转换异常 %s: %s", json_file.name, str(e))
               stats["errors"].append(str(json_file.name))
               stats["skipped"] += 1
-    
+
       logger.info(
           "LabelMe 转换完成：总计 %d, 成功 %d, 跳过 %d",
           stats["total"],
