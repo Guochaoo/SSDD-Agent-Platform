@@ -2,7 +2,7 @@
   <header class="app-header">
     <div class="header-left">
       <img src="/favicon.svg" alt="logo" class="header-logo" />
-      <span class="header-title">SSDD Agent Platform</span>
+      <span class="header-title">钢铁表面缺陷检测智能体平台</span>
     </div>
 
     <div class="header-right">

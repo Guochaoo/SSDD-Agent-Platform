@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.history import router as history_router
 from app.api.scenes import router as scenes_router
@@ -56,6 +57,7 @@ app.add_middleware(RequestLogMiddleware)
 register_exception_handlers(app)
 
 app.include_router(auth_router)
+app.include_router(agent_router)
 app.include_router(health_router)
 app.include_router(history_router)
 app.include_router(scenes_router)
