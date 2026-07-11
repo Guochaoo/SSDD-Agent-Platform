@@ -1,12 +1,10 @@
 <template>
   <header class="app-header">
-    <!-- 左侧：Logo + 平台名称 -->
     <div class="header-left">
       <img src="/favicon.svg" alt="logo" class="header-logo" />
-      <span class="header-title">RSOD Agent Platform</span>
+      <span class="header-title">SSDD Agent Platform</span>
     </div>
 
-    <!-- 右侧：用户信息 + 退出按钮 -->
     <div class="header-right">
       <el-dropdown trigger="click" @command="handleCommand">
         <div class="user-info">
@@ -19,10 +17,10 @@
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="profile">
-              <el-icon><User /></el-icon>个人中心
+              <el-icon><User /></el-icon>Profile
             </el-dropdown-item>
             <el-dropdown-item command="logout" divided>
-              <el-icon><SwitchButton /></el-icon>退出登录
+              <el-icon><SwitchButton /></el-icon>Logout
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -40,21 +38,21 @@ import { useUserStore } from '@/stores/user'
 const router = useRouter()
 const userStore = useUserStore()
 
-/** 处理下拉菜单命令 */
 function handleCommand(command) {
   switch (command) {
     case 'profile':
-      // 个人中心（后续实现）
       break
     case 'logout':
-      ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
+      ElMessageBox.confirm('Are you sure you want to log out?', 'Confirm', {
+        confirmButtonText: 'OK',
+        cancelButtonText: 'Cancel',
         type: 'warning',
-      }).then(() => {
-        userStore.logout()
-        router.push('/login')
-      }).catch(() => {})
+      })
+        .then(() => {
+          userStore.logout()
+          router.push('/login')
+        })
+        .catch(() => {})
       break
   }
 }

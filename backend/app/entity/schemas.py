@@ -11,7 +11,7 @@ Pydantic 请求/响应模型
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ══════════════════════════════════════════════════════════════
@@ -41,9 +41,7 @@ class UserBrief(BaseModel):
     avatar: Optional[str] = None
     roles: list[str] = []
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TokenResponse(BaseModel):
@@ -68,9 +66,7 @@ class UserResponse(BaseModel):
     last_login_at: Optional[datetime] = None
     created_at: datetime
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserUpdate(BaseModel):
@@ -109,8 +105,7 @@ class RoleResponse(BaseModel):
     permissions: list[str] = []  # 权限编码列表
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RoleCreate(BaseModel):
@@ -129,8 +124,7 @@ class PermissionResponse(BaseModel):
     module: str
     description: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -162,8 +156,7 @@ class SceneResponse(BaseModel):
     default_model: Optional["ModelVersionBrief"] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- 检测任务 ---
@@ -186,8 +179,7 @@ class DetectionTaskResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class DetectionResultResponse(BaseModel):
@@ -206,8 +198,7 @@ class DetectionResultResponse(BaseModel):
     image_height: Optional[int] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DetectionTaskDetail(BaseModel):
@@ -237,6 +228,8 @@ class DetectionStatistics(BaseModel):
 
 class TrainingTaskCreate(BaseModel):
     """创建训练任务"""
+    model_config = ConfigDict(protected_namespaces=())
+
     scene_id: int = Field(..., description="关联场景 ID")
     model_name: str = Field(default="yolov11n", description="基础模型")
     epochs: int = Field(default=100, ge=10, le=500, description="训练轮数")
@@ -269,8 +262,7 @@ class TrainingTaskResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class TrainingMetricResponse(BaseModel):
@@ -285,8 +277,7 @@ class TrainingMetricResponse(BaseModel):
     map50_95: Optional[float] = None
     lr: Optional[float] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- 模型版本 ---
@@ -301,8 +292,7 @@ class ModelVersionBrief(BaseModel):
     is_default: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class ModelVersionResponse(BaseModel):
@@ -327,12 +317,13 @@ class ModelVersionResponse(BaseModel):
     is_default: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class ModelVersionCreate(BaseModel):
     """手动上传模型版本"""
+    model_config = ConfigDict(protected_namespaces=())
+
     scene_id: int
     version: str = Field(..., description="版本号")
     model_name: str = Field(..., description="模型名称")
@@ -359,8 +350,7 @@ class ChatSessionResponse(BaseModel):
     last_message_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatMessageRequest(BaseModel):
@@ -382,8 +372,7 @@ class ChatMessageResponse(BaseModel):
     latency_ms: Optional[int] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatHistoryResponse(BaseModel):
@@ -413,8 +402,7 @@ class OperationLogResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ══════════════════════════════════════════════════════════════
