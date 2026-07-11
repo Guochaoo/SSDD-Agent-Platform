@@ -5,12 +5,12 @@
 - GET  /api/training/tasks/{task_id}/metrics 训练指标曲线
 - GET  /api/training/models/{scene_id}       某场景下的模型版本列表
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.database.session import get_db
-from app.entity.db_models import User
+from app.entity.db_models import TrainingTask, User
 from app.entity.schemas import TrainingTaskCreate, TrainingTaskResponse, TrainingMetricResponse, ModelVersionResponse
 from app.services.training_service import training_service
 
@@ -63,6 +63,11 @@ def get_training_metrics(
     db: Session = Depends(get_db),
 ):
     """按 epoch 顺序返回训练指标，供前端绘制 loss/mAP 曲线"""
+    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="训练任务不存在")
+    if task.user_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="无权访问该训练任务")
     return training_service.list_metrics(db, task_id)
 
 

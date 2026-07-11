@@ -1,48 +1,64 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config.settings import settings
 from app.api.auth import router as auth_router
 from app.api.history import router as history_router
 from app.api.scenes import router as scenes_router
 from app.api.training import router as training_router
+from app.config.settings import settings
+
+try:
+    from app.api.health import router as health_router
+except ImportError:
+    health_router = None
+try:
+    from app.core.exceptions import register_exception_handlers
+except ImportError:
+    register_exception_handlers = None
+try:
+    from app.core.logger import get_logger, setup_logging
+except ImportError:
+    get_logger = logging.getLogger
+    setup_logging = lambda: None
+try:
+    from app.middleware.request_logger import RequestLogMiddleware
+except ImportError:
+    RequestLogMiddleware = None
+
+setup_logging()
+logger = get_logger(__name__)
 
 
 def init_minio():
-    """初始化 MinIO 存储桶"""
-    from app.storage.minio_client import MinIOClient
     try:
+        from app.storage.minio_client import MinIOClient
+
         minio_client = MinIOClient()
-        print(f"MinIO 存储桶 '{minio_client.bucket_name}' 初始化完成")
-    except Exception as e:
-        print(f"MinIO 初始化失败: {e}")
+        logger.info("MinIO bucket '%s' initialized", minio_client.bucket_name)
+    except Exception as exc:
+        logger.warning("MinIO initialization failed: %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """应用生命周期管理"""
-    # 启动时执行
-    print("正在初始化服务...")
+    logger.info("Starting service")
     init_minio()
     yield
-    # 关闭时执行（如果需要）
-    print("服务已关闭")
+    logger.info("Service stopped")
 
 
-# 创建 FastAPI 实例
 app = FastAPI(
-    title="RSOD Agent Platform",
-    version="0.1.0",
-    description="基于 YOLOv11 的目标检测智能体平台 API",
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="YOLOv11 object detection agent platform API",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
 
-# ── CORS 中间件配置 ──────────────────────────────────
-# 允许前端跨域请求后端 API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -50,9 +66,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if RequestLogMiddleware is not None:
+    app.add_middleware(RequestLogMiddleware)
+if register_exception_handlers is not None:
+    register_exception_handlers(app)
 
-# ── 注册路由 ─────────────────────────────────────────
 app.include_router(auth_router)
+if health_router is not None:
+    app.include_router(health_router)
 app.include_router(history_router)
 app.include_router(scenes_router)
 app.include_router(training_router)
@@ -61,33 +82,14 @@ app.include_router(training_router)
 @app.get("/")
 def root():
     return {
-        "message": "欢迎使用 RSOD Agent Platform",
-        "version": "0.1.0",
+        "message": f"Welcome to {settings.APP_NAME}",
+        "version": settings.APP_VERSION,
         "docs": "/docs",
         "redoc": "/redoc",
     }
 
 
-@app.get("/api/health")
-def health_check():
-    return {"status": "healthy", "app_name": "RSOD Agent Platform", "version": "0.1.0"}
-
-
-@app.get("/api/health/database")
-def database_health():
-    return {"status": "healthy", "database": "postgresql", "message": "数据库连接正常"}
-
-
-@app.get("/api/health/redis")
-def redis_health():
-    return {"status": "healthy", "redis": "connected", "message": "Redis 连接正常"}
-
-
-@app.get("/api/health/minio")
-def minio_health():
-    return {"status": "healthy", "minio": "connected", "message": "MinIO 连接正常"}
-
-
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
