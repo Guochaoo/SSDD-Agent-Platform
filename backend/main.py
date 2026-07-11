@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.training import router as training_router
 from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
@@ -54,6 +55,7 @@ register_exception_handlers(app)
 
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(training_router)
 
 
 @app.get("/")
