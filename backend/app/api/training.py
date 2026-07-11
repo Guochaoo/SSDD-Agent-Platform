@@ -23,6 +23,7 @@ from app.entity.schemas import (
     TrainingTaskResponse,
     TrainingMetricResponse,
 )
+from app.entity.db_models import TrainingTask
 from app.training.training_service import training_service
 
 import os
@@ -30,6 +31,15 @@ import os
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
+
+
+def _check_task_access(db: Session, task_id: int, current_user):
+    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="训练任务不存在")
+    if task.user_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="无权访问该训练任务")
+    return task
 
 
 @router.post("/start")
@@ -134,6 +144,7 @@ async def get_training_status(
     返回任务基本信息、当前进度和最新 epoch 指标
     前端可轮询此接口实现实时监控
     """
+    _check_task_access(db, task_id, current_user)
     status = training_service.get_training_status(db, task_id)
     if "error" in status:
         raise HTTPException(status_code=404, detail=status["error"])
@@ -151,6 +162,7 @@ async def get_training_metrics(
 
     用于绘制完整的训练曲线（loss、mAP、precision、recall）
     """
+    _check_task_access(db, task_id, current_user)
     metrics = training_service.get_training_metrics(db, task_id)
     return {"task_id": task_id, "total": len(metrics), "metrics": metrics}
 
@@ -162,6 +174,7 @@ async def stop_training(
     current_user=Depends(get_current_user),
 ):
     """停止正在运行的训练任务"""
+    _check_task_access(db, task_id, current_user)
     result = training_service.stop_training(db, task_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])

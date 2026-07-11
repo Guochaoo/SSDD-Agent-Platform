@@ -1,46 +1,43 @@
 """
 用户服务层
-处理用户注册、登录、鉴权等业务逻辑
+处理用户注册、登录、鉴权、资料与密码管理，以及删除用户的级联清理
 """
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
-from app.entity.db_models import User
+from app.entity.db_models import (
+    User, DetectionTask, TrainingTask,
+    ModelVersion, ChatSession, KnowledgeDocument, DetectionScene, OperationLog,
+    PasswordResetToken,
+)
+from app.storage.minio_client import MinIOClient
+
+RESET_TOKEN_TTL_MINUTES = 60
 
 
 class UserService:
     """用户服务"""
+
+    # ── 注册 / 登录 ──────────────────────────────────────
 
     @staticmethod
     def register(db: Session, username: str, email: str, password: str) -> User:
         """
         用户注册
 
-        Args:
-            db: 数据库会话
-            username: 用户名
-            email: 邮箱
-            password: 明文密码
-
-        Returns:
-            新创建的用户对象
-
         Raises:
             HTTPException: 用户名或邮箱已存在
         """
-        # 检查用户名是否已存在
-        existing_user = db.query(User).filter(User.username == username).first()
-        if existing_user:
+        if db.query(User).filter(User.username == username).first():
             raise HTTPException(status_code=400, detail="用户名已存在")
-
-        # 检查邮箱是否已存在
-        existing_email = db.query(User).filter(User.email == email).first()
-        if existing_email:
+        if db.query(User).filter(User.email == email).first():
             raise HTTPException(status_code=400, detail="邮箱已被注册")
 
-        # 创建新用户
         new_user = User(
             username=username,
             email=email,
@@ -49,7 +46,6 @@ class UserService:
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-
         return new_user
 
     @staticmethod
@@ -57,24 +53,18 @@ class UserService:
         """
         用户登录
 
-        Args:
-            db: 数据库会话
-            username: 用户名
-            password: 明文密码
-
-        Returns:
-            登录成功的用户对象
-
         Raises:
-            HTTPException: 用户名或密码错误
+            HTTPException: 用户名或密码错误、账号已被禁用
         """
         user = db.query(User).filter(User.username == username).first()
-        if not user:
+        if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-        if not verify_password(password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
 
+        user.last_login_at = datetime.now()
+        db.commit()
         return user
 
     @staticmethod
@@ -94,6 +84,156 @@ class UserService:
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
         return user
+
+    # ── 资料 / 密码管理 ──────────────────────────────────
+
+    @staticmethod
+    def update_profile(db: Session, user: User, phone: str | None, avatar: str | None, email: str | None) -> User:
+        """更新用户资料（phone/avatar/email，均可选）"""
+        if email and email != user.email:
+            if db.query(User).filter(User.email == email, User.id != user.id).first():
+                raise HTTPException(status_code=400, detail="邮箱已被其他账号使用")
+            user.email = email
+        if phone is not None:
+            user.phone = phone
+        if avatar is not None:
+            user.avatar = avatar
+        db.commit()
+        db.refresh(user)
+        return user
+
+    @staticmethod
+    def change_password(db: Session, user: User, old_password: str, new_password: str) -> None:
+        """已登录状态下修改密码，需校验旧密码"""
+        if not verify_password(old_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="旧密码不正确")
+        user.hashed_password = hash_password(new_password)
+        db.commit()
+
+    @staticmethod
+    def set_active(db: Session, user_id: int, is_active: bool) -> User:
+        """管理员启用/禁用用户"""
+        user = UserService.get_user_by_id(db, user_id)
+        user.is_active = is_active
+        db.commit()
+        db.refresh(user)
+        return user
+
+    # ── 忘记密码（邮箱 + 令牌） ───────────────────────────
+
+    @staticmethod
+    def request_password_reset(db: Session, email: str) -> str | None:
+        """
+        生成密码重置令牌。
+        为避免暴露"邮箱是否存在"，邮箱不存在时也返回 None 而不是报错，
+        路由层统一返回"如果邮箱存在，重置邮件已发送"这类模糊提示。
+
+        Returns:
+            重置令牌明文（用于发邮件），邮箱不存在时返回 None
+        """
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return None
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now() + timedelta(minutes=RESET_TOKEN_TTL_MINUTES),
+        ))
+        db.commit()
+        return raw_token
+
+    @staticmethod
+    def confirm_password_reset(db: Session, raw_token: str, new_password: str) -> None:
+        """校验重置令牌并设置新密码"""
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        token = (
+            db.query(PasswordResetToken)
+            .filter(PasswordResetToken.token_hash == token_hash, PasswordResetToken.used.is_(False))
+            .first()
+        )
+        if not token or token.expires_at < datetime.now():
+            raise HTTPException(status_code=400, detail="重置链接无效或已过期")
+
+        user = db.query(User).filter(User.id == token.user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        user.hashed_password = hash_password(new_password)
+        token.used = True
+        db.commit()
+
+    # ── 删除用户（事务 + 级联清理） ───────────────────────
+
+    @staticmethod
+    def delete_user_cascade(db: Session, user_id: int) -> None:
+        """
+        管理员删除用户的完整级联清理，对应任务文档第 13 步：
+        同一事务内先清理子表和 MinIO 文件，再删除主记录，任一步失败整体回滚。
+
+        DetectionResult / TrainingMetric / ChatMessage / password_reset_tokens
+        通过 ORM relationship 的 cascade="all, delete-orphan"（或 DB 级 ON DELETE CASCADE）
+        自动跟随父记录一起删除，这里不需要手动处理。
+        """
+        minio = MinIOClient()
+
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise HTTPException(status_code=404, detail="用户不存在")
+
+            # 1. 检测任务：先清理每张结果图的 MinIO 文件，再删任务（级联删 detection_results）
+            tasks = db.query(DetectionTask).filter(DetectionTask.user_id == user_id).all()
+            for task in tasks:
+                for result in task.results:
+                    minio.delete_by_url(result.annotated_image_url)
+                db.delete(task)
+
+            # 2. 训练任务：产出的模型版本（ModelVersion）要保留，只解除关联，再删任务（级联删 training_metrics）
+            training_tasks = db.query(TrainingTask).filter(TrainingTask.user_id == user_id).all()
+            training_task_ids = [t.id for t in training_tasks]
+            if training_task_ids:
+                db.query(ModelVersion).filter(
+                    ModelVersion.training_task_id.in_(training_task_ids)
+                ).update({ModelVersion.training_task_id: None}, synchronize_session=False)
+            for t in training_tasks:
+                db.delete(t)
+
+            # 3. 对话会话：删除会话（级联删 chat_messages）
+            sessions = db.query(ChatSession).filter(ChatSession.user_id == user_id).all()
+            for s in sessions:
+                db.delete(s)
+
+            # 4. 知识文档：清理 MinIO 原文件，删除文档（级联删 knowledge_chunks）
+            docs = db.query(KnowledgeDocument).filter(KnowledgeDocument.user_id == user_id).all()
+            for d in docs:
+                minio.delete_by_url(d.file_url)
+                db.delete(d)
+
+            # 5. 该用户创建的检测场景：保留场景，只解除创建者关联
+            db.query(DetectionScene).filter(DetectionScene.created_by == user_id).update(
+                {DetectionScene.created_by: None}, synchronize_session=False
+            )
+
+            # 6. 操作日志：保留日志（username 字段已冗余存储），只解除用户关联
+            db.query(OperationLog).filter(OperationLog.user_id == user_id).update(
+                {OperationLog.user_id: None}, synchronize_session=False
+            )
+
+            # 7. user_roles 由 User.user_roles 的 cascade="all, delete-orphan" 自动清理
+            # 8. password_reset_tokens 由数据库 ON DELETE CASCADE 自动清理
+
+            # 9. 最后删除用户本身
+            db.delete(user)
+            db.commit()
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception:
+            db.rollback()
+            raise
 
 
 # 全局单例

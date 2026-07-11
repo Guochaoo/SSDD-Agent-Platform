@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.database.session import get_db
-from app.entity.schemas import TokenResponse, UserLogin, UserRegister, UserResponse
+from app.entity.schemas import (
+    TokenResponse, UserLogin, UserRegister, UserResponse, UserUpdate,
+    ChangePassword, PasswordResetRequest, PasswordResetConfirm,
+)
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -116,3 +119,87 @@ async def get_current_user_info(
         "last_login_at": current_user.last_login_at,
         "created_at": current_user.created_at,
     }
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_profile(
+    payload: UserUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """更新当前用户资料（phone/avatar/email，均可选）"""
+    user = user_service.update_profile(db, current_user, payload.phone, payload.avatar, payload.email)
+    roles = user_service.get_user_roles(db, user)
+    return {
+        "id": user.id, "username": user.username, "email": user.email, "phone": user.phone,
+        "avatar": user.avatar, "is_active": user.is_active, "is_superuser": user.is_superuser,
+        "roles": roles, "last_login_at": user.last_login_at, "created_at": user.created_at,
+    }
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePassword,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """已登录状态下修改密码，需提供旧密码校验"""
+    user_service.change_password(db, current_user, payload.old_password, payload.new_password)
+    return {"message": "密码修改成功"}
+
+
+@router.post("/password-reset/request")
+async def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    """
+    忘记密码：申请重置令牌。
+    出于安全考虑，无论邮箱是否存在都返回相同提示；实际发送重置邮件的逻辑（含 raw_token）
+    由负责邮件发送的同学接入，这里只负责生成并落库令牌。
+    """
+    user_service.request_password_reset(db, payload.email)
+    return {"message": "如果该邮箱已注册，重置链接将发送到您的邮箱"}
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)):
+    """忘记密码：使用邮件中的令牌设置新密码"""
+    user_service.confirm_password_reset(db, payload.token, payload.new_password)
+    return {"message": "密码重置成功，请使用新密码登录"}
+
+
+@router.post("/users/{user_id}/deactivate")
+async def deactivate_user(
+    user_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """管理员禁用某个用户账号"""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    user_service.set_active(db, user_id, is_active=False)
+    return {"message": "用户已禁用"}
+
+
+@router.post("/users/{user_id}/activate")
+async def activate_user(
+    user_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """管理员重新启用某个用户账号"""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    user_service.set_active(db, user_id, is_active=True)
+    return {"message": "用户已启用"}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """管理员删除用户，事务化级联清理其全部关联数据（对应任务文档步骤 13）"""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    user_service.delete_user_cascade(db, user_id)
+    return {"message": "用户及其关联数据已删除"}

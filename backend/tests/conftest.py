@@ -29,7 +29,8 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture(autouse=True)
 def reset_database():
-    Base.metadata.create_all(bind=engine)
+    tables = [t for name, t in Base.metadata.tables.items() if name != "knowledge_chunks"]
+    Base.metadata.create_all(bind=engine, tables=tables)
     yield
     Base.metadata.drop_all(bind=engine)
 

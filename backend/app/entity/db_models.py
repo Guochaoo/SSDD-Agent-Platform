@@ -15,8 +15,14 @@ from sqlalchemy import (
     JSON, Text, Boolean, Table, BigInteger
 )
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 
 from app.database.session import Base
+
+# RAG 知识库 embedding 向量维度，需与实际使用的 embedding 模型一致
+# （如 bge-base-zh=768、text-embedding-3-small=1536）。
+# 一旦 knowledge_chunks 表中已有数据，修改此值需要重建列和索引。
+EMBEDDING_DIM = 768
 
 
 # ══════════════════════════════════════════════════════════════
@@ -45,6 +51,7 @@ class User(Base):
     training_tasks = relationship("TrainingTask", back_populates="user")
     chat_sessions = relationship("ChatSession", back_populates="user")
     operation_logs = relationship("OperationLog", back_populates="user")
+    knowledge_documents = relationship("KnowledgeDocument", back_populates="user")
 
 
 class Role(Base):
@@ -100,6 +107,18 @@ class RolePermission(Base):
 
     role = relationship("Role", back_populates="role_permissions")
     permission = relationship("Permission", back_populates="role_permissions")
+
+
+class PasswordResetToken(Base):
+    """密码重置令牌表 — 忘记密码流程使用的一次性令牌"""
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="所属用户")
+    token_hash = Column(String(64), nullable=False, index=True, comment="SHA256 哈希后的令牌值")
+    expires_at = Column(DateTime, nullable=False, comment="过期时间")
+    used = Column(Boolean, default=False, comment="是否已使用")
+    created_at = Column(DateTime, default=datetime.now, comment="创建时间")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -392,3 +411,43 @@ class OperationLog(Base):
 
     # 关联
     user = relationship("User", back_populates="operation_logs")
+
+
+# ══════════════════════════════════════════════════════════════
+# 六、RAG 知识库
+# ══════════════════════════════════════════════════════════════
+
+class KnowledgeDocument(Base):
+    """知识文档表 — RAG 知识库的原始文档（如缺陷定义、质检标准等领域资料）"""
+    __tablename__ = "knowledge_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True, comment="上传者，为空表示系统内置文档")
+    title = Column(String(200), nullable=False, comment="文档标题")
+    filename = Column(String(255), nullable=False, comment="原始文件名")
+    file_url = Column(String(500), nullable=False, comment="MinIO 原文件 URL")
+    file_type = Column(String(20), nullable=True, comment="pdf/docx/txt/md")
+    status = Column(String(20), default="processing", index=True, comment="processing/indexed/failed")
+    chunk_count = Column(Integer, default=0, comment="分块完成后的块数")
+    created_at = Column(DateTime, default=datetime.now, comment="上传时间")
+
+    # 关联
+    user = relationship("User", back_populates="knowledge_documents")
+    chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
+
+
+class KnowledgeChunk(Base):
+    """知识分块表 — 文档切分后的文本块及向量表示，供 Agent 检索问答使用"""
+    __tablename__ = "knowledge_chunks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+                          nullable=False, index=True, comment="所属文档")
+    chunk_index = Column(Integer, nullable=False, comment="块在文档中的序号")
+    content = Column(Text, nullable=False, comment="分块原文")
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=False, comment="向量表示，用于相似度检索")
+    token_count = Column(Integer, nullable=True, comment="该块 token 数")
+    created_at = Column(DateTime, default=datetime.now, comment="创建时间")
+
+    # 关联
+    document = relationship("KnowledgeDocument", back_populates="chunks")
