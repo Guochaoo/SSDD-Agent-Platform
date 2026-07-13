@@ -73,71 +73,71 @@
 </template>
 
 <script setup>
-import { registerApi } from "@/api/auth";
-import { ElMessage } from "element-plus";
-import { reactive, ref } from "vue";
-import { useRouter } from "vue-router";
+import { ref, reactive } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { registerApi } from '@/api/auth'
 
-const router = useRouter();
-
-const formRef = ref(null);
-const loading = ref(false);
+const router = useRouter()
+const formRef = ref(null)
+const loading = ref(false)
 
 /** 注册表单数据 */
 const registerForm = reactive({
-  username: "",
-  email: "",
-  password: "",
-  confirmPassword: "",
-});
+  username: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+})
 
 /** 确认密码验证器 */
 const validateConfirmPassword = (rule, value, callback) => {
   if (value !== registerForm.password) {
-    callback(new Error("两次输入的密码不一致"));
+    callback(new Error('两次输入的密码不一致'))
   } else {
-    callback();
+    callback()
   }
-};
+}
 
 /** 表单验证规则 */
 const registerRules = {
   username: [
-    { required: true, message: "请输入用户名", trigger: "blur" },
-    { min: 3, max: 50, message: "用户名长度为 3-50 个字符", trigger: "blur" },
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 3, max: 50, message: '用户名长度为 3-50 个字符', trigger: 'blur' },
   ],
   email: [
-    { required: true, message: "请输入邮箱", trigger: "blur" },
-    { type: "email", message: "请输入有效的邮箱地址", trigger: "blur" },
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
+    { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' },
   ],
   password: [
-    { required: true, message: "请输入密码", trigger: "blur" },
-    { min: 6, message: "密码至少 6 个字符", trigger: "blur" },
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, message: '密码至少 6 个字符', trigger: 'blur' },
   ],
   confirmPassword: [
-    { required: true, message: "请确认密码", trigger: "blur" },
-    { validator: validateConfirmPassword, trigger: "blur" },
+    { required: true, message: '请确认密码', trigger: 'blur' },
+    { validator: validateConfirmPassword, trigger: 'blur' },
   ],
-};
+}
 
 /** 处理注册 */
 async function handleRegister() {
-  const valid = await formRef.value.validate().catch(() => false);
-  if (!valid) return;
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
 
-  loading.value = true;
+  loading.value = true
   try {
     await registerApi({
       username: registerForm.username,
       email: registerForm.email,
       password: registerForm.password,
-    });
-    ElMessage.success("注册成功，请登录");
-    router.push("/login");
+    })
+
+    ElMessage.success('注册成功，请登录')
+    router.push('/login')
   } catch {
     // 错误已在 Axios 拦截器中统一处理
   } finally {
-    loading.value = false;
+    loading.value = false
   }
 }
 </script>

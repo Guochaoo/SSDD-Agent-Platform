@@ -1,78 +1,78 @@
 /**
- * 用户状态管理
- * 管理用户登录信息、Token、角色等
+ * 鐢ㄦ埛鐘舵€佺鐞?
+ * 绠＄悊鐢ㄦ埛鐧诲綍淇℃伅銆乀oken銆佽鑹茬瓑
  */
-import { getUserInfoApi, loginApi } from "@/api/auth";
-import { defineStore } from "pinia";
+import { defineStore } from 'pinia'
+import { loginApi, getUserInfoApi } from '@/api/auth'
 
-const TOKEN_KEY = "rsod_token";
-const USER_KEY = "rsod_user";
+const TOKEN_KEY = 'ssdd_token'
+const USER_KEY = 'ssdd_user'
 
-export const useUserStore = defineStore("user", {
+export const useUserStore = defineStore('user', {
   state: () => ({
     // JWT Token
-    token: localStorage.getItem(TOKEN_KEY) || "",
-    // 用户信息
-    user: JSON.parse(localStorage.getItem(USER_KEY) || "null"),
+    token: localStorage.getItem(TOKEN_KEY) || '',
+    // 鐢ㄦ埛淇℃伅
+    user: JSON.parse(localStorage.getItem(USER_KEY) || 'null'),
   }),
 
   getters: {
-    /** 是否已登录 */
+    /** 鏄惁宸茬櫥褰?*/
     isLoggedIn: (state) => !!state.token,
 
-    /** 用户名 */
-    username: (state) => state.user?.username || "",
+    /** 鐢ㄦ埛鍚?*/
+    username: (state) => state.user?.username || '',
 
-    /** 用户头像 */
-    avatar: (state) => state.user?.avatar || "",
+    /** 鐢ㄦ埛澶村儚 */
+    avatar: (state) => state.user?.avatar || '',
 
-    /** 用户角色列表 */
+    /** 鐢ㄦ埛瑙掕壊鍒楄〃 */
     roles: (state) => state.user?.roles || [],
 
-    /** 是否为管理员 */
+    /** 鏄惁涓虹鐞嗗憳 */
     isSuperuser: (state) => state.user?.is_superuser || false,
   },
 
   actions: {
     /**
-     * 用户登录
+     * 鐢ㄦ埛鐧诲綍
      * @param {Object} credentials - { username, password }
      */
     async login(credentials) {
-      const res = await loginApi(credentials);
+      const res = await loginApi(credentials)
 
-      // 保存 Token
-      this.token = res.access_token;
-      localStorage.setItem(TOKEN_KEY, res.access_token);
+      // 淇濆瓨 Token
+      this.token = res.access_token
+      localStorage.setItem(TOKEN_KEY, res.access_token)
 
-      // 保存用户信息
-      this.user = res.user;
-      localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+      // 淇濆瓨鐢ㄦ埛淇℃伅
+      this.user = res.user
+      localStorage.setItem(USER_KEY, JSON.stringify(res.user))
 
-      return res;
+      return res
     },
 
     /**
-     * 获取最新用户信息
+     * 鑾峰彇鏈€鏂扮敤鎴蜂俊鎭?
      */
     async fetchUserInfo() {
       try {
-        const user = await getUserInfoApi();
-        this.user = user;
-        localStorage.setItem(USER_KEY, JSON.stringify(user));
+        const user = await getUserInfoApi()
+        this.user = user
+        localStorage.setItem(USER_KEY, JSON.stringify(user))
       } catch {
-        this.logout();
+        this.logout()
       }
     },
 
     /**
-     * 退出登录
+     * 閫€鍑虹櫥褰?
      */
     logout() {
-      this.token = "";
-      this.user = null;
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
+      this.token = ''
+      this.user = null
+      localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem(USER_KEY)
     },
   },
-});
+})
