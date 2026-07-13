@@ -1,33 +1,44 @@
 <template>
   <div class="message-list">
-    <div v-if="!messages.length" class="empty-state">
-      <h3>钢铁表面缺陷检测智能助手</h3>
-      <p>你可以上传钢铁表面图片，并询问缺陷类型、置信度和处理建议。</p>
+    <div v-if="!messages.length && !isStreaming" class="empty-state">
+      <p>开始对话，询问钢铁表面缺陷相关问题。</p>
     </div>
 
     <MessageItem
-      v-for="message in messages"
+      v-for="(message, index) in messages"
       :key="message.id"
       :message="message"
+      :is-last-streaming="isStreaming && index === messages.length - 1 && message.role === 'assistant'"
+      @regenerate="(msg) => $emit('regenerate', msg)"
     />
+
+    <!-- Thinking indicator -->
+    <div v-if="showThinking" class="thinking-row">
+      <ThinkingIndicator />
+    </div>
 
     <ToolCallDisplay :tool-call="toolCall" />
   </div>
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import MessageItem from './MessageItem.vue'
 import ToolCallDisplay from './ToolCallDisplay.vue'
+import ThinkingIndicator from './ThinkingIndicator.vue'
 
-defineProps({
-  messages: {
-    type: Array,
-    default: () => [],
-  },
-  toolCall: {
-    type: Object,
-    default: null,
-  },
+const props = defineProps({
+  messages: { type: Array, default: () => [] },
+  toolCall: { type: Object, default: null },
+  isStreaming: { type: Boolean, default: false },
+})
+
+defineEmits(['regenerate'])
+
+const showThinking = computed(() => {
+  if (!props.isStreaming) return false
+  const last = props.messages[props.messages.length - 1]
+  return last?.role === 'assistant' && !last?.content
 })
 </script>
 
@@ -36,26 +47,21 @@ defineProps({
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px;
-  background: #f6f8fb;
+  padding: 16px 0;
+  background: #fff;
 }
 
 .empty-state {
   height: 100%;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: $text-secondary;
+  color: #a3a3a3;
+  font-size: 14px;
   text-align: center;
+}
 
-  h3 {
-    color: $text-primary;
-    margin-bottom: 8px;
-  }
-
-  p {
-    margin: 0;
-  }
+.thinking-row {
+  padding: 8px 24px;
 }
 </style>
