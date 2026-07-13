@@ -1,5 +1,7 @@
 # backend/requirements.txt
 pytest==8.2.2
+pytest-asyncio==0.23.0
+pytest-cov==5.0.0
 
 # ═══════════════════════════════════════════════════════
 # 基于 YOLOv11 的目标检测智能体平台 — Python 依赖

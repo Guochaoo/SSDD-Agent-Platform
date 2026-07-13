@@ -1,4 +1,6 @@
-const USE_MOCK_AGENT = true
+import { streamChat } from '@/utils/stream'
+
+const USE_MOCK_AGENT = import.meta.env.VITE_USE_MOCK_AGENT !== 'false'
 
 export function streamAgentChat(payload, callbacks) {
   if (USE_MOCK_AGENT) {
@@ -10,7 +12,7 @@ export function streamAgentChat(payload, callbacks) {
 
 function mockAgentStream(callbacks) {
   const events = [
-    { type: 'text_delta', content: '正在分析钢铁表面图像...\n\n' },
+    { type: 'text_delta', content: '正在分析钢铁表面图像……\n\n' },
     { type: 'tool_start', tool_name: 'detection_tool' },
     {
       type: 'tool_result',
