@@ -1,19 +1,18 @@
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import path from 'path'
-import { fileURLToPath } from 'url'
+import vue from "@vitejs/plugin-vue";
+import path from "path";
+import { fileURLToPath } from "url";
+import { defineConfig } from "vite";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [vue()],
-
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      "@": path.resolve(__dirname, "src"),
     },
   },
-
+  // ── CSS 预处理器配置 ──────────────────────────────
   css: {
     preprocessorOptions: {
       scss: {
@@ -21,61 +20,29 @@ export default defineConfig({
       },
     },
   },
-
+  // ── 开发服务器配置 ────────────────────────────────
   server: {
     port: 5173,
     open: true,
     proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
+      "/api": {
+        target: "http://localhost:8000",
         changeOrigin: true,
       },
     },
   },
-
-  build: {
-    rolldownOptions: {
-      onLog(level, log, defaultHandler) {
-        if (
-          log.code === 'INVALID_ANNOTATION' &&
-          typeof log.loc?.file === 'string' &&
-          log.loc.file.includes('@vueuse/core')
-        ) {
-          return
-        }
-
-        defaultHandler(level, log)
-      },
-      output: {
-        codeSplitting: {
-          maxSize: 450000,
-          groups: [
-            {
-              name: 'vendor-vue',
-              test: /[\\/]node_modules[\\/](vue|vue-router|pinia)[\\/]/,
-            },
-            {
-              name: 'vendor-element',
-              test: /[\\/]node_modules[\\/](element-plus|@element-plus|@vueuse)[\\/]/,
-            },
-            {
-              name: 'vendor-utils',
-              test: /[\\/]node_modules[\\/](axios|markdown-it)[\\/]/,
-            },
-          ],
-        },
-      },
-    },
-  },
-
+  // ── Vitest 测试配置 ───────────────────────────────
   test: {
-    environment: 'happy-dom',
-    testTimeout: 10000,
-    setupFiles: ['./tests/setup.js'],
-    include: ['tests/**/*.{test,spec}.{js,ts}'],
+    // 使用 happy-dom 模拟浏览器环境
+    environment: "happy-dom",
+    // 全局 setup 文件
+    setupFiles: "./tests/setup.js",
+    // 测试文件匹配模式
+    include: ["tests/**/*.{test,spec}.{js,ts}"],
+    // 覆盖率（可选）
     coverage: {
-      provider: 'v8',
-      reporter: ['text', 'html'],
+      provider: "v8",
+      reporter: ["text", "html"],
     },
   },
-})
+});

@@ -22,31 +22,31 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
 import {
-  ChatDotRound,
   Camera,
-  Cpu,
+  ChatDotRound,
   Clock,
+  Cpu,
   DataAnalysis,
-} from '@element-plus/icons-vue'
+} from "@element-plus/icons-vue";
+import { computed } from "vue";
+import { useRoute } from "vue-router";
 
-const route = useRoute()
+const route = useRoute();
 
 /** 当前激活的菜单项 */
 const activeMenu = computed(() => {
-  return '/' + route.path.split('/')[1]
-})
+  return "/" + route.path.split("/")[1];
+});
 
 /** 侧边栏菜单配置 */
 const menuItems = [
-  { path: '/chat', title: '智能对话', icon: ChatDotRound },
-  { path: '/detection', title: '检测工作台', icon: Camera },
-  { path: '/training', title: '模型训练', icon: Cpu },
-  { path: '/history', title: '历史记录', icon: Clock },
-  { path: '/dashboard', title: '数据看板', icon: DataAnalysis },
-]
+  { path: "/chat", title: "智能对话", icon: ChatDotRound },
+  { path: "/detection", title: "检测工作台", icon: Camera },
+  { path: "/training", title: "模型训练", icon: Cpu },
+  { path: "/history", title: "历史记录", icon: Clock },
+  { path: "/dashboard", title: "数据看板", icon: DataAnalysis },
+];
 </script>
 
 <style lang="scss" scoped>

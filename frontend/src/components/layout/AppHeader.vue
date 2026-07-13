@@ -1,10 +1,12 @@
 <template>
   <header class="app-header">
+    <!-- 左侧：Logo + 平台名称 -->
     <div class="header-left">
       <img src="/favicon.svg" alt="logo" class="header-logo" />
-      <span class="header-title">钢铁表面缺陷检测智能体平台</span>
+      <span class="header-title">RSOD Agent Platform</span>
     </div>
 
+    <!-- 右侧：用户信息 + 退出按钮 -->
     <div class="header-right">
       <el-dropdown trigger="click" @command="handleCommand">
         <div class="user-info">
@@ -14,13 +16,14 @@
           <span class="username">{{ userStore.username }}</span>
           <el-icon><ArrowDown /></el-icon>
         </div>
+
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="profile">
-              <el-icon><User /></el-icon>Profile
+              <el-icon><User /></el-icon>个人中心
             </el-dropdown-item>
             <el-dropdown-item command="logout" divided>
-              <el-icon><SwitchButton /></el-icon>Logout
+              <el-icon><SwitchButton /></el-icon>退出登录
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -30,30 +33,33 @@
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router'
-import { ArrowDown, User, SwitchButton } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
-import { useUserStore } from '@/stores/user'
+import { useUserStore } from "@/stores/user";
+import { ArrowDown, SwitchButton, User } from "@element-plus/icons-vue";
+import { ElMessageBox } from "element-plus";
+import { useRouter } from "vue-router";
 
-const router = useRouter()
-const userStore = useUserStore()
+const router = useRouter();
+const userStore = useUserStore();
 
+/** 处理下拉菜单命令 */
 function handleCommand(command) {
   switch (command) {
-    case 'profile':
-      break
-    case 'logout':
-      ElMessageBox.confirm('Are you sure you want to log out?', 'Confirm', {
-        confirmButtonText: 'OK',
-        cancelButtonText: 'Cancel',
-        type: 'warning',
+    case "profile":
+      // 个人中心（后续实现）
+      break;
+
+    case "logout":
+      ElMessageBox.confirm("确定要退出登录吗？", "提示", {
+        confirmButtonText: "确定",
+        cancelButtonText: "取消",
+        type: "warning",
       })
         .then(() => {
-          userStore.logout()
-          router.push('/login')
+          userStore.logout();
+          router.push("/login");
         })
-        .catch(() => {})
-      break
+        .catch(() => {});
+      break;
   }
 }
 </script>

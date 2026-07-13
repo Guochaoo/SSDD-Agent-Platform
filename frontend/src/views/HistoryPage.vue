@@ -4,3 +4,11 @@
     <p>Day 10 实现检测历史记录与统计看板</p>
   </div>
 </template>
+
+<script setup></script>
+
+<style lang="scss" scoped>
+h2 {
+  margin-bottom: $spacing-md;
+}
+</style>
