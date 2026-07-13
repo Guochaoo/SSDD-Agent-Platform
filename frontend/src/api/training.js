@@ -11,8 +11,14 @@ function unwrap(payload) {
 }
 
 function normalizeTask(task) {
+  const rawTaskId = task.id ?? task.task_id ?? task.taskId ?? task.task_uuid;
   return {
-    taskId: String(task.task_uuid ?? task.task_id ?? task.id ?? task.taskId),
+    // Backend status and metrics routes use the numeric database id. Keep the
+    // UUID separately for display and future external integrations.
+    taskId: Number.isFinite(Number(rawTaskId))
+      ? Number(rawTaskId)
+      : String(rawTaskId ?? ""),
+    taskUuid: task.task_uuid ?? task.taskUuid ?? "",
     taskName: task.task_name ?? task.taskName ?? "未命名训练任务",
     status: task.status ?? "pending",
     modelName: task.model_name ?? task.modelName ?? "YOLO11n",
@@ -56,17 +62,31 @@ export async function getTrainingDetailApi(taskId) {
     request.get(`/training/status/${taskId}`),
     request.get(`/training/metrics/${taskId}`),
   ]);
-  const task = normalizeTask(unwrap(status));
+  const statusData = unwrap(status) ?? {};
+  const task = normalizeTask(statusData.task ?? statusData);
   const metricData = unwrap(metrics);
   return {
     ...task,
-    metrics: (metricData?.items ?? metricData ?? []).map(normalizeMetric),
+    metrics: (metricData?.metrics ?? metricData?.items ?? metricData ?? []).map(normalizeMetric),
   };
 }
 
 export async function startTrainingApi(payload) {
   if (isFrontendBMockMode) return mockStartTraining(payload);
-  return normalizeTask(unwrap(await request.post("/training/start", payload)));
+  const requestPayload = {
+    scene_id: Number(payload.sceneId),
+    model_name: payload.modelName,
+    epochs: payload.epochs,
+    img_size: payload.imgSize,
+    batch_size: payload.batchSize,
+    device: payload.device ?? "0",
+    optimizer: payload.optimizer ?? "SGD",
+    lr0: payload.lr0 ?? 0.01,
+    augment_config: payload.augmentConfig ?? null,
+  };
+  return normalizeTask(
+    unwrap(await request.post("/training/start", requestPayload)),
+  );
 }
 
 export { normalizeMetric, normalizeTask };

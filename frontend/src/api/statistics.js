@@ -35,6 +35,8 @@ export async function getDashboardApi(params = {}) {
     return normalizeDashboardResponse(await mockGetDashboard(params));
   }
   return normalizeDashboardResponse(
-    await request.get("/statistics/overview", { params }),
+    await request.get("/history/statistics/summary", {
+      params: { days: params.days ?? 30 },
+    }),
   );
 }

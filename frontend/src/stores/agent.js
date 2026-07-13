@@ -1,71 +1,71 @@
-/**
- * 智能体对话状态管理
- * 管理对话会话列表、当前会话消息等
- */
-import { defineStore } from "pinia";
+import { defineStore } from 'pinia'
 
-export const useAgentStore = defineStore("agent", {
+export const useAgentStore = defineStore('agent', {
   state: () => ({
-    // 当前会话 ID
-    currentSessionId: null,
-    // 当前会话的消息列表
+    currentSessionId: crypto.randomUUID(),
     messages: [],
-    // 会话列表
     sessions: [],
-    // 是否正在等待 AI 响应
-    isLoading: false,
-    // 中断函数（用于取消 SSE 流式请求）
+    isStreaming: false,
     abortController: null,
+    selectedImage: null,
+    imagePreviewUrl: '',
+    currentToolCall: null,
+    errorMessage: '',
   }),
 
   getters: {
-    /** 消息数量 */
     messageCount: (state) => state.messages.length,
-    /** 是否有会话 */
-    hasSession: (state) => state.sessions.length > 0,
+    hasMessages: (state) => state.messages.length > 0,
   },
 
   actions: {
-    /** 添加一条消息 */
     addMessage(message) {
-      this.messages.push(message);
+      this.messages.push({
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        ...message,
+      })
     },
 
-    /** 更新最后一条 AI 消息（用于流式追加） */
-    updateLastAssistantMessage(content) {
-      const lastMsg = this.messages[this.messages.length - 1];
-      if (lastMsg && lastMsg.role === "assistant") {
-        lastMsg.content = content;
+    appendAssistantContent(content) {
+      const lastMsg = this.messages[this.messages.length - 1]
+      if (lastMsg?.role === 'assistant') {
+        lastMsg.content += content
       }
     },
 
-    /** 设置加载状态 */
-    setLoading(loading) {
-      this.isLoading = loading;
+    setToolCall(toolCall) {
+      this.currentToolCall = toolCall
     },
 
-    /** 中断当前流式请求 */
-    abort() {
-      if (this.abortController) {
-        this.abortController();
-        this.abortController = null;
-        this.isLoading = false;
-      }
+    setSelectedImage(file) {
+      this.clearImage()
+      this.selectedImage = file
+      this.imagePreviewUrl = URL.createObjectURL(file)
     },
 
-    /** 新建对话 */
+    clearImage() {
+      if (this.imagePreviewUrl) URL.revokeObjectURL(this.imagePreviewUrl)
+      this.selectedImage = null
+      this.imagePreviewUrl = ''
+    },
+
+    stopStreaming() {
+      this.abortController?.()
+      this.abortController = null
+      this.isStreaming = false
+    },
+
     newChat() {
-      this.currentSessionId = null;
-      this.messages = [];
-      this.abort();
-    },
-
-    /** 清除所有状态 */
-    clear() {
-      this.currentSessionId = null;
-      this.messages = [];
-      this.sessions = [];
-      this.abort();
+      this.stopStreaming()
+      this.messages.forEach((message) => {
+        if (message.imagePreviewUrl) URL.revokeObjectURL(message.imagePreviewUrl)
+      })
+      this.currentSessionId = crypto.randomUUID()
+      this.messages = []
+      this.currentToolCall = null
+      this.errorMessage = ''
+      this.clearImage()
     },
   },
-});
+})

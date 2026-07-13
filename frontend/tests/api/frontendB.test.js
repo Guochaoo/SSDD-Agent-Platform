@@ -67,6 +67,7 @@ describe("前端 B 训练与看板适配", () => {
   it("统一训练任务和指标字段", () => {
     expect(
       normalizeTask({
+        id: 21,
         task_uuid: "task-1",
         task_name: "基线训练",
         model_name: "YOLO11n",
@@ -75,7 +76,8 @@ describe("前端 B 训练与看板适配", () => {
         total_epochs: 100,
       }),
     ).toMatchObject({
-      taskId: "task-1",
+      taskId: 21,
+      taskUuid: "task-1",
       taskName: "基线训练",
       currentEpoch: 10,
       totalEpochs: 100,

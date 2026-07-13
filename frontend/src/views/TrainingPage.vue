@@ -105,7 +105,7 @@ import { List, Loading, Plus, Refresh, Timer, TrendCharts } from "@element-plus/
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { getTrainingDetailApi, getTrainingTasksApi, startTrainingApi } from "@/api/training";
-import { isFrontendBMockMode } from "@/api/models";
+import { getScenesApi, isFrontendBMockMode } from "@/api/models";
 import EChartPanel from "@/components/charts/EChartPanel.vue";
 import StatCard from "@/components/charts/StatCard.vue";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
@@ -128,7 +128,8 @@ const statusOptions = [
   { label: "失败", value: "failed" },
 ];
 
-const trainingForm = reactive({ taskName: "钢铁缺陷模型训练", modelName: "YOLO11n", epochs: 100, imgSize: 640, batchSize: 16, datasetName: "NEU 钢铁缺陷数据集" });
+const scenes = ref([]);
+const trainingForm = reactive({ sceneId: "", taskName: "钢铁缺陷模型训练", modelName: "YOLO11n", epochs: 100, imgSize: 640, batchSize: 16, datasetName: "NEU 钢铁缺陷数据集" });
 const filteredTasks = computed(() => statusFilter.value === "all" ? tasks.value : tasks.value.filter((task) => task.status === statusFilter.value));
 const runningCount = computed(() => tasks.value.filter((task) => task.status === "running").length);
 const bestMap50 = computed(() => Math.max(0, ...tasks.value.map((task) => Number(task.map50 || 0))) * 100);
@@ -144,6 +145,8 @@ function formatPercent(value) { return value == null ? "—" : `${(Number(value)
 async function loadTasks() {
   loading.value = true;
   try {
+    scenes.value = await getScenesApi();
+    if (!trainingForm.sceneId) trainingForm.sceneId = scenes.value[0]?.id || "";
     tasks.value = await getTrainingTasksApi();
     if (!selectedTaskId.value && tasks.value.length) await selectTask(tasks.value[0].taskId);
   } catch { ElMessage.error("训练任务加载失败"); }
@@ -170,6 +173,10 @@ function setupPolling() {
 }
 
 async function createTraining() {
+  if (!trainingForm.sceneId) {
+    ElMessage.warning("请先创建或选择检测场景");
+    return;
+  }
   creating.value = true;
   try {
     const task = await startTrainingApi(trainingForm);
