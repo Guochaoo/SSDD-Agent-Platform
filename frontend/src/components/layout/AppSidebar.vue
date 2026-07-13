@@ -3,7 +3,7 @@
     <el-menu
       :default-active="activeMenu"
       :router="true"
-      background-color="#304156"
+      background-color="#1d1e1f"
       text-color="#bfcbd9"
       active-text-color="#409eff"
     >

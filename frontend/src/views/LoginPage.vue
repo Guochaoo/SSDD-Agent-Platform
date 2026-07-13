@@ -7,10 +7,6 @@
           <SilkCanvas :speed="6.5" :scale="0.8" color="#1f1f1f" :noise-intensity="0" :rotation="0" />
         </div>
         <div class="silk-overlay" />
-        <router-link to="/" class="back-link left-back">
-          <el-icon><ArrowLeft /></el-icon>
-          返回首页
-        </router-link>
 
         <div class="brand-text">
           <h2>
@@ -21,7 +17,7 @@
           <p>
             钢铁表面缺陷检测智能体平台
             <br />
-            基于 YOLOv11，智能识别与训练一站式。
+            基于 YOLOv11,智能识别与训练一站式。
           </p>
         </div>
       </div>
@@ -29,13 +25,9 @@
       <!-- Right — login form -->
       <div class="login-right">
         <div class="form-container">
-          <router-link to="/" class="back-link mobile-back">
-            <el-icon><ArrowLeft /></el-icon>
-            返回
-          </router-link>
 
           <div class="form-header">
-            <h1>登录</h1>
+            <h1>欢迎回来</h1>
             <p>输入账号与密码继续。</p>
           </div>
 
@@ -107,7 +99,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock, View, Hide, ArrowLeft } from '@element-plus/icons-vue'
+import { User, Lock, View, Hide } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import SilkCanvas from '@/components/SilkCanvas.vue'
 
@@ -195,7 +187,7 @@ async function handleLogin() {
   position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 48px;
   overflow: hidden;
 
@@ -218,27 +210,11 @@ async function handleLogin() {
   background: linear-gradient(to bottom right, rgba(0, 0, 0, 0.2) 0%, transparent 50%, rgba(0, 0, 0, 0.4) 100%);
 }
 
-.back-link {
-  position: relative;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
-  text-decoration: none;
-  transition: color 0.2s;
-
-  &:hover {
-    color: #fff;
-  }
-}
-
 .brand-text {
   position: relative;
   z-index: 2;
   color: #fff;
+  margin-top: auto;
 
   h2 {
     font-size: 40px;
@@ -275,20 +251,6 @@ async function handleLogin() {
   max-width: 360px;
 }
 
-.mobile-back {
-  margin-bottom: 24px;
-  color: #737373;
-  font-size: 14px;
-
-  &:hover {
-    color: #171717;
-  }
-
-  @media (min-width: 769px) {
-    display: none;
-  }
-}
-
 .form-header {
   margin-bottom: 28px;
 
@@ -311,14 +273,14 @@ async function handleLogin() {
 .field-label {
   display: block;
   width: 100%;
-  margin-bottom: 6px;
+  margin-bottom: 0px;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: #404040;
 }
 
 :deep(.el-form-item) {
-  margin-bottom: 20px;
+  margin-bottom: 15px;
 
   .el-form-item__content {
     flex-direction: column;
