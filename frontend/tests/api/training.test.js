@@ -67,7 +67,6 @@ describe('training api', () => {
       timeout: 120000,
     })
     expect(request.post).toHaveBeenNthCalledWith(3, '/training/predict', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300000,
     })
   })

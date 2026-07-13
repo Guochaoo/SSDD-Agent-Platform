@@ -233,7 +233,12 @@
       <el-form :model="trainForm" label-width="110px">
         <el-form-item label="检测场景">
           <el-select v-model="trainForm.scene_id" class="full-width" placeholder="选择场景">
-            <el-option label="钢铁表面缺陷检测" :value="1" />
+            <el-option
+              v-for="scene in scenes"
+              :key="scene.id"
+              :label="scene.displayName || scene.name"
+              :value="Number(scene.id)"
+            />
           </el-select>
         </el-form-item>
 
@@ -438,6 +443,7 @@ import {
   stopTraining,
   validateTrainingModel,
 } from '@/api/training'
+import { getScenesApi } from '@/api/models'
 
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
@@ -477,7 +483,7 @@ const predictChartRef = ref(null)
 let predictChart = null
 
 const trainForm = ref({
-  scene_id: 1,
+  scene_id: null,
   model_name: 'yolo11n',
   epochs: 50,
   batch_size: 8,
@@ -486,6 +492,7 @@ const trainForm = ref({
   optimizer: 'SGD',
   lr0: 0.01,
 })
+const scenes = ref([])
 
 const metricCards = computed(() => {
   const task = selectedTask.value
@@ -623,6 +630,8 @@ function normalizeTaskStatusResponse(response) {
 async function fetchTasks() {
   loadingTasks.value = true
   try {
+    scenes.value = await getScenesApi()
+    if (!trainForm.value.scene_id) trainForm.value.scene_id = Number(scenes.value[0]?.id) || null
     const response = await getTrainingTasks()
     taskList.value = response.items || []
   } catch (error) {
@@ -763,6 +772,10 @@ function stopPolling() {
 }
 
 async function createTask() {
+  if (!trainForm.value.scene_id) {
+    ElMessage.warning('请先选择检测场景')
+    return
+  }
   creating.value = true
   try {
     const response = await startTraining(trainForm.value)

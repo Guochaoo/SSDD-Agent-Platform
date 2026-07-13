@@ -30,6 +30,14 @@ import os
 
 logger = get_logger(__name__)
 
+
+def _training_feature_not_implemented() -> None:
+    """Keep the frontend contract explicit until the worker service is wired."""
+    raise HTTPException(
+        status_code=501,
+        detail="Training evaluation/export/prediction service has not been integrated yet.",
+    )
+
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
 
 
@@ -204,3 +212,34 @@ async def get_results_csv(
         media_type="text/csv",
         filename=f"training_results_{task_uuid}.csv",
     )
+
+
+@router.post("/validate/{task_id}")
+async def validate_training_model(
+    task_id: int,
+    _current_user=Depends(get_current_user),
+):
+    _training_feature_not_implemented()
+
+
+@router.post("/export/{task_id}")
+async def export_training_model(
+    task_id: int,
+    _current_user=Depends(get_current_user),
+):
+    _training_feature_not_implemented()
+
+
+@router.get("/download/{task_id}")
+async def download_training_model(
+    task_id: int,
+    _current_user=Depends(get_current_user),
+):
+    _training_feature_not_implemented()
+
+
+@router.post("/predict")
+async def predict_training_image(
+    _current_user=Depends(get_current_user),
+):
+    _training_feature_not_implemented()
