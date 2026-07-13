@@ -90,3 +90,55 @@ export async function startTrainingApi(payload) {
 }
 
 export { normalizeMetric, normalizeTask };
+ 
+// Raw endpoint adapters used by the richer training workbench. The normalized
+// adapters above remain available to the existing dev dashboard.
+
+export function getTrainingTasks() {
+  return request.get('/training/tasks')
+}
+
+export function startTraining(payload) {
+  return request.post('/training/start', payload)
+}
+
+export function getTrainingStatus(taskId) {
+  return request.get(`/training/status/${taskId}`)
+}
+
+export function getTrainingMetrics(taskId) {
+  return request.get(`/training/metrics/${taskId}`)
+}
+
+export function stopTraining(taskId) {
+  return request.post(`/training/stop/${taskId}`)
+}
+
+export function downloadTrainingResults(taskUuid) {
+  return request.get(`/training/results/${taskUuid}`, {
+    responseType: 'blob',
+  })
+}
+
+export function validateTrainingModel(taskId, payload) {
+  return request.post(`/training/validate/${taskId}`, payload, {
+    timeout: 300000,
+  })
+}
+
+export function exportTrainingModel(taskId, payload) {
+  return request.post(`/training/export/${taskId}`, payload)
+}
+
+export function downloadTrainingModel(taskId) {
+  return request.get(`/training/download/${taskId}`, {
+    responseType: 'blob',
+    timeout: 120000,
+  })
+}
+
+export function predictTrainingImage(payload) {
+  return request.post('/training/predict', payload, {
+    timeout: 300000,
+  })
+}
