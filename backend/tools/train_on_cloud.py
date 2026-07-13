@@ -113,6 +113,8 @@ def main():
         mosaic=args.mosaic,
         mixup=args.mixup,
         fliplr=args.fliplr,
+        scale=0.3,
+        cos_lr=True
     )
 
     # ── 输出训练结果摘要 ──
