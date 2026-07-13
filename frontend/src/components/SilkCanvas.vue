@@ -19,6 +19,21 @@ const containerRef = ref(null)
 let renderer, scene, camera, mesh, animationId
 let clock = new THREE.Clock()
 
+const disposeScene = () => {
+  cancelAnimationFrame(animationId)
+  if (mesh) {
+    mesh.geometry.dispose()
+    mesh.material.dispose()
+    mesh = null
+  }
+  if (renderer) {
+    renderer.dispose()
+    renderer = null
+  }
+  scene = null
+  camera = null
+}
+
 const hexToNormalizedRGB = (hex) => {
   hex = hex.replace('#', '')
   return [
@@ -138,45 +153,41 @@ onMounted(() => {
   const el = containerRef.value
   if (!el) return
 
-  const { width, height } = el.getBoundingClientRect()
+  try {
+    const { width, height } = el.getBoundingClientRect()
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.setSize(width, height)
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setSize(width, height)
 
-  scene = new THREE.Scene()
-  camera = new THREE.OrthographicCamera(
-    width / -2, width / 2,
-    height / 2, height / -2,
-    0.1, 10
-  )
-  camera.position.z = 1
+    scene = new THREE.Scene()
+    camera = new THREE.OrthographicCamera(
+      width / -2, width / 2,
+      height / 2, height / -2,
+      0.1, 10
+    )
+    camera.position.z = 1
 
-  const geometry = new THREE.PlaneGeometry(1, 1)
-  const material = createShaderMaterial()
-  mesh = new THREE.Mesh(geometry, material)
-  mesh.scale.set(width, height, 1)
-  scene.add(mesh)
+    const geometry = new THREE.PlaneGeometry(1, 1)
+    const material = createShaderMaterial()
+    mesh = new THREE.Mesh(geometry, material)
+    mesh.scale.set(width, height, 1)
+    scene.add(mesh)
 
-  el.appendChild(renderer.domElement)
+    el.appendChild(renderer.domElement)
 
-  window.addEventListener('resize', resize)
-  clock = new THREE.Clock()
-  animate()
+    window.addEventListener('resize', resize)
+    clock = new THREE.Clock()
+    animate()
+  } catch {
+    // The login form must remain usable on browsers without WebGL support.
+    disposeScene()
+  }
 })
 
 onUnmounted(() => {
-  cancelAnimationFrame(animationId)
   window.removeEventListener('resize', resize)
-  if (renderer) {
-    renderer.dispose()
-    renderer = null
-  }
-  if (mesh) {
-    mesh.geometry.dispose()
-    mesh.material.dispose()
-    mesh = null
-  }
+  disposeScene()
 })
 
 watch(() => [props.color, props.speed, props.scale, props.rotation, props.noiseIntensity], updateUniforms)
@@ -189,6 +200,7 @@ watch(() => [props.color, props.speed, props.scale, props.rotation, props.noiseI
   position: absolute;
   inset: 0;
   overflow: hidden;
+  background: #1f1f1f;
 
   canvas {
     display: block;
