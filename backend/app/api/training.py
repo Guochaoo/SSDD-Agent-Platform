@@ -8,9 +8,18 @@
   - GET    /api/training/metrics/{task_id}   获取训练指标历史（所有 epoch）
   - POST   /api/training/stop/{task_id}      停止训练任务
   - GET    /api/training/results/{task_uuid}  获取 results.csv 原始数据
+  - POST   /api/training/validate/{task_id}  模型评估
+  - POST   /api/training/export/{task_id}    模型导出
+  - GET    /api/training/download/{task_id}  下载模型权重
+  - POST   /api/training/predict            测试图验证
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+import base64
+import os
+import tempfile
+
+import cv2
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -18,25 +27,17 @@ from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import get_db
+from app.entity.db_models import TrainingTask
 from app.entity.schemas import (
+    ModelExportRequest,
+    ModelValidateRequest,
+    TrainingMetricResponse,
     TrainingTaskCreate,
     TrainingTaskResponse,
-    TrainingMetricResponse,
 )
-from app.entity.db_models import TrainingTask
 from app.training.training_service import training_service
 
-import os
-
 logger = get_logger(__name__)
-
-
-def _training_feature_not_implemented() -> None:
-    """Keep the frontend contract explicit until the worker service is wired."""
-    raise HTTPException(
-        status_code=501,
-        detail="Training evaluation/export/prediction service has not been integrated yet.",
-    )
 
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
 
@@ -217,29 +218,182 @@ async def get_results_csv(
 @router.post("/validate/{task_id}")
 async def validate_training_model(
     task_id: int,
-    _current_user=Depends(get_current_user),
+    request: ModelValidateRequest = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    _training_feature_not_implemented()
+    """
+    对已完成训练的模型执行评估
+
+    - 在验证集或测试集上运行 model.val()
+    - 返回 mAP、Precision、Recall 等指标
+    - 返回每类 AP 分析
+    - 自动创建/更新 ModelVersion 记录
+    """
+    _check_task_access(db, task_id, current_user)
+    if request is None:
+        request = ModelValidateRequest()
+
+    result = training_service.validate_model(
+        db=db, task_id=task_id,
+        split=request.split, conf=request.conf, iou=request.iou,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    logger.info(
+        "用户 %s 评估模型: task_id=%d, mAP50=%.4f",
+        current_user.username, task_id,
+        result.get("overall", {}).get("map50", 0),
+    )
+    return result
 
 
 @router.post("/export/{task_id}")
 async def export_training_model(
     task_id: int,
-    _current_user=Depends(get_current_user),
+    request: ModelExportRequest = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    _training_feature_not_implemented()
+    """
+    导出训练好的模型为正式版本
+
+    - 复制 best.pt 到 models/ 目录
+    - 运行评估获取最终指标
+    - 保存评估报告 JSON
+    - 创建 ModelVersion 记录
+    - 可选上传到 MinIO
+    """
+    _check_task_access(db, task_id, current_user)
+    if request is None:
+        request = ModelExportRequest()
+
+    result = training_service.export_model(
+        db=db, task_id=task_id,
+        version=request.version, description=request.description,
+        set_default=request.set_default, upload_minio=request.upload_minio,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    logger.info(
+        "用户 %s 导出模型: task_id=%d, version=%s",
+        current_user.username, task_id, result.get("version"),
+    )
+    return result
 
 
 @router.get("/download/{task_id}")
 async def download_training_model(
     task_id: int,
-    _current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    _training_feature_not_implemented()
+    """下载训练好的模型权重文件（best.pt）"""
+    _check_task_access(db, task_id, current_user)
+    result = training_service.get_model_download_path(db, task_id)
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    logger.info(
+        "用户 %s 下载模型: task_id=%d, file=%s",
+        current_user.username, task_id, result["filename"],
+    )
+    return FileResponse(
+        path=result["file_path"],
+        media_type="application/octet-stream",
+        filename=result["filename"],
+    )
 
 
 @router.post("/predict")
 async def predict_training_image(
-    _current_user=Depends(get_current_user),
+    file: UploadFile = File(..., description="测试图片"),
+    task_id: int = Form(..., description="训练任务 ID"),
+    conf: float = Form(0.25, description="置信度阈值"),
+    iou: float = Form(0.45, description="NMS IoU 阈值"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    _training_feature_not_implemented()
+    """
+    上传测试图片，使用训练好的模型进行预测
+
+    - 使用 best.pt 进行推理
+    - 返回标注图 (base64) + 检测结果列表
+    """
+    from ultralytics import YOLO
+
+    allowed_types = {"image/jpeg", "image/png", "image/bmp", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型: {file.content_type}",
+        )
+
+    _check_task_access(db, task_id, current_user)
+    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="训练任务未完成")
+
+    weights_path = os.path.join(
+        os.getcwd(), settings.TRAIN_OUTPUT_DIR,
+        f"task_{task.task_uuid}", "weights", "best.pt",
+    )
+    if not os.path.exists(weights_path):
+        raise HTTPException(status_code=404, detail="模型权重不存在")
+
+    with tempfile.NamedTemporaryFile(
+        suffix=os.path.splitext(file.filename)[1] or ".jpg", delete=False,
+    ) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        model = YOLO(weights_path)
+        results = model.predict(
+            source=tmp_path, conf=conf, iou=iou,
+            imgsz=task.img_size, device="cpu", save=False, verbose=False,
+        )
+
+        r = results[0]
+        detections = []
+        if r.boxes is not None and len(r.boxes) > 0:
+            for box in r.boxes:
+                cls_id = int(box.cls[0])
+                cls_name = model.names.get(cls_id, f"class_{cls_id}")
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                detections.append({
+                    "class_name": cls_name,
+                    "class_id": cls_id,
+                    "confidence": round(float(box.conf[0]), 4),
+                    "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
+                })
+
+        annotated_img = r.plot()
+        _, buf = cv2.imencode(".jpg", annotated_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        annotated_b64 = base64.b64encode(buf).decode("utf-8")
+
+        class_counts = {}
+        for d in detections:
+            class_counts[d["class_name"]] = class_counts.get(d["class_name"], 0) + 1
+
+        return {
+            "task_id": task_id,
+            "task_uuid": task.task_uuid,
+            "filename": file.filename,
+            "total_objects": len(detections),
+            "detections": detections,
+            "class_counts": class_counts,
+            "annotated_image": annotated_b64,
+            "inference_time": round(float(r.speed.get("inference", 0)), 2),
+        }
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
