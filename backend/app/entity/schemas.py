@@ -9,7 +9,7 @@ Pydantic 请求/响应模型
   - List 模型：分页列表查询的参数和响应
 """
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -335,9 +335,11 @@ class ModelVersionCreate(BaseModel):
 
 class ModelValidateRequest(BaseModel):
     """模型评估请求"""
-    split: str = Field(default="val", description="评估数据集划分: val / test / train")
-    conf: float = Field(default=0.001, description="置信度阈值")
-    iou: float = Field(default=0.6, description="NMS IoU 阈值")
+    split: Literal["val", "test", "train"] = Field(
+        default="val", description="评估数据集划分: val / test / train"
+    )
+    conf: float = Field(default=0.001, ge=0, le=1, description="置信度阈值")
+    iou: float = Field(default=0.6, ge=0, le=1, description="NMS IoU 阈值")
 
 
 class ModelExportRequest(BaseModel):
@@ -361,6 +363,8 @@ class ModelExportResponse(BaseModel):
     is_default: bool
     message: str
 
+    model_config = ConfigDict(protected_namespaces=())
+
 
 class ModelValidateResponse(BaseModel):
     """模型评估响应"""
@@ -371,6 +375,8 @@ class ModelValidateResponse(BaseModel):
     per_class: dict
     model_version_id: Optional[int] = None
     model_version: Optional[str] = None
+
+    model_config = ConfigDict(protected_namespaces=())
 
 
 # ══════════════════════════════════════════════════════════════

@@ -805,6 +805,15 @@ class TrainingService:
         if not scene:
             return {"error": "关联场景不存在"}
 
+        # 导出结果的指标必须来自一次成功的验证。若验证失败，不能生成
+        # 看似可用但没有可靠评估数据的模型版本或导出目录。
+        eval_result = TrainingService.validate_model(db, task_id, split="val")
+        if "error" in eval_result:
+            return {"error": f"模型导出前评估失败: {eval_result['error']}"}
+
+        overall = eval_result["overall"]
+        per_class = eval_result["per_class"]
+
         if not version:
             existing_count = (
                 db.query(ModelVersion)
@@ -840,11 +849,6 @@ class TrainingService:
             src = os.path.join(task_output_dir, plot_name)
             if os.path.exists(src):
                 shutil.copy2(src, os.path.join(export_dir, plot_name))
-
-        # 运行评估获取最终指标
-        eval_result = TrainingService.validate_model(db, task_id, split="val")
-        overall = eval_result.get("overall", {})
-        per_class = eval_result.get("per_class", {})
 
         # 保存评估报告 JSON
         report = {
