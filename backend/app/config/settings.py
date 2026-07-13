@@ -16,9 +16,9 @@ class Settings(BaseSettings):
 
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
-    DB_NAME: str = "ssdd_agent"
-    DB_USER: str = "admin"
-    DB_PASSWORD: str = "admin"
+    DB_NAME: str = "rsod_agent"
+    DB_USER: str = "rsod_admin"
+    DB_PASSWORD: str = "rsod_admin"
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_BUCKET: str = "ssdd-images"
+    MINIO_BUCKET: str = "rsod-agent-images"
     MINIO_SECURE: bool = False
 
     # Training paths are configurable instead of being tied to one checkout.
