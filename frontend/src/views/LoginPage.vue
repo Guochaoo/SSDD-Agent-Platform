@@ -3,8 +3,8 @@
     <div class="login-card">
       <div class="login-header">
         <img src="/favicon.svg" alt="logo" class="login-logo" />
-        <h2>SSDD Agent Platform</h2>
-        <p>YOLOv11 object detection agent platform</p>
+        <h2>RSOD Agent Platform</h2>
+        <p>基于 YOLOv11 的目标检测智能体平台</p>
       </div>
 
       <el-form
@@ -18,7 +18,7 @@
         <el-form-item prop="username">
           <el-input
             v-model="loginForm.username"
-            placeholder="Username"
+            placeholder="请输入用户名"
             prefix-icon="User"
           />
         </el-form-item>
@@ -27,7 +27,7 @@
           <el-input
             v-model="loginForm.password"
             type="password"
-            placeholder="Password"
+            placeholder="请输入密码"
             prefix-icon="Lock"
             show-password
             @keyup.enter="handleLogin"
@@ -41,65 +41,69 @@
             :loading="loading"
             @click="handleLogin"
           >
-            Login
+            登 录
           </el-button>
         </el-form-item>
       </el-form>
 
       <div class="login-footer">
-        <span>No account?</span>
-        <router-link to="/register">Register</router-link>
+        <span>还没有账号？</span>
+        <router-link to="/register">立即注册</router-link>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { useUserStore } from '@/stores/user'
+import { useUserStore } from "@/stores/user";
+import { ElMessage } from "element-plus";
+import { reactive, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-const router = useRouter()
-const route = useRoute()
-const userStore = useUserStore()
+const router = useRouter();
+const route = useRoute();
+const userStore = useUserStore();
 
-const formRef = ref(null)
-const loading = ref(false)
+const formRef = ref(null);
+const loading = ref(false);
 
+/** 登录表单数据 */
 const loginForm = reactive({
-  username: '',
-  password: '',
-})
+  username: "",
+  password: "",
+});
 
+/** 表单验证规则 */
 const loginRules = {
   username: [
-    { required: true, message: 'Please enter username', trigger: 'blur' },
-    { min: 3, max: 50, message: 'Username must be 3-50 characters', trigger: 'blur' },
+    { required: true, message: "请输入用户名", trigger: "blur" },
+    { min: 3, max: 50, message: "用户名长度为 3-50 个字符", trigger: "blur" },
   ],
   password: [
-    { required: true, message: 'Please enter password', trigger: 'blur' },
-    { min: 6, message: 'Password must be at least 6 characters', trigger: 'blur' },
+    { required: true, message: "请输入密码", trigger: "blur" },
+    { min: 6, message: "密码至少 6 个字符", trigger: "blur" },
   ],
-}
+};
 
+/** 处理登录 */
 async function handleLogin() {
-  const valid = await formRef.value.validate().catch(() => false)
-  if (!valid) return
+  const valid = await formRef.value.validate().catch(() => false);
+  if (!valid) return;
 
-  loading.value = true
+  loading.value = true;
   try {
     await userStore.login({
       username: loginForm.username,
       password: loginForm.password,
-    })
+    });
+    ElMessage.success("登录成功");
 
-    ElMessage.success('Login successful')
-
-    const redirect = route.query.redirect || '/'
-    router.push(redirect)
+    const redirect = route.query.redirect || "/";
+    router.push(redirect);
+  } catch {
+    // 错误已在 Axios 拦截器中统一处理
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 </script>
