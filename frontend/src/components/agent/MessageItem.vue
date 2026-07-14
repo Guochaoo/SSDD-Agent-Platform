@@ -19,6 +19,26 @@
         :result="message.detectionResult"
         :preview-url="message.detectionPreviewUrl"
       />
+
+      <div v-if="message.toolCalls?.length" class="tool-trace">
+        <div
+          v-for="tool in message.toolCalls"
+          :key="tool.id || tool.name || tool.tool_name"
+          class="tool-trace-item"
+        >
+          <span class="tool-name">{{ getToolName(tool) }}</span>
+          <el-tag :type="getToolTag(tool)" size="small">{{ getToolStatus(tool) }}</el-tag>
+        </div>
+      </div>
+
+      <el-alert
+        v-if="message.status === 'error'"
+        :title="message.errorMessage || '智能体响应失败，请重试'"
+        type="error"
+        :closable="false"
+        show-icon
+        class="message-error"
+      />
     </div>
 
     <div v-if="!isLastStreaming && message.content" class="msg-footer">
@@ -69,6 +89,33 @@ function handleCopy() {
     clearTimeout(copyTimer)
     copyTimer = setTimeout(() => { copied.value = false }, 2000)
   }).catch(() => {})
+}
+
+function getToolName(tool) {
+  const name = tool.name || tool.tool_name || 'tool'
+  const map = {
+    detect_single: '单图检测工具',
+    detect_batch: '批量检测工具',
+    detection_tool: '缺陷检测工具',
+    history_query: '检测历史工具',
+    knowledge_search: '知识库检索工具',
+  }
+  return map[name] || name
+}
+
+function getToolStatus(tool) {
+  const map = {
+    running: '运行中',
+    success: '成功',
+    error: '失败',
+  }
+  return map[tool.status] || '已调用'
+}
+
+function getToolTag(tool) {
+  if (tool.status === 'success') return 'success'
+  if (tool.status === 'error') return 'danger'
+  return 'warning'
 }
 </script>
 
@@ -219,5 +266,32 @@ function handleCopy() {
   margin-left: 4px;
   font-size: 11px;
   color: #c0c4cc;
+}
+
+.tool-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f0f0f0;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.tool-trace-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.tool-name {
+  color: #525252;
+}
+
+.message-error {
+  margin-top: 12px;
 }
 </style>

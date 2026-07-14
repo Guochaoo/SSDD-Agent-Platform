@@ -170,8 +170,12 @@ import { CloseBold, Close, UploadFilled } from '@element-plus/icons-vue'
 import { Image, ArrowUpStroke } from '@boxicons/vue'
 import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
-import { useLlmStore } from '@/stores/llm'
-import { streamAgentChat } from '@/api/agent'
+import { DEFAULT_LLM_MODEL_VALUE, useLlmStore } from '@/stores/llm'
+import {
+  getAgentDetectionHistoryApi,
+  searchAgentKnowledgeApi,
+  streamAgentChat,
+} from '@/api/agent'
 import { detectBatchApi, detectSingleApi } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
 import MessageList from '@/components/agent/MessageList.vue'
@@ -358,7 +362,6 @@ async function getQuickDetectOptions() {
 
 async function runSingleDetect(file, options) {
   const previewUrl = URL.createObjectURL(file)
-  agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
   agentStore.addMessage({
     role: 'user',
     content: `[快捷单图检测] ${file.name}`,
@@ -368,6 +371,7 @@ async function runSingleDetect(file, options) {
     role: 'assistant',
     content: '正在进行单图检测，请稍候……',
   })
+  agentStore.setToolCall({ name: 'detect_single', status: 'running', input: { fileName: file.name } })
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
@@ -375,10 +379,10 @@ async function runSingleDetect(file, options) {
     assistantMessage.content = `单图检测完成，共发现 ${result.totalObjects || 0} 个疑似缺陷。`
     assistantMessage.detectionResult = result
     assistantMessage.detectionPreviewUrl = previewUrl
-    agentStore.currentToolCall = { name: 'detect_single', status: 'success', result }
+    agentStore.setToolCall({ name: 'detect_single', status: 'success', result })
   } catch (error) {
     assistantMessage.content = '单图检测失败，请稍后重试。'
-    agentStore.currentToolCall = { name: 'detect_single', status: 'error', error }
+    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || '单图检测失败' })
     ElMessage.error(error?.response?.data?.detail || '单图检测失败')
   } finally {
     saveCurrentSession()
@@ -386,7 +390,6 @@ async function runSingleDetect(file, options) {
 }
 
 async function runBatchDetect(files, options) {
-  agentStore.currentToolCall = { name: 'detect_batch', status: 'running' }
   agentStore.addMessage({
     role: 'user',
     content: `[快捷批量检测] ${files.length} 张图片`,
@@ -395,6 +398,7 @@ async function runBatchDetect(files, options) {
     role: 'assistant',
     content: '正在进行批量检测，请稍候……',
   })
+  agentStore.setToolCall({ name: 'detect_batch', status: 'running', input: { count: files.length } })
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
@@ -402,10 +406,10 @@ async function runBatchDetect(files, options) {
     const totalObjects = (result.items || []).reduce((sum, item) => sum + Number(item.totalObjects || 0), 0)
     assistantMessage.content = `批量检测完成，共处理 ${result.items?.length || files.length} 张图片，发现 ${totalObjects} 个疑似缺陷。`
     assistantMessage.detectionResult = result
-    agentStore.currentToolCall = { name: 'detect_batch', status: 'success', result }
+    agentStore.setToolCall({ name: 'detect_batch', status: 'success', result })
   } catch (error) {
     assistantMessage.content = '批量检测失败，请稍后重试。'
-    agentStore.currentToolCall = { name: 'detect_batch', status: 'error', error }
+    agentStore.setToolCall({ name: 'detect_batch', status: 'error', error: error?.message || '批量检测失败' })
     ElMessage.error(error?.response?.data?.detail || '批量检测失败')
   } finally {
     saveCurrentSession()
@@ -413,16 +417,41 @@ async function runBatchDetect(files, options) {
 }
 
 function handleAgentEvent(event) {
-  if (event.type === 'text_delta') { agentStore.appendAssistantContent(event.content || '') }
-  if (event.type === 'tool_start') { agentStore.setToolCall({ name: event.tool_name, status: 'running', input: event.input }) }
+  if (event.type === 'text_delta' || event.type === 'text_chunk') {
+    const content = event.content || ''
+    const lastMsg = agentStore.messages[agentStore.messages.length - 1]
+    if (lastMsg?.detectionResult && isStaleMockDetectionText(content)) return
+    agentStore.appendAssistantContent(content)
+  }
+  if (event.type === 'tool_start') {
+    agentStore.setToolCall({
+      id: event.tool_call_id || event.tool_name,
+      name: event.tool_name,
+      status: 'running',
+      input: event.input,
+    })
+  }
   if (event.type === 'tool_result') {
-    agentStore.setToolCall({ name: event.tool_name, status: 'success', result: event.result })
+    agentStore.setToolCall({
+      id: event.tool_call_id || event.tool_name,
+      name: event.tool_name,
+      status: 'success',
+      result: event.result,
+    })
     attachToolResultCard(event.result)
   }
-  if (event.type === 'message_end') { agentStore.isStreaming = false }
+  if (event.type === 'message_end') {
+    agentStore.isStreaming = false
+    agentStore.setConnectionStatus('idle')
+    const lastMsg = agentStore.messages[agentStore.messages.length - 1]
+    if (lastMsg?.role === 'assistant') lastMsg.status = 'done'
+    saveCurrentSession()
+  }
   if (event.type === 'error') {
     agentStore.errorMessage = event.message || '智能体请求失败'
     agentStore.isStreaming = false
+    agentStore.setConnectionStatus('error')
+    agentStore.markLastAssistantError(agentStore.errorMessage)
     ElMessage.error(agentStore.errorMessage)
   }
 }
@@ -456,34 +485,79 @@ function attachToolResultCard(rawResult) {
     })),
   }
   assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrl || ''
+  assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)
+  saveCurrentSession()
+}
+
+function isStaleMockDetectionText(content) {
+  return /检测到\s*1\s*处疑似划痕缺陷|置信度约为\s*91|建议进一步检查该区域/.test(content)
 }
 
 function doSend(text) {
-  agentStore.addMessage({ role: 'assistant', content: '' })
+  agentStore.addMessage({ role: 'assistant', content: '', status: 'streaming', toolCalls: [] })
   agentStore.isStreaming = true
+  agentStore.setConnectionStatus('connecting')
   agentStore.currentToolCall = null
   agentStore.errorMessage = ''
 
   const formData = new FormData()
-  formData.append('message', text)
+  formData.append('message', buildContextualMessage(text))
   formData.append('session_id', agentStore.currentSessionId)
-  formData.append('model', model.value)
+  if (model.value && model.value !== DEFAULT_LLM_MODEL_VALUE) {
+    formData.append('model', model.value)
+  }
   if (agentStore.selectedImage) { formData.append('image', agentStore.selectedImage) }
 
   agentStore.abortController = streamAgentChat(formData, {
     onMessage: handleAgentEvent,
+    onRetry: ({ retryCount }) => {
+      agentStore.reconnectCount = retryCount
+      agentStore.setConnectionStatus('reconnecting')
+      ElMessage.warning(`连接中断，正在第 ${retryCount} 次重连...`)
+    },
     onDone: () => {
       agentStore.isStreaming = false
+      agentStore.setConnectionStatus('idle')
       agentStore.abortController = null
       agentStore.clearImage()
       saveCurrentSession()
     },
-    onError: () => {
+    onError: (error) => {
       agentStore.isStreaming = false
+      agentStore.setConnectionStatus('error')
       agentStore.abortController = null
+      agentStore.markLastAssistantError(error?.message || '智能体服务暂不可用')
       ElMessage.error('智能体服务暂不可用')
     },
   })
+}
+
+function buildContextualMessage(text) {
+  const context = buildLocalContext()
+  if (!context) return text
+  return `${text}\n\n[前端上下文]\n${context}`
+}
+
+function buildLocalContext() {
+  const recentMessages = agentStore.messages
+    .slice(-6)
+    .map((message) => `${message.role}: ${message.content || ''}`.slice(0, 180))
+    .join('\n')
+
+  const latestDetection = [...agentStore.messages]
+    .reverse()
+    .find((message) => message.detectionResult)
+
+  const parts = []
+  if (recentMessages) parts.push(`最近对话:\n${recentMessages}`)
+  if (latestDetection?.detectionResult) {
+    parts.push(`最近检测结果: ${JSON.stringify({
+      taskId: latestDetection.detectionResult.taskId,
+      totalObjects: latestDetection.detectionResult.totalObjects,
+      status: latestDetection.detectionResult.status,
+    })}`)
+  }
+  return parts.join('\n')
 }
 
 function handleSend(text) {
@@ -495,11 +569,11 @@ function handleSend(text) {
 }
 
 async function runSingleDetectInChat(file, previewUrl) {
-  agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
   agentStore.addMessage({
     role: 'assistant',
     content: '正在分析钢铁表面图像……',
   })
+  agentStore.setToolCall({ name: 'detect_single', status: 'running', input: { fileName: file.name } })
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
@@ -508,14 +582,27 @@ async function runSingleDetectInChat(file, previewUrl) {
     assistantMessage.content = summarizeDetectionResult(result)
     assistantMessage.detectionResult = result
     assistantMessage.detectionPreviewUrl = previewUrl
-    agentStore.currentToolCall = { name: 'detect_single', status: 'success', result }
+    agentStore.setToolCall({ name: 'detect_single', status: 'success', result })
   } catch (error) {
     assistantMessage.content = '检测失败，请检查后端服务、模型和鉴权状态后重试。'
-    agentStore.currentToolCall = { name: 'detect_single', status: 'error', error }
+    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || '检测失败' })
     ElMessage.error(error?.response?.data?.detail || '检测失败')
   } finally {
     agentStore.clearImage()
     saveCurrentSession()
+  }
+}
+
+async function checkAgentToolContracts() {
+  if (!localStorage.getItem('ssdd_token')) return
+
+  try {
+    await Promise.allSettled([
+      getAgentDetectionHistoryApi({ page: 1, pageSize: 1 }),
+      searchAgentKnowledgeApi('钢铁表面缺陷', { limit: 1 }),
+    ])
+  } catch {
+    // Contract probes are best-effort and must not block chat.
   }
 }
 
@@ -534,6 +621,8 @@ function saveCurrentSession() {
   if (!agentStore.hasMessages) return
   agentStore.saveSession()
 }
+
+checkAgentToolContracts()
 </script>
 
 <style lang="scss" scoped>
