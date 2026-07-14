@@ -417,7 +417,12 @@ async function runBatchDetect(files, options) {
 }
 
 function handleAgentEvent(event) {
-  if (event.type === 'text_delta' || event.type === 'text_chunk') { agentStore.appendAssistantContent(event.content || '') }
+  if (event.type === 'text_delta' || event.type === 'text_chunk') {
+    const content = event.content || ''
+    const lastMsg = agentStore.messages[agentStore.messages.length - 1]
+    if (lastMsg?.detectionResult && isStaleMockDetectionText(content)) return
+    agentStore.appendAssistantContent(content)
+  }
   if (event.type === 'tool_start') {
     agentStore.setToolCall({
       id: event.tool_call_id || event.tool_name,
@@ -480,6 +485,12 @@ function attachToolResultCard(rawResult) {
     })),
   }
   assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrl || ''
+  assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)
+  saveCurrentSession()
+}
+
+function isStaleMockDetectionText(content) {
+  return /检测到\s*1\s*处疑似划痕缺陷|置信度约为\s*91|建议进一步检查该区域/.test(content)
 }
 
 function doSend(text) {

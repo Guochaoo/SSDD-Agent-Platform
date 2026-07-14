@@ -2,7 +2,7 @@ import { streamChat } from '@/utils/stream'
 import request from '@/utils/request'
 import { getHistoryApi, getHistoryDetailApi } from './history'
 
-const USE_MOCK_AGENT = import.meta.env.VITE_USE_MOCK_AGENT !== 'false'
+const USE_MOCK_AGENT = import.meta.env.VITE_USE_MOCK_AGENT === 'true'
 
 export function streamAgentChat(payload, callbacks) {
   if (USE_MOCK_AGENT) {

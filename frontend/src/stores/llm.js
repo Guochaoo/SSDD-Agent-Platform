@@ -5,6 +5,14 @@
 import { defineStore } from 'pinia'
 import request from '@/utils/request'
 
+const FALLBACK_MODELS = [
+  { id: 'qwen3.7-plus', owned_by: 'default' },
+  { id: 'qwen-plus', owned_by: 'default' },
+  { id: 'qwen-max', owned_by: 'default' },
+  { id: 'gpt-4o-mini', owned_by: 'default' },
+  { id: 'gpt-4o', owned_by: 'default' },
+]
+
 export const useLlmStore = defineStore('llm', {
   state: () => ({
     /** 可用模型列表 [{ id, owned_by }] */
@@ -37,12 +45,14 @@ export const useLlmStore = defineStore('llm', {
     },
 
     /** 格式化的模型选项列表（供下拉组件使用） */
-    modelOptions: (state) =>
-      state.models.map((m) => ({
+    modelOptions: (state) => {
+      const source = state.models.length ? state.models : FALLBACK_MODELS
+      return source.map((m) => ({
         label: m.id,
         value: m.id,
         ownedBy: m.owned_by,
-      })),
+      }))
+    },
   },
 
   actions: {
@@ -55,11 +65,13 @@ export const useLlmStore = defineStore('llm', {
       this.error = null
       try {
         const data = await request.get('/agent/models')
-        this.models = data?.models ?? []
+        this.models = data?.models?.length ? data.models : FALLBACK_MODELS
         this.provider = data?.provider ?? null
         this.loaded = true
       } catch (err) {
         this.error = err?.response?.data?.detail || '获取模型列表失败'
+        this.models = FALLBACK_MODELS
+        this.loaded = true
         // 未配置 API Key 时不弹错误，仅记录
         console.warn('[LLM Store] 获取模型列表失败:', this.error)
       } finally {
