@@ -78,6 +78,13 @@
             <span>{{ chip.label }}</span>
           </button>
         </div>
+
+        <QuickDetectBar
+          :disabled="agentStore.isStreaming || isQuickDetecting"
+          @single="handleQuickDetect('single')"
+          @batch="handleQuickDetect('batch')"
+          @zip="handleQuickDetect('zip')"
+        />
       </div>
     </template>
 
@@ -92,6 +99,14 @@
 
       <!-- Prompt card (sticky bottom) -->
       <div class="chat-bottom">
+        <QuickDetectBar
+          class="chat-quick-detect"
+          :disabled="agentStore.isStreaming || isQuickDetecting"
+          @single="handleQuickDetect('single')"
+          @batch="handleQuickDetect('batch')"
+          @zip="handleQuickDetect('zip')"
+        />
+
         <div :class="['prompt-card', { dragover: isDragover }]">
           <div v-if="agentStore.imagePreviewUrl" class="inline-preview">
             <img :src="agentStore.imagePreviewUrl" alt="preview" />
@@ -156,8 +171,11 @@ import { Image, ArrowUpStroke } from '@boxicons/vue'
 import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import { streamAgentChat } from '@/api/agent'
+import { detectBatchApi, detectSingleApi } from '@/api/detection'
+import { getModelsApi, getScenesApi } from '@/api/models'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
+import QuickDetectBar from '@/components/agent/QuickDetectBar.vue'
 
 const agentStore = useAgentStore()
 const userStore = useUserStore()
@@ -168,6 +186,7 @@ const heroTextareaRef = ref(null)
 const chatTextareaRef = ref(null)
 const fileInputRef = ref(null)
 const isDragover = ref(false)
+const isQuickDetecting = ref(false)
 const model = ref('gpt-4o-mini')
 let dragCounter = 0
 
@@ -194,6 +213,32 @@ const quickChips = [
   { label: '这是什么类型的表面缺陷' },
   { label: '如何区分划痕和裂纹' },
 ]
+
+const quickDetectOptions = {
+  confThreshold: 0.25,
+  iouThreshold: 0.45,
+}
+
+function summarizeDetectionResult(result) {
+  const objects = result?.objects || []
+  if (!objects.length) {
+    return '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。'
+  }
+
+  const statMap = new Map()
+  let maxConfidence = 0
+  for (const item of objects) {
+    const key = item.classNameCn || item.className || '未知缺陷'
+    statMap.set(key, (statMap.get(key) || 0) + 1)
+    maxConfidence = Math.max(maxConfidence, Number(item.confidence || 0))
+  }
+
+  const summary = Array.from(statMap.entries())
+    .map(([name, count]) => `${name} ${count} 处`)
+    .join('，')
+
+  return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。`
+}
 
 function onDragEnter() { dragCounter++; isDragover.value = true }
 function onDragOver() {}
@@ -260,6 +305,112 @@ function handleChatSend() {
 
 function handleChipClick(text) { handleSend(text) }
 
+function chooseFiles({ accept, multiple }) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = accept
+    input.multiple = multiple
+    input.onchange = () => resolve(Array.from(input.files || []))
+    input.click()
+  })
+}
+
+async function handleQuickDetect(type) {
+  if (agentStore.isStreaming || isQuickDetecting.value) return
+
+  if (type === 'zip') {
+    ElMessage.warning('当前后端暂未开放 ZIP 检测接口，请先使用批量图片检测')
+    return
+  }
+
+  isQuickDetecting.value = true
+  try {
+    const files = await chooseFiles({
+      accept: 'image/png,image/jpeg',
+      multiple: type === 'batch',
+    })
+    if (!files.length) return
+
+    const options = await getQuickDetectOptions()
+    if (type === 'single') {
+      await runSingleDetect(files[0], options)
+    } else {
+      await runBatchDetect(files, options)
+    }
+  } finally {
+    isQuickDetecting.value = false
+  }
+}
+
+async function getQuickDetectOptions() {
+  const scenes = await getScenesApi()
+  const scene = scenes[0]
+  if (!scene) throw new Error('未找到可用检测场景')
+
+  const models = await getModelsApi(scene.id)
+  const model = models.find((item) => item.isDefault) || models[0]
+  if (!model?.id) throw new Error('未找到可用检测模型')
+
+  return { ...quickDetectOptions, modelId: model.id }
+}
+
+async function runSingleDetect(file, options) {
+  const previewUrl = URL.createObjectURL(file)
+  agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
+  agentStore.addMessage({
+    role: 'user',
+    content: `[快捷单图检测] ${file.name}`,
+    imagePreviewUrl: previewUrl,
+  })
+  agentStore.addMessage({
+    role: 'assistant',
+    content: '正在进行单图检测，请稍候……',
+  })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectSingleApi(file, options)
+    assistantMessage.content = `单图检测完成，共发现 ${result.totalObjects || 0} 个疑似缺陷。`
+    assistantMessage.detectionResult = result
+    assistantMessage.detectionPreviewUrl = previewUrl
+    agentStore.currentToolCall = { name: 'detect_single', status: 'success', result }
+  } catch (error) {
+    assistantMessage.content = '单图检测失败，请稍后重试。'
+    agentStore.currentToolCall = { name: 'detect_single', status: 'error', error }
+    ElMessage.error(error?.response?.data?.detail || '单图检测失败')
+  } finally {
+    saveCurrentSession()
+  }
+}
+
+async function runBatchDetect(files, options) {
+  agentStore.currentToolCall = { name: 'detect_batch', status: 'running' }
+  agentStore.addMessage({
+    role: 'user',
+    content: `[快捷批量检测] ${files.length} 张图片`,
+  })
+  agentStore.addMessage({
+    role: 'assistant',
+    content: '正在进行批量检测，请稍候……',
+  })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectBatchApi(files, options)
+    const totalObjects = (result.items || []).reduce((sum, item) => sum + Number(item.totalObjects || 0), 0)
+    assistantMessage.content = `批量检测完成，共处理 ${result.items?.length || files.length} 张图片，发现 ${totalObjects} 个疑似缺陷。`
+    assistantMessage.detectionResult = result
+    agentStore.currentToolCall = { name: 'detect_batch', status: 'success', result }
+  } catch (error) {
+    assistantMessage.content = '批量检测失败，请稍后重试。'
+    agentStore.currentToolCall = { name: 'detect_batch', status: 'error', error }
+    ElMessage.error(error?.response?.data?.detail || '批量检测失败')
+  } finally {
+    saveCurrentSession()
+  }
+}
+
 function handleAgentEvent(event) {
   if (event.type === 'text_delta') { agentStore.appendAssistantContent(event.content || '') }
   if (event.type === 'tool_start') { agentStore.setToolCall({ name: event.tool_name, status: 'running', input: event.input }) }
@@ -304,7 +455,38 @@ function handleSend(text) {
   if (!text.trim() && !agentStore.selectedImage) return
   const imgUrl = agentStore.selectedImage ? URL.createObjectURL(agentStore.selectedImage) : ''
   agentStore.addMessage({ role: 'user', content: text, imagePreviewUrl: imgUrl })
+
+  // Chat with image should use real detection first, avoiding fixed mock-agent output.
+  if (agentStore.selectedImage) {
+    runSingleDetectInChat(agentStore.selectedImage, imgUrl)
+    return
+  }
+
   doSend(text)
+}
+
+async function runSingleDetectInChat(file, previewUrl) {
+  agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
+  agentStore.addMessage({
+    role: 'assistant',
+    content: '正在分析钢铁表面图像……',
+  })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectSingleApi(file, quickDetectOptions)
+    assistantMessage.content = summarizeDetectionResult(result)
+    assistantMessage.detectionResult = result
+    assistantMessage.detectionPreviewUrl = previewUrl
+    agentStore.currentToolCall = { name: 'detect_single', status: 'success', result }
+  } catch (error) {
+    assistantMessage.content = '检测失败，请检查后端服务、模型和鉴权状态后重试。'
+    agentStore.currentToolCall = { name: 'detect_single', status: 'error', error }
+    ElMessage.error(error?.response?.data?.detail || '检测失败')
+  } finally {
+    agentStore.clearImage()
+    saveCurrentSession()
+  }
 }
 
 function handleRegenerate(message) {
@@ -508,6 +690,12 @@ function saveCurrentSession() {
   justify-content: center;
   gap: 8px;
   max-width: 640px;
+}
+
+.chat-quick-detect {
+  max-width: 720px;
+  margin: 0 auto 8px;
+  justify-content: flex-start;
 }
 
 .chip {

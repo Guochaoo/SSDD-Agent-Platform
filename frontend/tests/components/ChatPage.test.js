@@ -17,4 +17,13 @@ describe('ChatPage integration', () => {
     expect(page).toContain('agentStore.stopStreaming()')
     expect(page).toContain("formData.append('model', model.value)")
   })
+
+  it('resolves the default detection model and locks the shortcut while it runs', () => {
+    const page = readFileSync(resolve(process.cwd(), 'src/views/ChatPage.vue'), 'utf8')
+
+    expect(page).toContain("import { getModelsApi, getScenesApi } from '@/api/models'")
+    expect(page).toContain('return { ...quickDetectOptions, modelId: model.id }')
+    expect(page).toContain('isQuickDetecting.value = true')
+    expect(page).toContain(':disabled="agentStore.isStreaming || isQuickDetecting"')
+  })
 })

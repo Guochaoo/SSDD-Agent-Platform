@@ -12,7 +12,7 @@
     <section class="filter-bar">
       <div class="filter-bar__title"><el-icon><Filter /></el-icon><span>统计筛选</span></div>
       <el-date-picker v-model="filters.dateRange" type="daterange" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" value-format="YYYY-MM-DD" />
-      <el-select v-model="filters.sceneId" placeholder="检测场景" clearable><el-option label="钢铁表面缺陷" value="steel" /></el-select>
+      <el-select v-model="filters.sceneId" placeholder="检测场景" clearable><el-option label="钢铁表面缺陷" :value="1" /></el-select>
       <el-select v-model="filters.modelId" placeholder="模型版本" clearable><el-option v-for="model in models" :key="model.id" :label="`${model.modelType} ${model.version}`" :value="model.id" /></el-select>
       <el-button type="primary" @click="loadDashboard">应用筛选</el-button>
     </section>
@@ -47,7 +47,7 @@ import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 
 const loading = ref(false);
 const models = ref([]);
-const filters = reactive({ dateRange: [], sceneId: "steel", modelId: "" });
+const filters = reactive({ dateRange: [], sceneId: 1, modelId: "" });
 const dashboard = reactive({ totals: { totalTasks: 0, totalImages: 0, totalObjects: 0, avgInferenceTimeMs: 0 }, classDistribution: [], dailyTrend: [], confidenceDistribution: [], modelMetrics: [], updatedAt: "" });
 const axisStyle = { axisLine: { lineStyle: { color: "#d0d5dd" } }, axisLabel: { color: "#667085" } };
 
@@ -59,7 +59,8 @@ const modelOption = computed(() => ({ tooltip: { trigger: "axis" }, color: ["#25
 async function loadDashboard() {
   loading.value = true;
   try {
-    const [data, modelList] = await Promise.all([getDashboardApi({ start_date: filters.dateRange?.[0], end_date: filters.dateRange?.[1], scene_id: filters.sceneId, model_id: filters.modelId }), models.value.length ? Promise.resolve(models.value) : getModelsApi(filters.sceneId)]);
+    const sceneId = Number(filters.sceneId) || 1;
+    const [data, modelList] = await Promise.all([getDashboardApi({ start_date: filters.dateRange?.[0], end_date: filters.dateRange?.[1], scene_id: sceneId, model_id: filters.modelId }), getModelsApi(sceneId)]);
     Object.assign(dashboard, data);
     models.value = modelList;
   } catch { ElMessage.error("看板数据加载失败"); }
