@@ -1,7 +1,11 @@
+import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+
+# Pydantic v2 reserves "model_" prefix; suppress the harmless lint
+warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router

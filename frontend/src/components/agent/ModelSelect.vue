@@ -42,7 +42,7 @@ import { useLlmStore } from '@/stores/llm'
 
 const llmStore = useLlmStore()
 
-const model = defineModel({ default: 'gpt-4o-mini' })
+const model = defineModel({ default: useLlmStore().defaultModel })
 
 const options = computed(() => llmStore.modelOptions)
 

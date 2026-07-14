@@ -170,6 +170,7 @@ import { CloseBold, Close, UploadFilled } from '@element-plus/icons-vue'
 import { Image, ArrowUpStroke } from '@boxicons/vue'
 import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
+import { useLlmStore } from '@/stores/llm'
 import { streamAgentChat } from '@/api/agent'
 import { detectBatchApi, detectSingleApi } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
@@ -187,7 +188,7 @@ const chatTextareaRef = ref(null)
 const fileInputRef = ref(null)
 const isDragover = ref(false)
 const isQuickDetecting = ref(false)
-const model = ref('gpt-4o-mini')
+const model = ref(useLlmStore().defaultModel)
 let dragCounter = 0
 
 const greeting = computed(() => {
@@ -456,12 +457,6 @@ function handleSend(text) {
   const imgUrl = agentStore.selectedImage ? URL.createObjectURL(agentStore.selectedImage) : ''
   agentStore.addMessage({ role: 'user', content: text, imagePreviewUrl: imgUrl })
 
-  // Chat with image should use real detection first, avoiding fixed mock-agent output.
-  if (agentStore.selectedImage) {
-    runSingleDetectInChat(agentStore.selectedImage, imgUrl)
-    return
-  }
-
   doSend(text)
 }
 
@@ -474,7 +469,8 @@ async function runSingleDetectInChat(file, previewUrl) {
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
-    const result = await detectSingleApi(file, quickDetectOptions)
+    const options = await getQuickDetectOptions()
+    const result = await detectSingleApi(file, options)
     assistantMessage.content = summarizeDetectionResult(result)
     assistantMessage.detectionResult = result
     assistantMessage.detectionPreviewUrl = previewUrl

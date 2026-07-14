@@ -23,11 +23,17 @@ export const useLlmStore = defineStore('llm', {
     /** 是否有可用模型 */
     hasModels: (state) => state.models.length > 0,
 
-    /** 推荐模型（优先取 gpt-4o-mini） */
+    /** 推荐模型（优先取 qwen3.7-plus） */
     defaultModel: (state) => {
-      if (!state.models.length) return 'gpt-4o-mini'
-      const preferred = state.models.find(m => m.id === 'gpt-4o-mini')
-      return preferred ? preferred.id : state.models[0].id
+      if (!state.models.length) return 'qwen3.7-plus'
+      const preferred = state.models.find(m => m.id === 'qwen3.7-plus')
+      if (preferred) return preferred.id
+      // fallback: qwen-plus > qwen-max > first model
+      for (const fallback of ['qwen-plus', 'qwen-max']) {
+        const found = state.models.find(m => m.id === fallback)
+        if (found) return found.id
+      }
+      return state.models[0].id
     },
 
     /** 格式化的模型选项列表（供下拉组件使用） */
