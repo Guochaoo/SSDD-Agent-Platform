@@ -1,16 +1,38 @@
 import { defineStore } from 'pinia'
 
+const SESSION_KEY = 'ssdd_agent_session'
+const SESSIONS_KEY = 'ssdd_agent_sessions'
+
+function loadSavedSessions() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+function serializeMessage(message) {
+  const {
+    imagePreviewUrl,
+    detectionPreviewUrl,
+    ...serializable
+  } = message
+  return serializable
+}
+
 export const useAgentStore = defineStore('agent', {
   state: () => ({
-    currentSessionId: localStorage.getItem('ssdd_agent_session') || crypto.randomUUID(),
+    currentSessionId: localStorage.getItem(SESSION_KEY) || crypto.randomUUID(),
     messages: [],
-    sessions: [],
+    sessions: loadSavedSessions(),
     isStreaming: false,
     abortController: null,
     selectedImage: null,
     imagePreviewUrl: '',
     currentToolCall: null,
     errorMessage: '',
+    connectionStatus: 'idle',
+    reconnectCount: 0,
   }),
 
   getters: {
@@ -20,23 +42,66 @@ export const useAgentStore = defineStore('agent', {
 
   actions: {
     addMessage(message) {
-      localStorage.setItem('ssdd_agent_session', this.currentSessionId)
+      localStorage.setItem(SESSION_KEY, this.currentSessionId)
       this.messages.push({
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
+        status: 'done',
         ...message,
       })
+      this.saveSession()
     },
 
     appendAssistantContent(content) {
       const lastMsg = this.messages[this.messages.length - 1]
       if (lastMsg?.role === 'assistant') {
         lastMsg.content += content
+        lastMsg.status = this.isStreaming ? 'streaming' : 'done'
+        this.saveSession()
       }
     },
 
     setToolCall(toolCall) {
       this.currentToolCall = toolCall
+      const lastAssistant = [...this.messages].reverse().find((message) => message.role === 'assistant')
+      if (lastAssistant) {
+        lastAssistant.toolCalls = lastAssistant.toolCalls || []
+        const key = toolCall.id || toolCall.name || toolCall.tool_name || 'tool'
+        const existingIndex = lastAssistant.toolCalls.findIndex((item) => (
+          (item.id || item.name || item.tool_name || 'tool') === key
+        ))
+        if (existingIndex >= 0) {
+          lastAssistant.toolCalls[existingIndex] = {
+            ...lastAssistant.toolCalls[existingIndex],
+            ...toolCall,
+            updatedAt: new Date().toISOString(),
+          }
+        } else {
+          lastAssistant.toolCalls.push({
+            ...toolCall,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+        }
+        this.saveSession()
+      }
+    },
+
+    setConnectionStatus(status) {
+      this.connectionStatus = status
+    },
+
+    markLastAssistantError(message) {
+      const lastMsg = this.messages[this.messages.length - 1]
+      if (lastMsg?.role === 'assistant') {
+        lastMsg.status = 'error'
+        lastMsg.errorMessage = message
+        if (!lastMsg.content) {
+          lastMsg.content = message || '智能体响应失败，请稍后重试。'
+        }
+      }
+      this.errorMessage = message || ''
+      this.saveSession()
     },
 
     setSelectedImage(file) {
@@ -55,6 +120,7 @@ export const useAgentStore = defineStore('agent', {
       this.abortController?.()
       this.abortController = null
       this.isStreaming = false
+      this.connectionStatus = 'idle'
     },
 
     /**
@@ -89,10 +155,12 @@ export const useAgentStore = defineStore('agent', {
         if (message.detectionPreviewUrl) URL.revokeObjectURL(message.detectionPreviewUrl)
       })
       this.currentSessionId = crypto.randomUUID()
-      localStorage.setItem('ssdd_agent_session', this.currentSessionId)
+      localStorage.setItem(SESSION_KEY, this.currentSessionId)
       this.messages = []
       this.currentToolCall = null
       this.errorMessage = ''
+      this.connectionStatus = 'idle'
+      this.reconnectCount = 0
       this.clearImage()
     },
 
@@ -100,19 +168,22 @@ export const useAgentStore = defineStore('agent', {
       if (!this.hasMessages) return
       const existing = this.sessions.find(s => s.id === this.currentSessionId)
       const title = this.messages.find(m => m.role === 'user')?.content?.slice(0, 30) || '新对话'
+      const messages = this.messages.map(serializeMessage)
       if (existing) {
-        existing.messages = [...this.messages]
+        existing.messages = messages
         existing.title = title
         existing.updatedAt = new Date().toISOString()
       } else {
         this.sessions.unshift({
           id: this.currentSessionId,
           title,
-          messages: [...this.messages],
+          messages,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         })
       }
+      this.sessions = this.sessions.slice(0, 20)
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions))
     },
 
     loadSession(id) {
@@ -128,6 +199,7 @@ export const useAgentStore = defineStore('agent', {
 
     deleteSession(id) {
       this.sessions = this.sessions.filter(s => s.id !== id)
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions))
       if (this.currentSessionId === id) {
         this.newChat()
       }

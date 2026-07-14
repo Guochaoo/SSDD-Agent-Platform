@@ -1,4 +1,6 @@
 import { streamChat } from '@/utils/stream'
+import request from '@/utils/request'
+import { getHistoryApi, getHistoryDetailApi } from './history'
 
 const USE_MOCK_AGENT = import.meta.env.VITE_USE_MOCK_AGENT !== 'false'
 
@@ -7,7 +9,42 @@ export function streamAgentChat(payload, callbacks) {
     return mockAgentStream(callbacks)
   }
 
-  return streamChat('/api/agent/chat/stream', payload, callbacks)
+  return streamChat('/api/agent/chat/stream', payload, callbacks, {
+    maxRetries: 1,
+    retryDelay: 1000,
+  })
+}
+
+export function getAgentModelsApi() {
+  return request.get('/agent/models')
+}
+
+export function getCachedAgentModelsApi() {
+  return request.get('/agent/models/cached')
+}
+
+export function uploadAgentImageApi(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/agent/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export function getAgentDetectionHistoryApi(params = {}) {
+  return getHistoryApi(params)
+}
+
+export function getAgentDetectionHistoryDetailApi(taskId) {
+  return getHistoryDetailApi(taskId)
+}
+
+export async function searchAgentKnowledgeApi() {
+  return {
+    items: [],
+    ready: false,
+    message: '知识库检索接口尚未开放，前端已预留接入点。',
+  }
 }
 
 function mockAgentStream(callbacks) {
