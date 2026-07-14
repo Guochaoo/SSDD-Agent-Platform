@@ -4,6 +4,7 @@ Redis 客户端封装
 这里存的都是"可以丢"的短生命周期数据——最终结果仍然落库到 PostgreSQL（对应任务文档步骤 12）。
 """
 import json
+import threading
 
 import redis
 
@@ -18,6 +19,8 @@ class RedisClient:
 
     def __init__(self):
         self.client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        self._memory_cache = {}
+        self._memory_lock = threading.Lock()
 
     def ping(self) -> bool:
         try:
@@ -28,14 +31,30 @@ class RedisClient:
     # ── 通用 key-value（JSON 序列化） ────────────────────
 
     def set_json(self, key: str, value: dict, ttl: int = DEFAULT_TTL) -> None:
-        self.client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl)
+        serialized = json.dumps(value, ensure_ascii=False)
+        try:
+            self.client.set(key, serialized, ex=ttl)
+        except redis.RedisError:
+            with self._memory_lock:
+                self._memory_cache[key] = serialized
 
     def get_json(self, key: str) -> dict | None:
-        raw = self.client.get(key)
+        try:
+            raw = self.client.get(key)
+        except redis.RedisError:
+            raw = None
+        if raw is None:
+            with self._memory_lock:
+                raw = self._memory_cache.get(key)
         return json.loads(raw) if raw else None
 
     def delete(self, key: str) -> None:
-        self.client.delete(key)
+        try:
+            self.client.delete(key)
+        except redis.RedisError:
+            pass
+        with self._memory_lock:
+            self._memory_cache.pop(key, None)
 
     # ── 视频检测进度：video:progress:{task_id} ───────────
 
@@ -49,6 +68,12 @@ class RedisClient:
 
     def get_video_progress(self, task_id: int) -> dict | None:
         return self.get_json(f"video:progress:{task_id}")
+
+    def set_video_task(self, task_id: int, value: dict, ttl: int = DEFAULT_TTL) -> None:
+        self.set_json(f"video_task:{task_id}", value, ttl=ttl)
+
+    def get_video_task(self, task_id: int) -> dict | None:
+        return self.get_json(f"video_task:{task_id}")
 
     # ── 训练实时进度：train:progress:{task_id}（比 training_metrics 表更细粒度，batch 级别）──
 
