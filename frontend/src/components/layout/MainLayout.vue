@@ -19,11 +19,17 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Fold, Expand } from '@element-plus/icons-vue'
 import AppSidebar from './AppSidebar.vue'
+import { useLlmStore } from '@/stores/llm'
 
 const collapsed = ref(false)
+
+// 首次进入时拉取可用模型列表
+onMounted(() => {
+  useLlmStore().fetchModels()
+})
 </script>
 
 <style lang="scss" scoped>

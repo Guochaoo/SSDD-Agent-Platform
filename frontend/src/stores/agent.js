@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 
 export const useAgentStore = defineStore('agent', {
   state: () => ({
-    currentSessionId: crypto.randomUUID(),
+    currentSessionId: localStorage.getItem('ssdd_agent_session') || crypto.randomUUID(),
     messages: [],
     sessions: [],
     isStreaming: false,
@@ -20,6 +20,7 @@ export const useAgentStore = defineStore('agent', {
 
   actions: {
     addMessage(message) {
+      localStorage.setItem('ssdd_agent_session', this.currentSessionId)
       this.messages.push({
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
@@ -88,6 +89,7 @@ export const useAgentStore = defineStore('agent', {
         if (message.detectionPreviewUrl) URL.revokeObjectURL(message.detectionPreviewUrl)
       })
       this.currentSessionId = crypto.randomUUID()
+      localStorage.setItem('ssdd_agent_session', this.currentSessionId)
       this.messages = []
       this.currentToolCall = null
       this.errorMessage = ''
