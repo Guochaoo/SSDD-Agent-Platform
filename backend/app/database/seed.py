@@ -8,8 +8,18 @@
     python -m app.database.seed
 可重复执行：已存在的数据不会重复插入。
 """
+from pathlib import Path
+
 from app.database.session import SessionLocal
-from app.entity.db_models import User, Role, Permission, UserRole, RolePermission, DetectionScene
+from app.entity.db_models import (
+    DetectionScene,
+    ModelVersion,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+)
 from app.core.security import hash_password
 
 DEFAULT_PERMISSIONS = [
@@ -33,13 +43,13 @@ DEFAULT_ROLES = {
 }
 
 # NEU-CLS 六类钢铁表面缺陷
-NEU_CLS_CLASSES = ["crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches"]
+NEU_CLS_CLASSES = ["crazing", "inclusion", "patches", "pitted", "rolled", "scratches"]
 NEU_CLS_CLASSES_CN = {
     "crazing": "裂纹",
     "inclusion": "夹杂",
     "patches": "斑块",
-    "pitted_surface": "点蚀",
-    "rolled-in_scale": "氧化皮压入",
+    "pitted": "点蚀",
+    "rolled": "氧化皮压入",
     "scratches": "划痕",
 }
 
@@ -112,6 +122,34 @@ def seed_detection_scenes(db, admin_user_id: int | None) -> None:
         db.add(scene)
         db.commit()
         print("[seed] 创建默认检测场景：steel_surface_defect（NEU-CLS 六类缺陷）")
+
+    scene = existing or scene
+    if scene.class_names != NEU_CLS_CLASSES or scene.class_names_cn != NEU_CLS_CLASSES_CN:
+        scene.class_names = NEU_CLS_CLASSES
+        scene.class_names_cn = NEU_CLS_CLASSES_CN
+        db.commit()
+        print("[seed] 同步检测场景类别字典到部署模型")
+    model_path = "models/steel_surface_defect_v1.0.0/ssdd_yolo11n_v1.pt"
+    absolute_model_path = Path(__file__).resolve().parents[3] / model_path
+    model = (
+        db.query(ModelVersion)
+        .filter(ModelVersion.scene_id == scene.id, ModelVersion.version == "v1.0.0")
+        .first()
+    )
+    if not model:
+        model = ModelVersion(
+            scene_id=scene.id,
+            version="v1.0.0",
+            model_name="ssdd_yolo11n_v1",
+            model_type="yolo11n",
+            model_path=model_path,
+            file_size=absolute_model_path.stat().st_size if absolute_model_path.is_file() else None,
+            is_default=True,
+            description="钢铁表面缺陷检测首个部署权重",
+        )
+        db.add(model)
+        db.commit()
+        print("[seed] 注册默认模型：ssdd_yolo11n_v1（v1.0.0）")
 
 
 def run_seed() -> None:

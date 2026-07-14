@@ -1,6 +1,10 @@
-"""检测配置模块（Day 8+ 使用，当前为占位）"""
+"""YOLO 检测配置。"""
 
 # 检测模型默认配置
 DEFAULT_CONF_THRESHOLD = 0.25
 DEFAULT_IOU_THRESHOLD = 0.45
 DEFAULT_IMAGE_SIZE = 640
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/bmp", "image/webp"}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024
+MAX_BATCH_SIZE = 20
