@@ -255,7 +255,7 @@ import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
 
-const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff";
+const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp";
 const activeMode = ref("single");
 const scenes = ref([]);
 const models = ref([]);
@@ -288,9 +288,9 @@ function formatPercent(value) {
 }
 
 function validateImage(file) {
-  const allowed = ["image/jpeg", "image/png", "image/bmp", "image/tiff"];
+  const allowed = ["image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"];
   if (!allowed.includes(file.type)) {
-    ElMessage.warning("请选择 JPG、PNG、BMP 或 TIF 图片");
+    ElMessage.warning("请选择 JPG、PNG、BMP、TIF 或 WebP 图片");
     return false;
   }
   if (file.size > 10 * 1024 * 1024) {

@@ -8,6 +8,7 @@ from fastapi import HTTPException, UploadFile
 from PIL import Image
 
 from app.entity.db_models import DetectionScene, DetectionTask, ModelVersion, User
+from app.config.detection import ALLOWED_IMAGE_TYPES
 from app.services.detection_service import DetectionService
 
 
@@ -173,3 +174,7 @@ async def test_batch_detection_keeps_partial_success(db_session, tmp_path, monke
 def test_model_path_must_exist(tmp_path):
     with pytest.raises(HTTPException, match="模型权重不存在"):
         DetectionService._resolve_model_path(str(tmp_path / "missing.pt"))
+
+
+def test_supported_image_types_match_detection_page_options():
+    assert {"image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"} <= ALLOWED_IMAGE_TYPES

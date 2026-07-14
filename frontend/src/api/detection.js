@@ -49,7 +49,7 @@ export function normalizeDetectionResponse(payload) {
     totalObjects:
       task.total_objects ?? data.totalObjects ?? data.summary?.total ?? objects.length,
     inferenceTimeMs:
-      task.total_inference_time ?? data.inferenceTimeMs ??
+      task.total_inference_time ?? data.inference_time_ms ?? data.inferenceTimeMs ??
       (data.detection_time != null ? data.detection_time * 1000 : 0),
     imageWidth,
     imageHeight,
