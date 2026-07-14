@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.detection import router as detection_router
 from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.history import router as history_router
@@ -57,6 +59,7 @@ app.add_middleware(RequestLogMiddleware)
 register_exception_handlers(app)
 
 app.include_router(auth_router)
+app.include_router(detection_router)
 app.include_router(agent_router)
 app.include_router(health_router)
 app.include_router(history_router)
@@ -77,4 +80,12 @@ def root():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_dirs=[str(Path(__file__).parent / "app")],
+        reload_excludes=["**/__pycache__/**", "**/*.pyc"],
+        reload_delay=0.5,
+    )
