@@ -219,6 +219,27 @@ const quickDetectOptions = {
   iouThreshold: 0.45,
 }
 
+function summarizeDetectionResult(result) {
+  const objects = result?.objects || []
+  if (!objects.length) {
+    return '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。'
+  }
+
+  const statMap = new Map()
+  let maxConfidence = 0
+  for (const item of objects) {
+    const key = item.classNameCn || item.className || '未知缺陷'
+    statMap.set(key, (statMap.get(key) || 0) + 1)
+    maxConfidence = Math.max(maxConfidence, Number(item.confidence || 0))
+  }
+
+  const summary = Array.from(statMap.entries())
+    .map(([name, count]) => `${name} ${count} 处`)
+    .join('，')
+
+  return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。`
+}
+
 function onDragEnter() { dragCounter++; isDragover.value = true }
 function onDragOver() {}
 function onDragLeave() {
@@ -434,7 +455,38 @@ function handleSend(text) {
   if (!text.trim() && !agentStore.selectedImage) return
   const imgUrl = agentStore.selectedImage ? URL.createObjectURL(agentStore.selectedImage) : ''
   agentStore.addMessage({ role: 'user', content: text, imagePreviewUrl: imgUrl })
+
+  // Chat with image should use real detection first, avoiding fixed mock-agent output.
+  if (agentStore.selectedImage) {
+    runSingleDetectInChat(agentStore.selectedImage, imgUrl)
+    return
+  }
+
   doSend(text)
+}
+
+async function runSingleDetectInChat(file, previewUrl) {
+  agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
+  agentStore.addMessage({
+    role: 'assistant',
+    content: '正在分析钢铁表面图像……',
+  })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectSingleApi(file, quickDetectOptions)
+    assistantMessage.content = summarizeDetectionResult(result)
+    assistantMessage.detectionResult = result
+    assistantMessage.detectionPreviewUrl = previewUrl
+    agentStore.currentToolCall = { name: 'detect_single', status: 'success', result }
+  } catch (error) {
+    assistantMessage.content = '检测失败，请检查后端服务、模型和鉴权状态后重试。'
+    agentStore.currentToolCall = { name: 'detect_single', status: 'error', error }
+    ElMessage.error(error?.response?.data?.detail || '检测失败')
+  } finally {
+    agentStore.clearImage()
+    saveCurrentSession()
+  }
 }
 
 function handleRegenerate(message) {
