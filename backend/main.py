@@ -1,6 +1,11 @@
+import warnings
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+
+# Pydantic v2 reserves "model_" prefix; suppress the harmless lint
+warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
@@ -14,6 +19,8 @@ from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
 from app.middleware.request_logger import RequestLogMiddleware
+from app.services.detection_service import detection_service
+import asyncio
 
 
 setup_logging()
@@ -34,6 +41,7 @@ def init_minio():
 async def lifespan(_app: FastAPI):
     logger.info("Starting service")
     init_minio()
+    asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
     yield
     logger.info("Service stopped")
 
@@ -79,4 +87,12 @@ def root():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_dirs=[str(Path(__file__).parent / "app")],
+        reload_excludes=["**/__pycache__/**", "**/*.pyc"],
+        reload_delay=0.5,
+    )

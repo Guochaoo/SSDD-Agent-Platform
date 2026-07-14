@@ -1,7 +1,8 @@
 import { mockModels, mockScenes } from "./mockData";
 import request from "@/utils/request";
 
-export const isFrontendBMockMode = import.meta.env.VITE_USE_MOCK !== "false";
+// Mock data is opt-in. Missing environment configuration must use the real API.
+export const isFrontendBMockMode = import.meta.env.VITE_USE_MOCK === "true";
 
 function unwrap(payload) {
   return payload?.data ?? payload;

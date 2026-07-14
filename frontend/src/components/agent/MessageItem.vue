@@ -1,184 +1,223 @@
 <template>
-  <div :class="['message-item', message.role]">
-    <div class="avatar">
-      {{ message.role === 'user' ? '我' : 'AI' }}
+  <!-- User message: subtle, right-aligned chip -->
+  <div v-if="message.role === 'user'" class="user-msg">
+    <img
+      v-if="message.imagePreviewUrl"
+      :src="message.imagePreviewUrl"
+      class="user-image"
+      alt="上传图片"
+    />
+    <span class="user-text">{{ message.content }}</span>
+  </div>
+
+  <!-- Assistant message: centered, prominent, no avatar -->
+  <div v-else class="assistant-msg">
+    <div class="assistant-content">
+      <div class="markdown-body" v-html="renderedContent" />
+      <DetectionResultCard
+        v-if="message.detectionResult"
+        :result="message.detectionResult"
+        :preview-url="message.detectionPreviewUrl"
+      />
     </div>
 
-    <div class="bubble">
-      <img
-        v-if="message.imagePreviewUrl"
-        :src="message.imagePreviewUrl"
-        class="message-image"
-        alt="上传的钢铁表面图像"
-      />
-
-      <video
-        v-if="message.videoUrl"
-        :src="message.videoUrl"
-        class="message-video"
-        controls
-        preload="metadata"
-      />
-
-      <div v-if="message.videoResult" class="video-result">
-        <div class="video-tags">
-          <span>时长 {{ message.videoResult.duration_seconds }}s</span>
-          <span>FPS {{ message.videoResult.fps }}</span>
-          <span>关键帧 {{ message.videoResult.processed_frames }}</span>
-          <span>目标 {{ message.videoResult.total_objects }}</span>
-        </div>
-        <video
-          v-if="message.videoResult.annotated_video_url"
-          :src="message.videoResult.annotated_video_url"
-          class="message-video"
-          controls
-          preload="metadata"
-        />
-        <div v-else class="message-frames">
-          <img
-            v-for="frame in previewFrames"
-            :key="frame.frame_index"
-            :src="`data:image/jpeg;base64,${frame.annotated_image_base64}`"
-            :alt="`关键帧 ${frame.frame_index}`"
-          />
-        </div>
-      </div>
-
-      <div
-        v-if="message.role === 'assistant'"
-        class="markdown-body"
-        v-html="renderedContent"
-      />
-
-      <div v-else class="plain-text">
-        {{ message.content }}
-      </div>
+    <div v-if="!isLastStreaming && message.content" class="msg-footer">
+      <button class="footer-btn" :class="{ copied }" title="复制" @click="handleCopy">
+        <el-icon :size="14"><DocumentCopy v-if="!copied" /><Check v-else /></el-icon>
+        <span>{{ copied ? '已复制' : '复制' }}</span>
+      </button>
+      <button class="footer-btn" title="重新生成" @click="$emit('regenerate', message)">
+        <el-icon :size="14"><Refresh /></el-icon>
+        <span>重新生成</span>
+      </button>
+      <span class="msg-time">{{ formattedTime }}</span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { DocumentCopy, Check, Refresh } from '@element-plus/icons-vue'
 import { renderMarkdown } from '@/utils/markdown'
+import DetectionResultCard from './DetectionResultCard.vue'
 
 const props = defineProps({
-  message: {
-    type: Object,
-    required: true,
-  },
+  message: { type: Object, required: true },
+  isLastStreaming: { type: Boolean, default: false },
 })
+
+defineEmits(['regenerate'])
+
+const copied = ref(false)
+let copyTimer = null
 
 const renderedContent = computed(() => {
   return renderMarkdown(props.message.content || '')
 })
 
-const previewFrames = computed(() =>
-  (props.message.videoResult?.key_frames ?? [])
-    .filter((frame) => frame.annotated_image_base64)
-    .slice(0, 6),
-)
+const formattedTime = computed(() => {
+  if (!props.message.createdAt) return ''
+  return new Date(props.message.createdAt).toLocaleTimeString(undefined, {
+    hour: 'numeric', minute: '2-digit',
+  })
+})
+
+function handleCopy() {
+  const text = props.message.content || ''
+  navigator.clipboard.writeText(text).then(() => {
+    copied.value = true
+    clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => { copied.value = false }, 2000)
+  }).catch(() => {})
+}
 </script>
 
 <style lang="scss" scoped>
-.message-item {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-
-  &.user {
-    flex-direction: row-reverse;
-
-    .bubble {
-      background: #ecf5ff;
-    }
-  }
-
-  &.assistant .bubble {
-    background: #fff;
-  }
-}
-
-.avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: #409eff;
-  color: #fff;
+/* ── User message: subtle right-aligned chip, same max-width as assistant ── */
+.user-msg {
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.bubble {
-  max-width: 72%;
-  padding: 12px 14px;
-  border-radius: 8px;
-  box-shadow: $shadow-sm;
-  line-height: 1.6;
-}
-
-.message-image {
-  max-width: 260px;
-  max-height: 180px;
-  display: block;
-  margin-bottom: 8px;
-  border-radius: 6px;
-  object-fit: contain;
-}
-
-.message-video {
-  display: block;
-  width: min(520px, 100%);
-  max-height: 320px;
-  margin-bottom: 8px;
-  border-radius: 6px;
-  background: #101828;
-}
-
-.video-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.video-tags span {
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: #eef4ff;
-  color: #2563eb;
-  font-size: 11px;
-}
-
-.message-frames {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.message-frames img {
+  justify-content: flex-end;
+  gap: 8px;
   width: 100%;
-  border-radius: 5px;
+  max-width: 780px;
+  margin: 0 auto 4px;
+  padding: 6px 24px;
 }
 
-.plain-text {
+.user-image {
+  max-width: 120px;
+  max-height: 80px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.user-text {
+  display: inline-block;
+  max-width: 70%;
+  padding: 6px 14px;
+  background: #f1f1f0;
+  color: #525252;
+  border-radius: 20px;
+  font-size: 14px;
+  line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.markdown-body {
-  :deep(p) {
-    margin: 0 0 8px;
+/* ── Assistant message: centered, prominent ── */
+.assistant-msg {
+  padding: 16px 24px;
+  margin-bottom: 8px;
+}
+
+.assistant-content {
+  max-width: 780px;
+  margin: 0 auto;
+
+  .markdown-body {
+    font-size: 15px;
+    line-height: 1.75;
+    color: #171717;
+
+    :deep(p) {
+      margin: 0 0 12px;
+    }
+    :deep(p:last-child) {
+      margin-bottom: 0;
+    }
+    :deep(h1), :deep(h2), :deep(h3), :deep(h4) {
+      margin: 20px 0 10px;
+      font-weight: 600;
+      color: #171717;
+    }
+    :deep(h1) { font-size: 1.4em; }
+    :deep(h2) { font-size: 1.2em; }
+    :deep(h3) { font-size: 1.1em; }
+    :deep(ul), :deep(ol) {
+      padding-left: 20px;
+      margin: 8px 0;
+    }
+    :deep(li) {
+      margin: 4px 0;
+    }
+    :deep(code) {
+      background: #f2f3f5;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    :deep(pre) {
+      background: #f8f9fa;
+      border: 1px solid #ebebeb;
+      padding: 14px 16px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+    :deep(pre code) {
+      background: transparent;
+      padding: 0;
+    }
+    :deep(blockquote) {
+      border-left: 3px solid #8F8AB0;
+      margin: 12px 0;
+      padding: 4px 14px;
+      color: #737373;
+    }
+    :deep(table) {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+    }
+    :deep(th), :deep(td) {
+      border: 1px solid #e8e8e8;
+      padding: 8px 12px;
+      text-align: left;
+      font-size: 14px;
+    }
+    :deep(th) {
+      background: #f8f9fa;
+      font-weight: 600;
+    }
+  }
+}
+/* ── Footer: actions ── */
+.msg-footer {
+  max-width: 780px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.footer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a3a3a3;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    color: #525252;
+    background: #f1f1f0;
   }
 
-  :deep(p:last-child) {
-    margin-bottom: 0;
+  &.copied {
+    color: #67c23a;
   }
+}
 
-  :deep(code) {
-    background: #f2f3f5;
-    padding: 2px 4px;
-    border-radius: 4px;
-  }
+.msg-time {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #c0c4cc;
 }
 </style>

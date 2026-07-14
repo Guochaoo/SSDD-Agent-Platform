@@ -48,9 +48,36 @@ import cv2
 import numpy as np
 
 # ── 默认路径 ──────────────────────────────────────────
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_DATASET_DIR = os.path.join(PROJECT_ROOT, "datasets/ssdd")
-DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "datasets/ssdd")
+# 从脚本位置推断项目根目录（向上两级：tools → backend → project_root）
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
+PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+DEFAULT_DATASET_DIR = os.path.join(PROJECT_ROOT, "datasets", "ssdd")
+DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "datasets", "ssdd")
+
+
+def resolve_dataset_path(path: str) -> str:
+    """
+    解析数据集路径，支持：
+      - 绝对路径
+      - 相对于当前工作目录的路径
+      - 相对于项目根目录的路径
+    """
+    # 直接存在
+    if os.path.isdir(path):
+        return os.path.abspath(path)
+
+    # 尝试相对于项目根目录
+    candidate = os.path.join(PROJECT_ROOT, path)
+    if os.path.isdir(candidate):
+        return candidate
+
+    # 尝试相对于 backend 目录
+    candidate = os.path.join(BACKEND_DIR, path)
+    if os.path.isdir(candidate):
+        return candidate
+
+    return os.path.abspath(path)
 
 # ── 颜色调色板（BGR 格式，最多支持 20 种类别）────────
 COLORS = [
@@ -208,19 +235,56 @@ def draw_yolo_annotations(
     return image
 
 
-def collect_image_label_pairs(dataset_dir: str, splits: list = None) -> list:
+def get_label_classes(label_path: str) -> set:
+    """读取标注文件，返回包含的类别 ID 集合"""
+    classes = set()
+    if not os.path.exists(label_path):
+        return classes
+    try:
+        with open(label_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if parts:
+                    try:
+                        classes.add(int(parts[0]))
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return classes
+
+
+def collect_image_label_pairs(
+    dataset_dir: str,
+    splits: list = None,
+    filter_classes: list = None,
+    class_names: dict = None,
+) -> list:
     """
-    收集所有图像-标注配对文件
+    收集图像-标注配对文件，支持按类别筛选
 
     参数：
         dataset_dir: 数据集根目录
         splits: 要处理的 split 列表，默认 ["train", "val", "test"]
+        filter_classes: 要筛选的类别名称列表，None 表示不过滤
+        class_names: 类别 ID→名称映射（filter_classes 非空时必需）
 
     返回：
         配对列表 [(image_path, label_path, split, filename), ...]
     """
     if splits is None:
         splits = ["train", "val", "test"]
+
+    # 将类别名称转为 ID 集合
+    target_ids = None
+    if filter_classes:
+        name_to_id = {name: cid for cid, name in (class_names or {}).items()}
+        target_ids = set()
+        for name in filter_classes:
+            if name in name_to_id:
+                target_ids.add(name_to_id[name])
+            else:
+                print(f"[警告] 类别 '{name}' 不在 data.yaml 中，已忽略")
 
     image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
     pairs = []
@@ -241,6 +305,12 @@ def collect_image_label_pairs(dataset_dir: str, splits: list = None) -> list:
             img_path = os.path.join(img_dir, fname)
             lbl_path = os.path.join(lbl_dir, f"{stem}.txt")
 
+            # 按类别筛选
+            if target_ids is not None:
+                label_classes = get_label_classes(lbl_path)
+                if not label_classes & target_ids:
+                    continue
+
             pairs.append((img_path, lbl_path, split, fname))
 
     return pairs
@@ -252,6 +322,7 @@ def visualize_random_samples(
     count: int = 5,
     splits: list = None,
     class_names: dict = None,
+    filter_classes: list = None,
 ):
     """
     随机抽样并可视化标注
@@ -266,15 +337,42 @@ def visualize_random_samples(
     if class_names is None:
         class_names = load_class_names(dataset_dir)
 
-    # 收集所有配对
-    pairs = collect_image_label_pairs(dataset_dir, splits)
+    # 收集配对（支持按类别筛选）
+    pairs = collect_image_label_pairs(dataset_dir, splits, filter_classes, class_names)
     if not pairs:
-        print("[错误] 未找到任何图像-标注配对文件")
+        hint = ""
+        if filter_classes:
+            hint = f"（类别筛选: {filter_classes}）"
+        print(f"[错误] 未找到任何图像-标注配对文件{hint}")
         return
 
-    # 随机抽样
-    samples = random.sample(pairs, min(count, len(pairs)))
-    print(f"\n共找到 {len(pairs)} 张图像，随机抽样 {len(samples)} 张进行可视化\n")
+    # 按类别筛选时：每类分别抽样 count 张
+    if filter_classes and class_names:
+        name_to_id = {name: cid for cid, name in class_names.items()}
+        samples = []
+        for cls_name in filter_classes:
+            cid = name_to_id.get(cls_name)
+            if cid is None:
+                continue
+            cls_pairs = [
+                p for p in pairs
+                if cid in get_label_classes(p[1])
+            ]
+            n = min(count, len(cls_pairs))
+            if n == 0:
+                print(f"  [跳过] 类别 '{cls_name}' 无匹配图片")
+                continue
+            sampled = random.sample(cls_pairs, n)
+            samples.extend(sampled)
+            print(f"  类别 '{cls_name}': 共 {len(cls_pairs)} 张，抽样 {n} 张")
+        if not samples:
+            print("[错误] 指定类别均无匹配图片")
+            return
+        print(f"\n共抽样 {len(samples)} 张进行可视化\n")
+    else:
+        # 默认：全局随机抽样
+        samples = random.sample(pairs, min(count, len(pairs)))
+        print(f"\n共找到 {len(pairs)} 张图像，随机抽样 {len(samples)} 张进行可视化\n")
 
     # 创建输出目录
     if output_dir:
@@ -381,21 +479,15 @@ def generate_overview_grid(
     grid_size: tuple = (4, 4),
     splits: list = None,
     class_names: dict = None,
+    filter_classes: list = None,
 ):
     """
     生成标注概览网格图（多张缩略图拼接为一张大图）
-
-    参数：
-        dataset_dir: 数据集根目录
-        output_path: 输出文件路径
-        grid_size: 网格大小 (行数, 列数)
-        splits: 要处理的 split 列表
-        class_names: 类别名称映射
     """
     if class_names is None:
         class_names = load_class_names(dataset_dir)
 
-    pairs = collect_image_label_pairs(dataset_dir, splits)
+    pairs = collect_image_label_pairs(dataset_dir, splits, filter_classes, class_names)
     if not pairs:
         print("[错误] 未找到任何图像-标注配对文件")
         return
@@ -456,17 +548,24 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例：
-  # 随机抽样 5 张弹窗查看
+  # 随机抽样 5 张弹窗查看（使用默认数据集）
   python tools/visualize_annotations.py
 
+  # 指定数据集路径
+  python tools/visualize_annotations.py --dataset ../datasets/ssdd
+  python tools/visualize_annotations.py -d /path/to/dataset
+
   # 随机抽样 10 张保存到文件
-  python tools/visualize_annotations.py --output datasets/ssdd/vis_output --count 10
+  python tools/visualize_annotations.py -d ../datasets/ssdd --count 10 -o vis_output
+
+  # 按类别筛选：只看含 pitted 或 scratches 的图片，每类各抽 3 张
+  python tools/visualize_annotations.py -d ../datasets/ssdd -c pitted scratches -n 3 -o vis_output
 
   # 查看指定图片
-  python tools/visualize_annotations.py --image train/000001.jpg
+  python tools/visualize_annotations.py -d ../datasets/ssdd --image train/000001.jpg
 
   # 生成 4x4 概览网格图
-  python tools/visualize_annotations.py --grid --output datasets/ssdd/vis_output/overview.jpg
+  python tools/visualize_annotations.py -d ../datasets/ssdd --grid -o overview.jpg
         """,
     )
 
@@ -475,14 +574,14 @@ def main():
         "-d",
         type=str,
         default=DEFAULT_DATASET_DIR,
-        help=f"数据集目录（默认：{DEFAULT_DATASET_DIR}）",
+        help=f"数据集目录，支持绝对路径或相对路径（默认：datasets/ssdd）",
     )
     parser.add_argument(
         "--count",
         "-n",
         type=int,
         default=5,
-        help="随机抽样数量（默认：5）",
+        help="随机抽样数量（默认：5，按类别筛选时为每类抽样数）",
     )
     parser.add_argument(
         "--output",
@@ -509,35 +608,51 @@ def main():
         default=["train", "val"],
         help="要可视化的 split（默认：train val）",
     )
+    parser.add_argument(
+        "--classes",
+        "-c",
+        nargs="+",
+        default=None,
+        help="按类别筛选，只显示包含指定类别的图片（如 --classes crazing scratches）",
+    )
 
     args = parser.parse_args()
 
+    # 解析数据集路径
+    dataset_dir = resolve_dataset_path(args.dataset)
+
     # 检查数据集目录
-    if not os.path.exists(args.dataset):
-        print(f"[错误] 数据集目录不存在：{args.dataset}")
+    if not os.path.exists(dataset_dir):
+        print(f"[错误] 数据集目录不存在：{dataset_dir}")
+        print(f"  提示：使用 --dataset 指定路径，例如：")
+        print(f"    python tools/visualize_annotations.py --dataset ../datasets/ssdd")
+        print(f"    python tools/visualize_annotations.py --dataset /absolute/path/to/dataset")
         sys.exit(1)
 
     # 加载类别名称
-    class_names = load_class_names(args.dataset)
+    class_names = load_class_names(dataset_dir)
     if class_names:
         print(f"加载类别：{class_names}")
     else:
         print("[警告] 未找到 data.yaml，将使用 class_id 作为类别名")
 
+    filter_classes = args.classes
+
     if args.grid:
         # 生成网格概览图
         output_path = args.output or os.path.join(DEFAULT_OUTPUT_DIR, "overview.jpg")
         generate_overview_grid(
-            args.dataset,
+            dataset_dir,
             output_path,
             grid_size=(4, 4),
             splits=args.splits,
             class_names=class_names,
+            filter_classes=filter_classes,
         )
     elif args.image:
         # 查看指定图像
         visualize_single_image(
-            args.dataset,
+            dataset_dir,
             args.image,
             output_path=args.output,
             class_names=class_names,
@@ -545,11 +660,12 @@ def main():
     else:
         # 随机抽样
         visualize_random_samples(
-            args.dataset,
+            dataset_dir,
             output_dir=args.output,
             count=args.count,
             splits=args.splits,
             class_names=class_names,
+            filter_classes=filter_classes,
         )
 
 

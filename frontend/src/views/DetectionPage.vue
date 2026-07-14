@@ -20,6 +20,38 @@
               <el-icon><Setting /></el-icon>
             </div>
 
+            <el-alert
+              v-if="modelWarmupStatus === 'loading'"
+              title="检测模型预热中，请稍候"
+              type="info"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'error'"
+              :title="`检测模型预热失败${warmupError ? `：${warmupError}` : ''}，首次检测时将自动加载`"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'ready' && (singleLoading || batchLoading)"
+              title="模型加载成功，正在进行检测"
+              type="success"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'ready'"
+              title="检测模型加载成功，可以开始检测"
+              type="success"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
             <el-form label-position="top">
               <el-form-item label="检测场景">
                 <el-select v-model="form.sceneId" class="full-width" @change="loadModels">
@@ -65,6 +97,7 @@
             </el-form>
 
             <el-upload
+              ref="singleUploadRef"
               v-model:file-list="singleFileList"
               class="steel-uploader"
               drag
@@ -119,6 +152,7 @@
             >开始批量检测</el-button>
           </div>
           <el-upload
+            ref="batchUploadRef"
             v-model:file-list="batchFileList"
             drag
             multiple
@@ -129,7 +163,16 @@
             :on-exceed="handleBatchExceed"
           >
             <el-icon class="steel-uploader__icon"><FolderAdd /></el-icon>
-            <div class="el-upload__text">拖入多张钢铁表面图片，或 <em>点击选择</em></div>
+            <template v-if="batchFileList.length === 0">
+              <div class="el-upload__text">拖入多张钢铁表面图片，或 <em>点击选择</em></div>
+            </template>
+            <template v-else>
+              <div class="el-upload__text">拖入图片可新增，或选择操作</div>
+              <div class="batch-upload-actions">
+                <el-button type="primary" plain @click.stop="openBatchFilePicker()">新增图片</el-button>
+                <el-button @click.stop="openBatchFilePicker(true)">重新选择</el-button>
+              </div>
+            </template>
           </el-upload>
           <el-divider content-position="left">或上传 ZIP 压缩包</el-divider>
           <div class="zip-upload-row">
@@ -246,9 +289,9 @@
           <section class="workspace-card video-progress-card">
             <el-result
               v-if="videoStatus === 'idle'"
-              icon="info"
-              title="等待视频任务"
-              sub-title="选择视频并创建任务后，这里将展示进度和关键帧摘要。"
+              icon="warning"
+              title="尚未创建视频任务"
+              sub-title="选择视频和抽帧参数后开始检测。"
             />
             <template v-else>
               <div class="video-progress-card__header">
@@ -304,7 +347,7 @@
             </el-radio-group>
             <div class="camera-metrics">
               <div><span>状态</span><strong>{{ cameraConnecting ? "连接中" : cameraActive ? "运行中" : "未启动" }}</strong></div>
-              <div><span>本地模型</span><strong>{{ cameraModelName || selectedModelName }}</strong></div>
+              <div><span>本地模型</span><strong>{{ selectedModelName }}</strong></div>
               <div><span>实时帧率</span><strong>{{ cameraFps }} FPS</strong></div>
               <div><span>推理耗时</span><strong>{{ cameraInferenceTime }} ms</strong></div>
               <div><span>已处理帧</span><strong>{{ cameraFrameCount }}</strong></div>
@@ -336,25 +379,31 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi } from "@/api/detection";
+import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getDetectionModelStatus, getVideoStatusApi } from "@/api/detection";
 import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
 import { createCameraWs } from "@/utils/cameraWs";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
 
-const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff";
+const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp";
 const activeMode = ref("single");
 const scenes = ref([]);
 const models = ref([]);
 const form = reactive({ sceneId: "", modelId: "", confThreshold: 0.25, iouThreshold: 0.45 });
 
 const singleFileList = ref([]);
+const singleUploadRef = ref();
 const singleFile = ref(null);
 const singlePreviewUrl = ref("");
 const singleResult = ref(null);
 const singleLoading = ref(false);
+const modelWarmupStatus = ref("loading");
+const warmupError = ref("");
+let warmupTimer;
+let warmupRequesting = false;
 
 const batchFileList = ref([]);
+const batchUploadRef = ref();
 const batchResult = ref(null);
 const batchLoading = ref(false);
 const zipFileList = ref([]);
@@ -372,6 +421,13 @@ let videoPollTimer;
 const thumbnailFrames = computed(() =>
   (videoResult.value?.key_frames ?? []).filter((frame) => frame.annotated_image_base64).slice(0, 6),
 );
+const thumbnailFrameUrls = computed(() =>
+  thumbnailFrames.value.map((frame) => `data:image/jpeg;base64,${frame.annotated_image_base64}`),
+);
+const selectedModelName = computed(() => {
+  const model = models.value.find((item) => item.id === form.modelId);
+  return model ? `${model.modelType} · ${model.version}` : "未选择";
+});
 
 const cameraVideo = ref();
 const cameraCanvas = ref();
@@ -390,9 +446,9 @@ function formatPercent(value) {
 }
 
 function validateImage(file) {
-  const allowed = ["image/jpeg", "image/png", "image/bmp", "image/tiff"];
+  const allowed = ["image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"];
   if (!allowed.includes(file.type)) {
-    ElMessage.warning("请选择 JPG、PNG、BMP 或 TIF 图片");
+    ElMessage.warning("请选择 JPG、PNG、BMP、TIF 或 WebP 图片");
     return false;
   }
   if (file.size > 10 * 1024 * 1024) {
@@ -424,8 +480,12 @@ function clearSingleFile() {
   revokePreview();
 }
 
-function handleSingleExceed() {
-  ElMessage.info("单图模式一次只能选择一张图片，请先移除当前图片");
+function handleSingleExceed(files) {
+  const nextFile = files[0];
+  if (!nextFile || !validateImage(nextFile)) return;
+
+  singleUploadRef.value?.clearFiles();
+  singleUploadRef.value?.handleStart(nextFile);
 }
 
 function validateBatchFile(uploadFile) {
@@ -436,6 +496,14 @@ function validateBatchFile(uploadFile) {
 
 function handleBatchExceed() {
   ElMessage.info("批量模式一次最多选择 20 张图片");
+}
+
+function openBatchFilePicker(replace = false) {
+  if (replace) {
+    batchUploadRef.value?.clearFiles();
+    batchResult.value = null;
+  }
+  batchUploadRef.value?.$el?.querySelector('input[type="file"]')?.click();
 }
 
 async function loadModels() {
@@ -450,6 +518,25 @@ async function loadOptions() {
     await loadModels();
   } catch {
     ElMessage.error("检测场景或模型列表加载失败");
+  }
+}
+
+async function refreshModelWarmupStatus() {
+  if (warmupRequesting || ["ready", "error"].includes(modelWarmupStatus.value)) return;
+  warmupRequesting = true;
+  try {
+    const response = await getDetectionModelStatus();
+    modelWarmupStatus.value = response.status || "loading";
+    warmupError.value = response.error || "";
+  } catch {
+    modelWarmupStatus.value = "error";
+    warmupError.value = "无法获取模型预热状态";
+  } finally {
+    warmupRequesting = false;
+    clearTimeout(warmupTimer);
+    if (modelWarmupStatus.value === "loading") {
+      warmupTimer = window.setTimeout(refreshModelWarmupStatus, 1500);
+    }
   }
 }
 
@@ -560,7 +647,6 @@ async function startVideoTask() {
     videoMessage.value = "视频上传或任务创建失败";
   }
 }
-
 async function startCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
     ElMessage.warning("当前浏览器不支持摄像头访问");
@@ -669,11 +755,15 @@ function resetCurrentMode() {
   }
 }
 
-onMounted(loadOptions);
+onMounted(() => {
+  loadOptions();
+  refreshModelWarmupStatus();
+});
 onBeforeUnmount(() => {
   revokePreview();
   clearInterval(videoPollTimer);
   stopCamera();
+  clearTimeout(warmupTimer);
 });
 </script>
 
@@ -694,8 +784,10 @@ onBeforeUnmount(() => {
 .slider-label { display: flex; width: 100%; justify-content: space-between; }
 .slider-label b { color: #2563eb; }
 .steel-uploader { margin-top: 4px; }
+.model-warmup-alert { margin-bottom: 14px; }
 .steel-uploader :deep(.el-upload-dragger) { padding: 26px 12px; border-radius: 11px; background: #f8fafc; }
 .steel-uploader__icon { color: #2563eb; font-size: 36px; }
+.batch-upload-actions { display: flex; justify-content: center; gap: 10px; }
 .detect-button { width: 100%; margin-top: 18px; }
 .workspace-card { min-height: 240px; }
 .batch-summary { display: flex; align-items: center; gap: 9px; margin: 18px 0 12px; }

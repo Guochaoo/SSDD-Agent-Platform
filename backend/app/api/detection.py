@@ -40,9 +40,15 @@ from app.services.detection_service import detection_service
 from app.services.history_service import history_service
 from app.services.user_service import user_service
 
-
 router = APIRouter(prefix="/api/detection", tags=["detection"])
 logger = get_logger(__name__)
+
+
+@router.get("/models/status")
+async def detection_model_status():
+    return detection_service.warmup_status()
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
 
 
 @router.post("/single", response_model=DetectionResponse)

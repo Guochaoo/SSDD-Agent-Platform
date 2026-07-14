@@ -11,6 +11,7 @@ from fastapi import HTTPException, UploadFile
 from PIL import Image
 
 from app.entity.db_models import DetectionScene, DetectionTask, ModelVersion, User
+from app.config.detection import ALLOWED_IMAGE_TYPES
 from app.services.detection_service import DetectionService
 
 
@@ -322,3 +323,7 @@ def test_zip_rejects_more_than_batch_limit(tmp_path):
 
     with pytest.raises(HTTPException, match="图片数量不能超过 20 张"):
         DetectionService._safe_zip_images(zip_path, tmp_path / "extract")
+
+
+def test_supported_image_types_match_detection_page_options():
+    assert {"image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"} <= ALLOWED_IMAGE_TYPES

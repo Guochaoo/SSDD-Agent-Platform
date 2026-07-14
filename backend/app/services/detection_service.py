@@ -42,6 +42,28 @@ class DetectionService:
         self._models = {}
         self._inference_locks = {}
         self._model_lock = threading.Lock()
+        self._warmup_status = "idle"
+        self._warmup_error = ""
+
+    def warmup_models(self):
+        from app.database.session import SessionLocal
+
+        db = SessionLocal()
+        self._warmup_status = "loading"
+        try:
+            versions = db.query(ModelVersion).filter(ModelVersion.status == "active").all()
+            for version in versions:
+                self._get_model(version)
+            self._warmup_status = "ready"
+        except Exception as exc:
+            self._warmup_status = "error"
+            self._warmup_error = str(exc)
+            logger.warning("检测模型预热失败: %s", exc)
+        finally:
+            db.close()
+
+    def warmup_status(self):
+        return {"status": self._warmup_status, "error": self._warmup_error, "loaded": len(self._models)}
 
     @staticmethod
     def _resolve_model(db: Session, model_id: int) -> ModelVersion:
@@ -657,6 +679,68 @@ class DetectionService:
             "inference_time": inference_time,
             "model_id": model_version.id,
             "model_name": model_version.model_name,
+        }
+
+
+    def _get_default_model(self):
+        """获取默认模型实例（供 Agent Tool 使用）"""
+        from app.database.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            model_version = (
+                db.query(ModelVersion)
+                .filter(ModelVersion.status == "active", ModelVersion.is_default == True)
+                .first()
+            )
+            if not model_version:
+                model_version = db.query(ModelVersion).filter(ModelVersion.status == "active").first()
+            if not model_version:
+                raise RuntimeError("数据库中没有可用的模型版本，请先注册模型")
+            return self._get_model(model_version), model_version
+        finally:
+            db.close()
+
+    def _detect_file_sync(
+        self, image_path: str, *, conf: float = 0.25, iou: float = 0.45
+    ) -> dict:
+        """同步检测本地图片文件（供 Agent Tool 调用，不写数据库）"""
+        model, _ = self._get_default_model()
+
+        results = model.predict(
+            source=image_path, conf=conf, iou=iou, imgsz=640, device="cpu",
+            save=False, verbose=False,
+        )
+        result = results[0]
+
+        detections = []
+        class_counts = {}
+        total_objects = 0
+
+        if result.boxes is not None and len(result.boxes) > 0:
+            for box in result.boxes:
+                cls_id = int(box.cls.item())
+                cls_name = model.names.get(cls_id, f"class_{cls_id}")
+                confidence = float(box.conf.item())
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+
+                detections.append({
+                    "class_name": cls_name,
+                    "class_id": cls_id,
+                    "confidence": round(confidence, 4),
+                    "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
+                })
+                total_objects += 1
+                class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+
+        inference_time = round(float(result.speed.get("inference", 0)), 2)
+        logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
+
+        return {
+            "total_objects": total_objects,
+            "class_counts": class_counts,
+            "detections": detections,
+            "inference_time": inference_time,
         }
 
 

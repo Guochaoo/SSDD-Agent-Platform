@@ -117,13 +117,18 @@ describe("前端 B 训练与看板适配", () => {
       total_objects: 30,
       avg_inference_time: 88,
       class_distribution: { 划痕: 18, 麻点: 12 },
-      daily_trend: [{ date: "07-13", images: 20, objects: 30 }],
+      daily_trend: [{ date: "07-13", count: 4 }],
+      scene_distribution: { 钢铁表面缺陷: 10 },
     });
 
     expect(result.totals.totalImages).toBe(20);
     expect(result.classDistribution).toEqual([
       { name: "划痕", value: 18 },
       { name: "麻点", value: 12 },
+    ]);
+    expect(result.dailyTrend).toEqual([{ date: "07-13", tasks: 4 }]);
+    expect(result.sceneDistribution).toEqual([
+      { name: "钢铁表面缺陷", value: 10 },
     ]);
   });
 });

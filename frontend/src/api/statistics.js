@@ -22,7 +22,16 @@ export function normalizeDashboardResponse(payload) {
         name,
         value,
       })),
-    dailyTrend: data.dailyTrend ?? data.daily_trend ?? [],
+    dailyTrend: (data.dailyTrend ?? data.daily_trend ?? []).map((item) => ({
+      date: item.date,
+      tasks: Number(item.tasks ?? item.count ?? item.images ?? 0),
+    })),
+    sceneDistribution:
+      data.sceneDistribution ??
+      Object.entries(data.scene_distribution ?? {}).map(([name, value]) => ({
+        name,
+        value,
+      })),
     confidenceDistribution:
       data.confidenceDistribution ?? data.confidence_distribution ?? [],
     modelMetrics: data.modelMetrics ?? data.model_metrics ?? [],
