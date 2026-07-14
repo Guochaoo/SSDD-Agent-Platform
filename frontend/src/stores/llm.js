@@ -9,6 +9,7 @@ export const useLlmStore = defineStore('llm', {
   state: () => ({
     /** 可用模型列表 [{ id, owned_by }] */
     models: [],
+    otherModels: [],
     /** 是否正在加载 */
     loading: false,
     /** 是否已加载过 */
@@ -56,12 +57,30 @@ export const useLlmStore = defineStore('llm', {
       try {
         const data = await request.get('/agent/models')
         this.models = data?.models ?? []
+        this.otherModels = data?.other_models ?? []
         this.provider = data?.provider ?? null
         this.loaded = true
       } catch (err) {
         this.error = err?.response?.data?.detail || '获取模型列表失败'
         // 未配置 API Key 时不弹错误，仅记录
         console.warn('[LLM Store] 获取模型列表失败:', this.error)
+      } finally {
+        this.loading = false
+      }
+    },
+    async configure(apiKey, baseUrl, model) {
+      this.loading = true
+      this.error = null
+      try {
+        const data = await request.post('/agent/config', { api_key: apiKey, base_url: baseUrl, model })
+        this.models = data?.models ?? []
+        this.otherModels = data?.other_models ?? []
+        this.provider = data?.provider ?? baseUrl
+        this.loaded = true
+        return true
+      } catch (err) {
+        this.error = err?.response?.data?.detail || 'API key 配置失败'
+        return false
       } finally {
         this.loading = false
       }

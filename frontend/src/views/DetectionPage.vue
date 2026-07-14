@@ -20,6 +20,22 @@
               <el-icon><Setting /></el-icon>
             </div>
 
+            <el-alert
+              v-if="modelWarmupStatus === 'loading'"
+              title="正在加载检测模型，首次使用可能需要稍候"
+              type="info"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'error'"
+              title="检测模型预热失败，首次检测时将自动重试"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
             <el-form label-position="top">
               <el-form-item label="检测场景">
                 <el-select v-model="form.sceneId" class="full-width" @change="loadModels">
@@ -261,7 +277,7 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { detectBatchApi, detectSingleApi } from "@/api/detection";
+import { detectBatchApi, detectSingleApi, getDetectionModelStatus } from "@/api/detection";
 import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
@@ -278,6 +294,8 @@ const singleFile = ref(null);
 const singlePreviewUrl = ref("");
 const singleResult = ref(null);
 const singleLoading = ref(false);
+const modelWarmupStatus = ref("loading");
+let warmupTimer;
 
 const batchFileList = ref([]);
 const batchUploadRef = ref();
@@ -376,6 +394,16 @@ async function loadOptions() {
   }
 }
 
+async function refreshModelWarmupStatus() {
+  try {
+    const response = await getDetectionModelStatus();
+    modelWarmupStatus.value = response.status || "loading";
+    if (["ready", "error"].includes(modelWarmupStatus.value)) clearInterval(warmupTimer);
+  } catch {
+    modelWarmupStatus.value = "error";
+  }
+}
+
 async function startSingleDetection() {
   if (!singleFile.value) return;
   singleLoading.value = true;
@@ -459,11 +487,16 @@ function resetCurrentMode() {
   }
 }
 
-onMounted(loadOptions);
+onMounted(() => {
+  loadOptions();
+  refreshModelWarmupStatus();
+  warmupTimer = window.setInterval(refreshModelWarmupStatus, 1500);
+});
 onBeforeUnmount(() => {
   revokePreview();
   clearInterval(videoTimer);
   stopCamera();
+  clearInterval(warmupTimer);
 });
 </script>
 
@@ -484,6 +517,7 @@ onBeforeUnmount(() => {
 .slider-label { display: flex; width: 100%; justify-content: space-between; }
 .slider-label b { color: #2563eb; }
 .steel-uploader { margin-top: 4px; }
+.model-warmup-alert { margin-bottom: 14px; }
 .steel-uploader :deep(.el-upload-dragger) { padding: 26px 12px; border-radius: 11px; background: #f8fafc; }
 .steel-uploader__icon { color: #2563eb; font-size: 36px; }
 .batch-upload-actions { display: flex; justify-content: center; gap: 10px; }

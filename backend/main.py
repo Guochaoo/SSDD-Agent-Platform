@@ -19,6 +19,8 @@ from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
 from app.middleware.request_logger import RequestLogMiddleware
+from app.services.detection_service import detection_service
+import asyncio
 
 
 setup_logging()
@@ -39,6 +41,7 @@ def init_minio():
 async def lifespan(_app: FastAPI):
     logger.info("Starting service")
     init_minio()
+    asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
     yield
     logger.info("Service stopped")
 

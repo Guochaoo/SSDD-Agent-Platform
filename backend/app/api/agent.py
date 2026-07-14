@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from app.agent.detection_agent import detection_agent
 from app.api.auth import get_current_user
 from app.config.settings import settings
+from app.agent.llm_config import get_config, set_config
 from app.core.logger import get_logger
 from app.database.session import SessionLocal
 from app.entity.db_models import ChatMessage, ChatSession
@@ -31,6 +32,7 @@ MAX_HISTORY_MESSAGES = 20
 _model_cache: dict[str, Any] | None = None
 _model_cache_ts: float = 0.0
 _MODEL_CACHE_TTL: float = 300
+FEATURED_MODELS = {"qwen-plus", "qwen-max", "gpt-4o-mini", "gpt-4o"}
 
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "rsod_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -47,11 +49,12 @@ async def list_models():
     if _model_cache is not None and (now - _model_cache_ts) < _MODEL_CACHE_TTL:
         return _model_cache
 
-    if not settings.OPENAI_API_KEY:
+    llm_config = get_config()
+    if not llm_config["api_key"]:
         raise HTTPException(status_code=503, detail="未配置 OPENAI_API_KEY")
 
-    url = f"{settings.OPENAI_BASE_URL.rstrip('/')}/models"
-    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+    url = f"{llm_config['base_url'].rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {llm_config['api_key']}"}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(url, headers=headers)
@@ -79,9 +82,35 @@ async def list_models():
     preferred = {"qwen3.7-plus", "qwen-plus", "qwen-max", "deepseek-v4-pro"}
     models.sort(key=lambda m: (m["id"] not in preferred, m["id"]))
 
-    _model_cache = {"models": models, "provider": url}
+    featured = [model for model in models if model["id"] in FEATURED_MODELS]
+    other = [model for model in models if model["id"] not in FEATURED_MODELS]
+    _model_cache = {"models": featured, "other_models": other, "provider": url, "default_model": llm_config["model"]}
     _model_cache_ts = now
     return _model_cache
+
+
+@router.post("/config")
+async def configure_agent(payload: dict[str, str]):
+    api_key = (payload.get("api_key") or "").strip()
+    base_url = (payload.get("base_url") or settings.OPENAI_BASE_URL).strip().rstrip("/")
+    model = (payload.get("model") or "").strip()
+    if not api_key or not model:
+        raise HTTPException(status_code=400, detail="API key 和模型不能为空")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {401, 403}:
+            raise HTTPException(status_code=401, detail="API key 无效或无权访问该模型服务")
+        raise HTTPException(status_code=502, detail=f"模型服务请求失败 (HTTP {exc.response.status_code})")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"模型服务连接失败: {exc}")
+    set_config(api_key, base_url, model)
+    global _model_cache, _model_cache_ts
+    _model_cache = None
+    _model_cache_ts = 0
+    return await list_models()
 
 
 @router.get("/models/cached")

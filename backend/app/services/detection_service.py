@@ -34,6 +34,28 @@ class DetectionService:
         self._models = {}
         self._inference_locks = {}
         self._model_lock = threading.Lock()
+        self._warmup_status = "idle"
+        self._warmup_error = ""
+
+    def warmup_models(self):
+        from app.database.session import SessionLocal
+
+        db = SessionLocal()
+        self._warmup_status = "loading"
+        try:
+            versions = db.query(ModelVersion).filter(ModelVersion.status == "active").all()
+            for version in versions:
+                self._get_model(version)
+            self._warmup_status = "ready"
+        except Exception as exc:
+            self._warmup_status = "error"
+            self._warmup_error = str(exc)
+            logger.warning("检测模型预热失败: %s", exc)
+        finally:
+            db.close()
+
+    def warmup_status(self):
+        return {"status": self._warmup_status, "error": self._warmup_error, "loaded": len(self._models)}
 
     @staticmethod
     def _resolve_model(db: Session, model_id: int) -> ModelVersion:

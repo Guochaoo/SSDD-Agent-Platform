@@ -23,6 +23,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 from app.config.settings import settings
+from app.agent.llm_config import get_config
 from app.core.logger import get_logger
 from app.services.detection_service import detection_service
 
@@ -166,13 +167,14 @@ def _make_llm(model: str | None = None):
     Args:
         model: 前端选择的模型名，若为 None 则使用 .env 默认值
     """
-    api_key = settings.OPENAI_API_KEY
-    base_url = settings.OPENAI_BASE_URL
+    llm_config = get_config()
+    api_key = llm_config["api_key"]
+    base_url = llm_config["base_url"]
 
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
 
-    model_name = model or settings.OPENAI_MODEL
+    model_name = model or llm_config["model"]
     logger.info("Agent LLM: model=%s base_url=%s", model_name, base_url)
     return ChatOpenAI(
         model=model_name,

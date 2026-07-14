@@ -13,6 +13,14 @@
     </template>
 
     <div class="model-list">
+      <div class="model-config">
+        <el-input v-model="apiKey" type="password" show-password size="small" placeholder="输入 API key" />
+        <el-select v-model="baseUrl" size="small" class="config-select">
+          <el-option label="OpenAI" value="https://api.openai.com/v1" />
+          <el-option label="通义千问" value="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+        </el-select>
+        <el-button size="small" type="primary" :loading="llmStore.loading" @click="configure">验证并加载模型</el-button>
+      </div>
       <div v-if="llmStore.loading" class="model-hint">加载中…</div>
       <template v-else>
         <button
@@ -30,13 +38,19 @@
         <div v-if="options.length === 0 && llmStore.error" class="model-hint error">
           {{ llmStore.error }}
         </div>
+        <details v-if="otherOptions.length" class="other-models">
+          <summary>其他模型（{{ otherOptions.length }}）</summary>
+          <button v-for="m in otherOptions" :key="m.value" class="model-item" @click="model = m.value">
+            {{ m.label }}
+          </button>
+        </details>
       </template>
     </div>
   </el-popover>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ArrowDown, Check } from '@element-plus/icons-vue'
 import { useLlmStore } from '@/stores/llm'
 
@@ -45,11 +59,23 @@ const llmStore = useLlmStore()
 const model = defineModel({ default: useLlmStore().defaultModel })
 
 const options = computed(() => llmStore.modelOptions)
+const otherOptions = computed(() => llmStore.otherModels.map(m => ({ label: m.id, value: m.id })))
+const apiKey = ref('')
+const baseUrl = ref('https://dashscope.aliyuncs.com/compatible-mode/v1')
 
 const currentLabel = computed(() => {
   const found = options.value.find(m => m.value === model.value)
   return found?.label || model.value || '选择模型'
 })
+
+async function configure() {
+  if (!apiKey.value.trim()) return
+  const selectedModel = options.value.length
+    ? model.value
+    : (baseUrl.value.includes('dashscope') ? 'qwen-plus' : 'gpt-4o-mini')
+  model.value = selectedModel
+  await llmStore.configure(apiKey.value.trim(), baseUrl.value, selectedModel)
+}
 </script>
 
 <style lang="scss" scoped>
@@ -80,6 +106,17 @@ const currentLabel = computed(() => {
   max-height: 280px;
   overflow-y: auto;
 }
+
+.model-config {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid #eee;
+}
+
+.config-select { width: 100%; }
+.other-models { padding: 6px; font-size: 12px; color: #737373; }
+.other-models summary { cursor: pointer; padding: 4px; }
 
 .model-item {
   display: flex;
