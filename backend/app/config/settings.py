@@ -33,9 +33,6 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o-mini"
-    QWEN_API_KEY: str = ""
-    QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    QWEN_MODEL: str = "qwen-plus"
 
     # Training paths
     DATASET_BASE_DIR: str = "datasets/ssdd"
