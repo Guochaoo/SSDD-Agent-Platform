@@ -14,6 +14,11 @@
   <div v-else class="assistant-msg">
     <div class="assistant-content">
       <div class="markdown-body" v-html="renderedContent" />
+      <DetectionResultCard
+        v-if="message.detectionResult"
+        :result="message.detectionResult"
+        :preview-url="message.detectionPreviewUrl"
+      />
     </div>
 
     <div v-if="!isLastStreaming && message.content" class="msg-footer">
@@ -34,6 +39,7 @@
 import { computed, ref } from 'vue'
 import { DocumentCopy, Check, Refresh } from '@element-plus/icons-vue'
 import { renderMarkdown } from '@/utils/markdown'
+import DetectionResultCard from './DetectionResultCard.vue'
 
 const props = defineProps({
   message: { type: Object, required: true },

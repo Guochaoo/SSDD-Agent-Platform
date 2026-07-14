@@ -78,6 +78,13 @@
             <span>{{ chip.label }}</span>
           </button>
         </div>
+
+        <QuickDetectBar
+          :disabled="agentStore.isStreaming"
+          @single="handleQuickDetect('single')"
+          @batch="handleQuickDetect('batch')"
+          @zip="handleQuickDetect('zip')"
+        />
       </div>
     </template>
 
@@ -92,6 +99,14 @@
 
       <!-- Prompt card (sticky bottom) -->
       <div class="chat-bottom">
+        <QuickDetectBar
+          class="chat-quick-detect"
+          :disabled="agentStore.isStreaming"
+          @single="handleQuickDetect('single')"
+          @batch="handleQuickDetect('batch')"
+          @zip="handleQuickDetect('zip')"
+        />
+
         <div :class="['prompt-card', { dragover: isDragover }]">
           <div v-if="agentStore.imagePreviewUrl" class="inline-preview">
             <img :src="agentStore.imagePreviewUrl" alt="preview" />
@@ -156,8 +171,10 @@ import { Image, ArrowUpStroke } from '@boxicons/vue'
 import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import { streamAgentChat } from '@/api/agent'
+import { detectBatchApi, detectSingleApi } from '@/api/detection'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
+import QuickDetectBar from '@/components/agent/QuickDetectBar.vue'
 
 const agentStore = useAgentStore()
 const userStore = useUserStore()
@@ -194,6 +211,12 @@ const quickChips = [
   { label: '这是什么类型的表面缺陷' },
   { label: '如何区分划痕和裂纹' },
 ]
+
+const quickDetectOptions = {
+  modelId: 1,
+  confThreshold: 0.25,
+  iouThreshold: 0.45,
+}
 
 function onDragEnter() { dragCounter++; isDragover.value = true }
 function onDragOver() {}
@@ -259,6 +282,94 @@ function handleChatSend() {
 }
 
 function handleChipClick(text) { handleSend(text) }
+
+function chooseFiles({ accept, multiple }) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = accept
+    input.multiple = multiple
+    input.onchange = () => resolve(Array.from(input.files || []))
+    input.click()
+  })
+}
+
+async function handleQuickDetect(type) {
+  if (agentStore.isStreaming) return
+
+  if (type === 'zip') {
+    ElMessage.warning('当前后端暂未开放 ZIP 检测接口，请先使用批量图片检测')
+    return
+  }
+
+  const files = await chooseFiles({
+    accept: 'image/png,image/jpeg',
+    multiple: type === 'batch',
+  })
+  if (!files.length) return
+
+  if (type === 'single') {
+    await runSingleDetect(files[0])
+  } else {
+    await runBatchDetect(files)
+  }
+}
+
+async function runSingleDetect(file) {
+  const previewUrl = URL.createObjectURL(file)
+  agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
+  agentStore.addMessage({
+    role: 'user',
+    content: `[快捷单图检测] ${file.name}`,
+    imagePreviewUrl: previewUrl,
+  })
+  agentStore.addMessage({
+    role: 'assistant',
+    content: '正在进行单图检测，请稍候……',
+  })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectSingleApi(file, quickDetectOptions)
+    assistantMessage.content = `单图检测完成，共发现 ${result.totalObjects || 0} 个疑似缺陷。`
+    assistantMessage.detectionResult = result
+    assistantMessage.detectionPreviewUrl = previewUrl
+    agentStore.currentToolCall = { name: 'detect_single', status: 'success', result }
+  } catch (error) {
+    assistantMessage.content = '单图检测失败，请稍后重试。'
+    agentStore.currentToolCall = { name: 'detect_single', status: 'error', error }
+    ElMessage.error(error?.response?.data?.detail || '单图检测失败')
+  } finally {
+    saveCurrentSession()
+  }
+}
+
+async function runBatchDetect(files) {
+  agentStore.currentToolCall = { name: 'detect_batch', status: 'running' }
+  agentStore.addMessage({
+    role: 'user',
+    content: `[快捷批量检测] ${files.length} 张图片`,
+  })
+  agentStore.addMessage({
+    role: 'assistant',
+    content: '正在进行批量检测，请稍候……',
+  })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectBatchApi(files, quickDetectOptions)
+    const totalObjects = (result.items || []).reduce((sum, item) => sum + Number(item.totalObjects || 0), 0)
+    assistantMessage.content = `批量检测完成，共处理 ${result.items?.length || files.length} 张图片，发现 ${totalObjects} 个疑似缺陷。`
+    assistantMessage.detectionResult = result
+    agentStore.currentToolCall = { name: 'detect_batch', status: 'success', result }
+  } catch (error) {
+    assistantMessage.content = '批量检测失败，请稍后重试。'
+    agentStore.currentToolCall = { name: 'detect_batch', status: 'error', error }
+    ElMessage.error(error?.response?.data?.detail || '批量检测失败')
+  } finally {
+    saveCurrentSession()
+  }
+}
 
 function handleAgentEvent(event) {
   if (event.type === 'text_delta') { agentStore.appendAssistantContent(event.content || '') }
@@ -508,6 +619,12 @@ function saveCurrentSession() {
   justify-content: center;
   gap: 8px;
   max-width: 640px;
+}
+
+.chat-quick-detect {
+  max-width: 720px;
+  margin: 0 auto 8px;
+  justify-content: flex-start;
 }
 
 .chip {
