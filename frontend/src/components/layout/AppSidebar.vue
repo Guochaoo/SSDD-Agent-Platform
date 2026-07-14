@@ -3,25 +3,57 @@
     <!-- Header: brand -->
     <div class="sidebar-header">
       <img src="/favicon.svg" alt="logo" class="brand-logo" />
-      <span v-show="!collapsed" class="brand-text">RSOD</span>
+      <span v-show="!collapsed" class="brand-text">SSDD</span>
     </div>
 
-    <!-- Body: navigation -->
-    <nav class="sidebar-nav">
-      <router-link
-        v-for="item in menuItems"
-        :key="item.path"
-        :to="item.path"
-        :class="['nav-item', { active: activeMenu === item.path }]"
-        :title="collapsed ? item.title : ''"
-      >
-        <el-icon class="nav-icon">
-          <component :is="item.icon" />
-        </el-icon>
-        <span v-show="!collapsed" class="nav-label">{{ item.title }}</span>
-        <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
-      </router-link>
-    </nav>
+    <!-- Body: navigation + sessions -->
+    <div class="sidebar-body">
+      <nav class="sidebar-nav">
+        <router-link
+          v-for="item in menuItems"
+          :key="item.path"
+          :to="item.path"
+          :class="['nav-item', { active: activeMenu === item.path }]"
+          :title="collapsed ? item.title : ''"
+        >
+          <el-icon class="nav-icon">
+            <component :is="item.icon" />
+          </el-icon>
+          <span v-show="!collapsed" class="nav-label">{{ item.title }}</span>
+          <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
+        </router-link>
+      </nav>
+
+      <!-- Sessions section (chat history) -->
+      <div v-show="!collapsed" class="sidebar-sessions">
+        <div class="sessions-header">
+          <span>会话历史</span>
+          <button class="sessions-new-btn" title="新对话" @click="handleNewChat">
+            <Plus />
+          </button>
+        </div>
+        <div class="sessions-list">
+          <div v-if="!agentStore.sessions.length" class="sessions-empty">
+            暂无会话
+          </div>
+          <div
+            v-for="session in agentStore.sessions"
+            :key="session.id"
+            :class="['session-item', { active: session.id === agentStore.currentSessionId && activeMenu === '/chat' }]"
+            @click="handleSwitchSession(session.id)"
+          >
+            <span class="session-title">{{ session.title || '新对话' }}</span>
+            <span
+              class="session-delete"
+              title="删除"
+              @click.stop="handleDeleteSession(session.id)"
+            >
+              <Trash />
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Footer: user menu -->
     <div class="sidebar-footer">
@@ -31,7 +63,7 @@
             {{ userStore.username?.charAt(0)?.toUpperCase() }}
           </el-avatar>
           <span v-show="!collapsed" class="user-name">{{ userStore.username }}</span>
-          <el-icon v-show="!collapsed" class="user-chevron"><ArrowDown /></el-icon>
+          <ChevronsUpDown v-show="!collapsed" class="user-chevron" />
         </div>
         <template #dropdown>
           <el-dropdown-menu>
@@ -49,10 +81,9 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import {
-  Camera, ChatDotRound, Clock, Cpu, DataAnalysis,
-  ArrowDown, SwitchButton,
-} from '@element-plus/icons-vue'
+import { useAgentStore } from '@/stores/agent'
+import { SwitchButton } from '@element-plus/icons-vue'
+import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash } from '@boxicons/vue'
 import { ElMessageBox } from 'element-plus'
 
 defineProps({
@@ -62,16 +93,33 @@ defineProps({
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const agentStore = useAgentStore()
 
 const activeMenu = computed(() => '/' + route.path.split('/')[1])
 
 const menuItems = [
-  { path: '/chat',       title: '智能对话',   icon: ChatDotRound },
-  { path: '/detection',  title: '检测工作台', icon: Camera },
-  { path: '/training',   title: '模型训练',   icon: Cpu },
-  { path: '/history',    title: '历史记录',   icon: Clock },
-  { path: '/dashboard',  title: '数据看板',   icon: DataAnalysis },
+  { path: '/chat',       title: '智能对话',   icon: MessageCircleDetail },
+  { path: '/detection',  title: '检测工作台', icon: Capture },
+  { path: '/training',   title: '模型训练',   icon: Computer },
+  { path: '/history',    title: '历史记录',   icon: History },
+  { path: '/dashboard',  title: '数据看板',   icon: ChartTrend },
 ]
+
+function handleNewChat() {
+  agentStore.saveSession()
+  agentStore.newChat()
+  if (route.path !== '/chat') router.push('/chat')
+}
+
+function handleSwitchSession(id) {
+  agentStore.saveSession()
+  agentStore.loadSession(id)
+  if (route.path !== '/chat') router.push('/chat')
+}
+
+function handleDeleteSession(id) {
+  agentStore.deleteSession(id)
+}
 
 function handleCommand(command) {
   if (command === 'logout') {
@@ -90,7 +138,7 @@ function handleCommand(command) {
   position: relative;
   width: $sidebar-width;
   height: 100vh;
-  background: #1a1a1c;
+  background: #000;
   display: flex;
   flex-direction: column;
   transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
@@ -126,14 +174,22 @@ function handleCommand(command) {
   letter-spacing: -0.3px;
 }
 
+/* ── Body (nav + sessions) ── */
+.sidebar-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 /* ── Nav ── */
 .sidebar-nav {
-  flex: 1;
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .nav-item {
@@ -199,6 +255,130 @@ function handleCommand(command) {
   flex-shrink: 0;
 }
 
+/* ── Sessions ── */
+.sidebar-sessions {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 8px 8px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.sessions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,1);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.sessions-new-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255,255,255,0.4);
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.08);
+  }
+
+  svg {
+    width: 14px; height: 14px;
+  }
+}
+
+.sessions-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sessions-empty {
+  padding: 16px 12px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.25);
+  text-align: center;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  transition: all 0.1s;
+  gap: 6px;
+
+  &:hover {
+    background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.8);
+  }
+
+  &.active {
+    background: rgba(143,138,176,0.2);
+    color: #fff;
+  }
+}
+
+.session-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255,255,255,0.25);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: all 0.15s;
+  padding: 0;
+
+  svg {
+    width: 12px; height: 12px;
+  }
+
+  .session-item:hover & {
+    opacity: 1;
+  }
+
+  &:hover {
+    color: #f56c6c;
+    background: rgba(245,108,108,0.15);
+  }
+}
+
 /* ── Footer ── */
 .sidebar-footer {
   border-top: 1px solid rgba(255,255,255,0.06);
@@ -210,7 +390,7 @@ function handleCommand(command) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px;
+  padding: 6px 20px;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s;
@@ -227,7 +407,7 @@ function handleCommand(command) {
 
 .user-name {
   flex: 1;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: rgba(255,255,255,0.8);
   white-space: nowrap;
@@ -236,7 +416,7 @@ function handleCommand(command) {
 }
 
 .user-chevron {
-  font-size: 12px;
+  width: 20px; height: 20px;
   color: rgba(255,255,255,0.35);
   flex-shrink: 0;
 }

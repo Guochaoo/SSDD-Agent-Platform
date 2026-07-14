@@ -17,10 +17,15 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png"}
 async def stream_agent_chat(
     message: str = Form(""),
     session_id: str | None = Form(None),
+    model: str | None = Form(None),
     image: UploadFile | None = File(None),
     _current_user=Depends(get_current_user),
 ):
-    """Reserve the streaming contract until agent orchestration is implemented."""
+    """Reserve the streaming contract until agent orchestration is implemented.
+
+    ``model`` is accepted so the frontend can keep its model-selection contract;
+    the endpoint still returns 501 until model routing is implemented.
+    """
     if not message.strip() and image is None:
         raise HTTPException(status_code=422, detail="消息和图片不能同时为空")
     if image is not None:
