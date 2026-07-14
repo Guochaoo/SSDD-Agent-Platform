@@ -80,10 +80,22 @@ export async function detectBatchApi(files, options) {
   formData.append("model_id", options.modelId);
   formData.append("conf_threshold", String(options.confThreshold));
   formData.append("iou_threshold", String(options.iouThreshold));
-  return unwrap(
+  const data = unwrap(
     await request.post("/detection/batch", formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 300000,
     }),
   );
+  return {
+    taskId: String(data.task_id ?? data.taskId ?? ""),
+    status: data.status ?? "completed",
+    successCount: data.success_count ?? data.successCount ?? 0,
+    failedCount: data.failed_count ?? data.failedCount ?? 0,
+    items: (data.items ?? []).map((item) => ({
+      ...normalizeDetectionResponse(item),
+      status: item.status,
+      fileName: item.file_name ?? item.fileName ?? "",
+      error: item.error ?? null,
+    })),
+  };
 }

@@ -204,7 +204,53 @@ class DetectionResultResponse(BaseModel):
 class DetectionTaskDetail(BaseModel):
     """检测任务详情（含结果列表）"""
     task: DetectionTaskResponse
-    results: list[DetectionResultResponse] = []
+    results: list[DetectionResultResponse] = Field(default_factory=list)
+
+
+class DetectionObject(BaseModel):
+    """推理返回的单个缺陷目标。"""
+    class_id: int
+    class_name: str
+    class_name_cn: Optional[str] = None
+    confidence: float
+    bbox: list[float]
+
+
+class DetectionResponse(BaseModel):
+    """单图检测响应。"""
+    task_id: int
+    status: str
+    filename: str
+    image_url: str
+    annotated_image_url: str
+    image_width: int
+    image_height: int
+    total_objects: int
+    inference_time_ms: float
+    objects: list[DetectionObject]
+
+
+class BatchDetectionItem(BaseModel):
+    """批量检测中的单文件结果。"""
+    file_name: str
+    status: str
+    total_objects: int = 0
+    inference_time_ms: float = 0
+    image_url: Optional[str] = None
+    annotated_image_url: Optional[str] = None
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
+    objects: list[DetectionObject] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class BatchDetectionResponse(BaseModel):
+    """批量检测响应。"""
+    task_id: int
+    status: str
+    success_count: int
+    failed_count: int
+    items: list[BatchDetectionItem]
 
 
 # --- 检测统计 ---
