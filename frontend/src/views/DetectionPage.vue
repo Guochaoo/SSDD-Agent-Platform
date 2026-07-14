@@ -65,6 +65,7 @@
             </el-form>
 
             <el-upload
+              ref="singleUploadRef"
               v-model:file-list="singleFileList"
               class="steel-uploader"
               drag
@@ -119,6 +120,7 @@
             >开始批量检测</el-button>
           </div>
           <el-upload
+            ref="batchUploadRef"
             v-model:file-list="batchFileList"
             drag
             multiple
@@ -129,7 +131,16 @@
             :on-exceed="handleBatchExceed"
           >
             <el-icon class="steel-uploader__icon"><FolderAdd /></el-icon>
-            <div class="el-upload__text">拖入多张钢铁表面图片，或 <em>点击选择</em></div>
+            <template v-if="batchFileList.length === 0">
+              <div class="el-upload__text">拖入多张钢铁表面图片，或 <em>点击选择</em></div>
+            </template>
+            <template v-else>
+              <div class="el-upload__text">拖入图片可新增，或选择操作</div>
+              <div class="batch-upload-actions">
+                <el-button type="primary" plain @click.stop="openBatchFilePicker()">新增图片</el-button>
+                <el-button @click.stop="openBatchFilePicker(true)">重新选择</el-button>
+              </div>
+            </template>
           </el-upload>
           <div v-if="batchResult" class="batch-summary">
             <el-tag type="success">成功 {{ batchResult.successCount }}</el-tag>
@@ -262,12 +273,14 @@ const models = ref([]);
 const form = reactive({ sceneId: "", modelId: "", confThreshold: 0.25, iouThreshold: 0.45 });
 
 const singleFileList = ref([]);
+const singleUploadRef = ref();
 const singleFile = ref(null);
 const singlePreviewUrl = ref("");
 const singleResult = ref(null);
 const singleLoading = ref(false);
 
 const batchFileList = ref([]);
+const batchUploadRef = ref();
 const batchResult = ref(null);
 const batchLoading = ref(false);
 
@@ -322,8 +335,12 @@ function clearSingleFile() {
   revokePreview();
 }
 
-function handleSingleExceed() {
-  ElMessage.info("单图模式一次只能选择一张图片，请先移除当前图片");
+function handleSingleExceed(files) {
+  const nextFile = files[0];
+  if (!nextFile || !validateImage(nextFile)) return;
+
+  singleUploadRef.value?.clearFiles();
+  singleUploadRef.value?.handleStart(nextFile);
 }
 
 function validateBatchFile(uploadFile) {
@@ -334,6 +351,14 @@ function validateBatchFile(uploadFile) {
 
 function handleBatchExceed() {
   ElMessage.info("批量模式一次最多选择 20 张图片");
+}
+
+function openBatchFilePicker(replace = false) {
+  if (replace) {
+    batchUploadRef.value?.clearFiles();
+    batchResult.value = null;
+  }
+  batchUploadRef.value?.$el?.querySelector('input[type="file"]')?.click();
 }
 
 async function loadModels() {
@@ -461,6 +486,7 @@ onBeforeUnmount(() => {
 .steel-uploader { margin-top: 4px; }
 .steel-uploader :deep(.el-upload-dragger) { padding: 26px 12px; border-radius: 11px; background: #f8fafc; }
 .steel-uploader__icon { color: #2563eb; font-size: 36px; }
+.batch-upload-actions { display: flex; justify-content: center; gap: 10px; }
 .detect-button { width: 100%; margin-top: 18px; }
 .workspace-card { min-height: 240px; }
 .batch-summary { display: flex; align-items: center; gap: 9px; margin: 18px 0 12px; }
