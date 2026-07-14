@@ -100,10 +100,14 @@ async def upload_image(
     file: UploadFile = File(...),
     _current_user=Depends(get_current_user),
 ):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="仅支持图片文件")
     suffix = Path(file.filename).suffix.lower() or ".jpg"
     filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
     filepath = os.path.join(UPLOAD_DIR, filename)
     content = await file.read(MAX_IMAGE_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="图片不能为空")
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="图片大小不能超过 10MB")
     with open(filepath, "wb") as f:
@@ -162,6 +166,8 @@ async def chat_stream(
         body = await request.json()
         message = (body.get("message") or "").strip()
         image_path = body.get("image_path")
+        if image_path:
+            image_path = _validate_uploaded_image_path(image_path)
 
     if not message and not image_path:
         raise HTTPException(status_code=422, detail="消息不能为空")
@@ -230,6 +236,20 @@ def _ensure_session(session_id: str, user_id: int):
         return s
     finally:
         db.close()
+
+
+def _validate_uploaded_image_path(image_path: str) -> str:
+    if not isinstance(image_path, str) or not image_path.strip():
+        raise HTTPException(status_code=400, detail="图片路径无效")
+    candidate = Path(image_path).resolve()
+    upload_root = Path(UPLOAD_DIR).resolve()
+    try:
+        candidate.relative_to(upload_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="图片路径无效") from exc
+    if not candidate.is_file():
+        raise HTTPException(status_code=400, detail="图片文件不存在")
+    return str(candidate)
 
 
 def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
