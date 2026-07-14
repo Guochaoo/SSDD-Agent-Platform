@@ -15,8 +15,11 @@
 """
 
 import base64
+import io
 import os
 import tempfile
+import zipfile
+from pathlib import Path
 
 import cv2
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -40,6 +43,62 @@ from app.training.training_service import training_service
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
+
+
+def _dataset_root() -> Path:
+    project_root = Path(__file__).resolve().parents[3]
+    return (project_root / settings.DATASET_BASE_DIR).resolve()
+
+
+def _safe_dataset_path(dataset_path: str | None) -> Path:
+    root = _dataset_root()
+    candidate = (root / dataset_path).resolve() if dataset_path else root
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=400, detail="数据集路径无效")
+    return candidate
+
+
+@router.get("/datasets")
+async def list_datasets(current_user=Depends(get_current_user)):
+    root = _dataset_root()
+    root.mkdir(parents=True, exist_ok=True)
+    datasets = []
+    for directory in sorted(item for item in root.iterdir() if item.is_dir()):
+        datasets.append({
+            "name": directory.name,
+            "path": directory.name,
+            "ready": (directory / "data.yaml").is_file(),
+        })
+    if (root / "data.yaml").is_file():
+        datasets.insert(0, {"name": root.name, "path": ".", "ready": True})
+    return {"items": datasets}
+
+
+@router.post("/datasets/upload")
+async def upload_dataset(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="数据集必须是 ZIP 文件")
+    dataset_name = Path(file.filename).stem.replace(" ", "_")
+    target = _safe_dataset_path(dataset_name)
+    target.mkdir(parents=True, exist_ok=True)
+    archive = await file.read()
+    if len(archive) > 500 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="数据集压缩包不能超过 500 MB")
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as archive_file:
+            for member in archive_file.infolist():
+                member_path = (target / member.filename).resolve()
+                if target not in member_path.parents and member_path != target:
+                    raise HTTPException(status_code=400, detail="数据集压缩包包含非法路径")
+            archive_file.extractall(target)
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="数据集压缩包无法解析")
+    if not (target / "data.yaml").is_file():
+        raise HTTPException(status_code=400, detail="数据集压缩包根目录必须包含 data.yaml")
+    return {"name": target.name, "path": target.name, "ready": True}
 
 
 def _check_task_access(db: Session, task_id: int, current_user):
@@ -92,7 +151,10 @@ async def start_training(
     app_dir = os.path.dirname(api_dir)
     backend_dir = os.path.dirname(app_dir)
     project_root = os.path.dirname(backend_dir)
+    requested_dataset = request.dataset_path
     dataset_path = os.path.join(project_root, settings.DATASET_BASE_DIR)
+    if requested_dataset:
+        dataset_path = str(_safe_dataset_path(requested_dataset))
     config["dataset_path"] = dataset_path
 
     # 检查 data.yaml 是否存在

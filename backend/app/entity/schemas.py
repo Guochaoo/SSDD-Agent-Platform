@@ -285,6 +285,7 @@ class TrainingTaskCreate(BaseModel):
     optimizer: str = Field(default="SGD", description="优化器")
     lr0: float = Field(default=0.01, description="初始学习率")
     augment_config: Optional[dict] = Field(None, description="数据增强配置")
+    dataset_path: Optional[str] = Field(None, description="数据集目录")
 
 
 class TrainingTaskResponse(BaseModel):

@@ -102,6 +102,18 @@ export function startTraining(payload) {
   return request.post('/training/start', payload)
 }
 
+export function getTrainingDatasets() {
+  return request.get('/training/datasets')
+}
+
+export function uploadTrainingDataset(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/training/datasets/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
 export function getTrainingStatus(taskId) {
   return request.get(`/training/status/${taskId}`)
 }
