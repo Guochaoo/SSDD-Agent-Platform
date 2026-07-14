@@ -325,5 +325,17 @@ def test_zip_rejects_more_than_batch_limit(tmp_path):
         DetectionService._safe_zip_images(zip_path, tmp_path / "extract")
 
 
+def test_zip_preserves_tiff_support(tmp_path):
+    zip_path = tmp_path / "tiff.zip"
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(output, format="TIFF")
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("sample.tiff", output.getvalue())
+
+    extracted = DetectionService._safe_zip_images(zip_path, tmp_path / "extract")
+
+    assert [path.suffix for path in extracted] == [".tiff"]
+
+
 def test_supported_image_types_match_detection_page_options():
     assert {"image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"} <= ALLOWED_IMAGE_TYPES

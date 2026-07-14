@@ -340,7 +340,8 @@ class DetectionService:
     @staticmethod
     def _safe_zip_images(zip_path: str, extract_dir: str) -> list[Path]:
         """校验 ZIP 内容并安全解压图片，阻止路径穿越和压缩炸弹。"""
-        allowed_suffixes = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        # Keep this aligned with the existing single-image upload contract.
+        allowed_suffixes = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
         extract_root = Path(extract_dir).resolve()
         image_paths = []
         total_size = 0
@@ -408,6 +409,8 @@ class DetectionService:
                         ".png": "image/png",
                         ".bmp": "image/bmp",
                         ".webp": "image/webp",
+                        ".tiff": "image/tiff",
+                        ".tif": "image/tiff",
                     }[image_path.suffix.lower()]
                     uploads.append(
                         UploadFile(
