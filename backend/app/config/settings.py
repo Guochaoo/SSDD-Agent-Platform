@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "rsod-agent-images"
     MINIO_SECURE: bool = False
 
-    # Training paths are configurable instead of being tied to one checkout.
+    # LLM
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
+    # Training paths
     DATASET_BASE_DIR: str = "datasets/ssdd"
     TRAIN_OUTPUT_DIR: str = "runs/train"
 

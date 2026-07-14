@@ -1,7 +1,7 @@
 <template>
   <el-popover
     placement="top-start"
-    :width="200"
+    :width="220"
     trigger="click"
     :show-arrow="false"
   >
@@ -13,15 +13,24 @@
     </template>
 
     <div class="model-list">
-      <button
-        v-for="m in models"
-        :key="m.value"
-        :class="['model-item', { active: model === m.value }]"
-        @click="model = m.value"
-      >
-        <span>{{ m.label }}</span>
-        <el-icon v-if="model === m.value" :size="14" color="#8F8AB0"><Check /></el-icon>
-      </button>
+      <div v-if="llmStore.loading" class="model-hint">加载中…</div>
+      <template v-else>
+        <button
+          v-for="m in options"
+          :key="m.value"
+          :class="['model-item', { active: model === m.value }]"
+          @click="model = m.value"
+        >
+          <div class="model-info">
+            <span class="model-name">{{ m.label }}</span>
+            <span class="model-provider">{{ m.ownedBy }}</span>
+          </div>
+          <el-icon v-if="model === m.value" :size="14" color="#8F8AB0"><Check /></el-icon>
+        </button>
+        <div v-if="options.length === 0 && llmStore.error" class="model-hint error">
+          {{ llmStore.error }}
+        </div>
+      </template>
     </div>
   </el-popover>
 </template>
@@ -29,17 +38,17 @@
 <script setup>
 import { computed } from 'vue'
 import { ArrowDown, Check } from '@element-plus/icons-vue'
+import { useLlmStore } from '@/stores/llm'
+
+const llmStore = useLlmStore()
 
 const model = defineModel({ default: 'gpt-4o-mini' })
 
-const models = [
-  { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
-  { label: 'Qwen 2.5 7B', value: 'qwen2.5:7b' },
-  { label: 'GPT-4o', value: 'gpt-4o' },
-]
+const options = computed(() => llmStore.modelOptions)
 
 const currentLabel = computed(() => {
-  return models.find(m => m.value === model.value)?.label || '选择模型'
+  const found = options.value.find(m => m.value === model.value)
+  return found?.label || model.value || '选择模型'
 })
 </script>
 
@@ -68,6 +77,8 @@ const currentLabel = computed(() => {
   flex-direction: column;
   gap: 2px;
   padding: 4px;
+  max-height: 280px;
+  overflow-y: auto;
 }
 
 .model-item {
@@ -91,6 +102,36 @@ const currentLabel = computed(() => {
 
   &.active {
     color: #8F8AB0;
+  }
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.model-name {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-provider {
+  font-size: 11px;
+  color: #999;
+}
+
+.model-hint {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #999;
+  text-align: center;
+
+  &.error {
+    color: #e5534b;
   }
 }
 </style>
