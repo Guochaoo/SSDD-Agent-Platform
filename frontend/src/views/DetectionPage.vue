@@ -193,27 +193,15 @@
             </el-form>
             <el-button
               type="primary"
-              :disabled="videoFileList.length === 0 || videoStatus === 'processing'"
-              @click="startVideoTask"
-            >创建视频检测任务</el-button>
+              disabled
+            >等待后端视频接口</el-button>
           </section>
           <section class="workspace-card video-progress-card">
             <el-result
-              v-if="videoStatus === 'idle'"
-              icon="info"
-              title="等待视频任务"
-              sub-title="选择视频并创建任务后，这里将展示进度和关键帧摘要。"
+              icon="warning"
+              title="视频检测接口尚未开放"
+              sub-title="当前后端只提供单图和批量图片检测。视频文件可提前选择，但不会创建模拟任务或伪造检测结果。"
             />
-            <template v-else>
-              <div class="video-progress-card__header">
-                <div><span>模拟任务</span><strong>{{ videoTaskId }}</strong></div>
-                <el-tag :type="videoStatus === 'completed' ? 'success' : 'warning'">
-                  {{ videoStatus === "completed" ? "已完成" : "处理中" }}
-                </el-tag>
-              </div>
-              <el-progress type="dashboard" :percentage="videoProgress" :status="videoStatus === 'completed' ? 'success' : ''" />
-              <p>抽帧间隔：每 {{ videoFrameInterval }} 帧 · 已发现 {{ videoObjectCount }} 处候选缺陷</p>
-            </template>
           </section>
         </div>
       </el-tab-pane>
@@ -222,25 +210,24 @@
         <div class="two-column-cards">
           <section class="workspace-card camera-stage">
             <video ref="cameraVideo" autoplay muted playsinline />
-            <div v-if="cameraActive" class="camera-box camera-box--one"><span>划痕 91.4%</span></div>
             <div v-if="!cameraActive" class="camera-placeholder">
               <el-icon><VideoCamera /></el-icon><span>摄像头尚未开启</span>
             </div>
           </section>
           <section class="workspace-card camera-control">
-            <div class="section-title"><div><h3>浏览器摄像头</h3><p>以 1–5 FPS 的最小演示方式发送帧，后端接口完成后接入 WebSocket。</p></div></div>
+            <div class="section-title"><div><h3>浏览器摄像头预览</h3><p>仅在本地显示摄像头画面，后端提供实时检测契约后再接入推理。</p></div></div>
             <el-alert
-              title="当前仅演示摄像头采集与检测框叠加，不代表真实模型推理。"
+              title="实时检测接口尚未开放，当前不会发送视频帧，也不会展示模拟检测框。"
               type="warning"
               :closable="false"
               show-icon
             />
             <div class="camera-metrics">
               <div><span>状态</span><strong>{{ cameraActive ? "采集中" : "未启动" }}</strong></div>
-              <div><span>目标帧率</span><strong>2 FPS</strong></div>
-              <div><span>接口</span><strong>待接入 WS</strong></div>
+              <div><span>推理状态</span><strong>未接入</strong></div>
+              <div><span>后端接口</span><strong>待后端 B 提供</strong></div>
             </div>
-            <el-button v-if="!cameraActive" type="primary" :icon="VideoCamera" @click="startCamera">开启摄像头</el-button>
+            <el-button v-if="!cameraActive" type="primary" :icon="VideoCamera" @click="startCamera">开启本地预览</el-button>
             <el-button v-else type="danger" plain @click="stopCamera">停止摄像头</el-button>
           </section>
         </div>
@@ -286,11 +273,6 @@ const batchLoading = ref(false);
 
 const videoFileList = ref([]);
 const videoFrameInterval = ref(5);
-const videoStatus = ref("idle");
-const videoProgress = ref(0);
-const videoTaskId = ref("");
-const videoObjectCount = ref(0);
-let videoTimer;
 
 const cameraVideo = ref();
 const cameraActive = ref(false);
@@ -405,22 +387,6 @@ async function startBatchDetection() {
   }
 }
 
-function startVideoTask() {
-  clearInterval(videoTimer);
-  videoStatus.value = "processing";
-  videoProgress.value = 4;
-  videoObjectCount.value = 0;
-  videoTaskId.value = `mock-video-${Date.now()}`;
-  videoTimer = window.setInterval(() => {
-    videoProgress.value = Math.min(100, videoProgress.value + 8);
-    videoObjectCount.value += videoProgress.value % 16 === 0 ? 1 : 0;
-    if (videoProgress.value >= 100) {
-      videoStatus.value = "completed";
-      clearInterval(videoTimer);
-    }
-  }, 420);
-}
-
 async function startCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
     ElMessage.warning("当前浏览器不支持摄像头访问");
@@ -450,10 +416,7 @@ function resetCurrentMode() {
     batchFileList.value = [];
     batchResult.value = null;
   } else if (activeMode.value === "video") {
-    clearInterval(videoTimer);
     videoFileList.value = [];
-    videoStatus.value = "idle";
-    videoProgress.value = 0;
   } else {
     stopCamera();
   }
@@ -462,7 +425,6 @@ function resetCurrentMode() {
 onMounted(loadOptions);
 onBeforeUnmount(() => {
   revokePreview();
-  clearInterval(videoTimer);
   stopCamera();
 });
 </script>
@@ -504,8 +466,6 @@ onBeforeUnmount(() => {
 .camera-stage video { width: 100%; height: 100%; min-height: 390px; object-fit: cover; }
 .camera-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #98a2b3; }
 .camera-placeholder .el-icon { font-size: 52px; }
-.camera-box { position: absolute; top: 27%; left: 24%; width: 42%; height: 24%; border: 2px solid #fbbf24; }
-.camera-box span { position: absolute; top: -24px; left: -2px; padding: 3px 7px; background: #fbbf24; color: #172033; font-size: 11px; font-weight: 700; }
 .camera-control { display: flex; flex-direction: column; align-items: stretch; }
 .camera-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; }
 .camera-metrics div { padding: 12px; border-radius: 9px; background: #f7f9fc; }
