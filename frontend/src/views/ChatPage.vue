@@ -80,7 +80,7 @@
         </div>
 
         <QuickDetectBar
-          :disabled="agentStore.isStreaming"
+          :disabled="agentStore.isStreaming || isQuickDetecting"
           @single="handleQuickDetect('single')"
           @batch="handleQuickDetect('batch')"
           @zip="handleQuickDetect('zip')"
@@ -101,7 +101,7 @@
       <div class="chat-bottom">
         <QuickDetectBar
           class="chat-quick-detect"
-          :disabled="agentStore.isStreaming"
+          :disabled="agentStore.isStreaming || isQuickDetecting"
           @single="handleQuickDetect('single')"
           @batch="handleQuickDetect('batch')"
           @zip="handleQuickDetect('zip')"
@@ -172,6 +172,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import { streamAgentChat } from '@/api/agent'
 import { detectBatchApi, detectSingleApi } from '@/api/detection'
+import { getModelsApi, getScenesApi } from '@/api/models'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
 import QuickDetectBar from '@/components/agent/QuickDetectBar.vue'
@@ -185,6 +186,7 @@ const heroTextareaRef = ref(null)
 const chatTextareaRef = ref(null)
 const fileInputRef = ref(null)
 const isDragover = ref(false)
+const isQuickDetecting = ref(false)
 const model = ref('gpt-4o-mini')
 let dragCounter = 0
 
@@ -213,7 +215,6 @@ const quickChips = [
 ]
 
 const quickDetectOptions = {
-  modelId: 1,
   confThreshold: 0.25,
   iouThreshold: 0.45,
 }
@@ -295,27 +296,45 @@ function chooseFiles({ accept, multiple }) {
 }
 
 async function handleQuickDetect(type) {
-  if (agentStore.isStreaming) return
+  if (agentStore.isStreaming || isQuickDetecting.value) return
 
   if (type === 'zip') {
     ElMessage.warning('当前后端暂未开放 ZIP 检测接口，请先使用批量图片检测')
     return
   }
 
-  const files = await chooseFiles({
-    accept: 'image/png,image/jpeg',
-    multiple: type === 'batch',
-  })
-  if (!files.length) return
+  isQuickDetecting.value = true
+  try {
+    const files = await chooseFiles({
+      accept: 'image/png,image/jpeg',
+      multiple: type === 'batch',
+    })
+    if (!files.length) return
 
-  if (type === 'single') {
-    await runSingleDetect(files[0])
-  } else {
-    await runBatchDetect(files)
+    const options = await getQuickDetectOptions()
+    if (type === 'single') {
+      await runSingleDetect(files[0], options)
+    } else {
+      await runBatchDetect(files, options)
+    }
+  } finally {
+    isQuickDetecting.value = false
   }
 }
 
-async function runSingleDetect(file) {
+async function getQuickDetectOptions() {
+  const scenes = await getScenesApi()
+  const scene = scenes[0]
+  if (!scene) throw new Error('未找到可用检测场景')
+
+  const models = await getModelsApi(scene.id)
+  const model = models.find((item) => item.isDefault) || models[0]
+  if (!model?.id) throw new Error('未找到可用检测模型')
+
+  return { ...quickDetectOptions, modelId: model.id }
+}
+
+async function runSingleDetect(file, options) {
   const previewUrl = URL.createObjectURL(file)
   agentStore.currentToolCall = { name: 'detect_single', status: 'running' }
   agentStore.addMessage({
@@ -330,7 +349,7 @@ async function runSingleDetect(file) {
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
-    const result = await detectSingleApi(file, quickDetectOptions)
+    const result = await detectSingleApi(file, options)
     assistantMessage.content = `单图检测完成，共发现 ${result.totalObjects || 0} 个疑似缺陷。`
     assistantMessage.detectionResult = result
     assistantMessage.detectionPreviewUrl = previewUrl
@@ -344,7 +363,7 @@ async function runSingleDetect(file) {
   }
 }
 
-async function runBatchDetect(files) {
+async function runBatchDetect(files, options) {
   agentStore.currentToolCall = { name: 'detect_batch', status: 'running' }
   agentStore.addMessage({
     role: 'user',
@@ -357,7 +376,7 @@ async function runBatchDetect(files) {
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
-    const result = await detectBatchApi(files, quickDetectOptions)
+    const result = await detectBatchApi(files, options)
     const totalObjects = (result.items || []).reduce((sum, item) => sum + Number(item.totalObjects || 0), 0)
     assistantMessage.content = `批量检测完成，共处理 ${result.items?.length || files.length} 张图片，发现 ${totalObjects} 个疑似缺陷。`
     assistantMessage.detectionResult = result
