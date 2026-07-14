@@ -135,6 +135,7 @@
               <div class="el-upload__text">拖入多张钢铁表面图片，或 <em>点击选择</em></div>
             </template>
             <template v-else>
+              <div class="el-upload__text">拖入图片可新增，或选择操作</div>
               <div class="batch-upload-actions">
                 <el-button type="primary" plain @click.stop="openBatchFilePicker()">新增图片</el-button>
                 <el-button @click.stop="openBatchFilePicker(true)">重新选择</el-button>
