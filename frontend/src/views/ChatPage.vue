@@ -181,11 +181,11 @@ const greeting = computed(() => {
 })
 
 const canSend = computed(() => {
-  return (heroInput.value.trim() || agentStore.selectedImage) && !agentStore.isStreaming
+  return agentStore.isStreaming || heroInput.value.trim() || agentStore.selectedImage
 })
 
 const canSendChat = computed(() => {
-  return (chatInput.value.trim() || agentStore.selectedImage) && !agentStore.isStreaming
+  return agentStore.isStreaming || chatInput.value.trim() || agentStore.selectedImage
 })
 
 const quickChips = [
@@ -237,6 +237,10 @@ function autoResizeChat() {
 }
 
 function handleHeroSend() {
+  if (agentStore.isStreaming) {
+    agentStore.stopStreaming()
+    return
+  }
   const text = heroInput.value.trim()
   if (!text && !agentStore.selectedImage) return
   heroInput.value = ''
@@ -244,6 +248,10 @@ function handleHeroSend() {
 }
 
 function handleChatSend() {
+  if (agentStore.isStreaming) {
+    agentStore.stopStreaming()
+    return
+  }
   const text = chatInput.value.trim()
   if (!text && !agentStore.selectedImage) return
   chatInput.value = ''
@@ -273,6 +281,7 @@ function doSend(text) {
   const formData = new FormData()
   formData.append('message', text)
   formData.append('session_id', agentStore.currentSessionId)
+  formData.append('model', model.value)
   if (agentStore.selectedImage) { formData.append('image', agentStore.selectedImage) }
 
   agentStore.abortController = streamAgentChat(formData, {
