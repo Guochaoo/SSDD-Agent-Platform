@@ -436,10 +436,13 @@ function attachToolResultCard(rawResult) {
   if (!result || result.error) return
   const detections = result.detections || result.results?.flatMap((item) => item.detections || []) || []
   const assistantMessage = [...agentStore.messages].reverse().find((message) => message.role === 'assistant')
+  const userMessage = [...agentStore.messages].reverse().find((message) => message.role === 'user')
   if (!assistantMessage) return
   assistantMessage.detectionResult = {
     taskId: `agent-${Date.now()}`,
     fileName: result.filename || '',
+    originalImageUrl: result.image_url || result.originalImageUrl || '',
+    annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '',
     totalObjects: result.total_objects ?? result.totalObjects ?? detections.length,
     totalImages: result.total_images ?? 1,
     objects: detections.map((item, index) => ({
@@ -449,6 +452,7 @@ function attachToolResultCard(rawResult) {
       confidence: Number(item.confidence || 0),
     })),
   }
+  assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrl || ''
 }
 
 function doSend(text) {

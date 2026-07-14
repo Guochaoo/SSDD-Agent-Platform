@@ -22,7 +22,7 @@
 
             <el-alert
               v-if="modelWarmupStatus === 'loading'"
-              title="正在加载检测模型，首次使用可能需要稍候"
+              title="检测模型预热中，请稍候"
               type="info"
               :closable="false"
               show-icon
@@ -30,8 +30,24 @@
             />
             <el-alert
               v-else-if="modelWarmupStatus === 'error'"
-              title="检测模型预热失败，首次检测时将自动重试"
+              :title="`检测模型预热失败${warmupError ? `：${warmupError}` : ''}，首次检测时将自动加载`"
               type="warning"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'ready' && (singleLoading || batchLoading)"
+              title="模型加载成功，正在进行检测"
+              type="success"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'ready'"
+              title="检测模型加载成功，可以开始检测"
+              type="success"
               :closable="false"
               show-icon
               class="model-warmup-alert"
@@ -295,7 +311,9 @@ const singlePreviewUrl = ref("");
 const singleResult = ref(null);
 const singleLoading = ref(false);
 const modelWarmupStatus = ref("loading");
+const warmupError = ref("");
 let warmupTimer;
+let warmupRequesting = false;
 
 const batchFileList = ref([]);
 const batchUploadRef = ref();
@@ -395,12 +413,21 @@ async function loadOptions() {
 }
 
 async function refreshModelWarmupStatus() {
+  if (warmupRequesting || ["ready", "error"].includes(modelWarmupStatus.value)) return;
+  warmupRequesting = true;
   try {
     const response = await getDetectionModelStatus();
     modelWarmupStatus.value = response.status || "loading";
-    if (["ready", "error"].includes(modelWarmupStatus.value)) clearInterval(warmupTimer);
+    warmupError.value = response.error || "";
   } catch {
     modelWarmupStatus.value = "error";
+    warmupError.value = "无法获取模型预热状态";
+  } finally {
+    warmupRequesting = false;
+    clearTimeout(warmupTimer);
+    if (modelWarmupStatus.value === "loading") {
+      warmupTimer = window.setTimeout(refreshModelWarmupStatus, 1500);
+    }
   }
 }
 
@@ -490,13 +517,12 @@ function resetCurrentMode() {
 onMounted(() => {
   loadOptions();
   refreshModelWarmupStatus();
-  warmupTimer = window.setInterval(refreshModelWarmupStatus, 1500);
 });
 onBeforeUnmount(() => {
   revokePreview();
   clearInterval(videoTimer);
   stopCamera();
-  clearInterval(warmupTimer);
+  clearTimeout(warmupTimer);
 });
 </script>
 
