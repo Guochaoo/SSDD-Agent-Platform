@@ -231,6 +231,28 @@
       :close-on-click-modal="false"
     >
       <el-form :model="trainForm" label-width="110px">
+        <el-form-item label="训练数据集">
+          <div class="dataset-picker">
+            <el-select v-model="trainForm.dataset_path" class="full-width" placeholder="选择已准备的数据集">
+              <el-option
+                v-for="dataset in datasets"
+                :key="dataset.path || dataset.name"
+                :label="dataset.name"
+                :value="dataset.path"
+                :disabled="!dataset.ready"
+              />
+            </el-select>
+            <el-upload
+              :show-file-list="false"
+              accept=".zip"
+              :auto-upload="false"
+              :on-change="handleDatasetUpload"
+            >
+              <el-button :loading="uploadingDataset" :icon="UploadFilled">上传 ZIP</el-button>
+            </el-upload>
+          </div>
+          <span class="form-hint">ZIP 根目录必须包含 data.yaml</span>
+        </el-form-item>
         <el-form-item label="检测场景">
           <el-select v-model="trainForm.scene_id" class="full-width" placeholder="选择场景">
             <el-option
@@ -435,12 +457,14 @@ import * as echarts from 'echarts'
 import {
   downloadTrainingModel,
   exportTrainingModel,
+  getTrainingDatasets,
   getTrainingMetrics,
   getTrainingStatus,
   getTrainingTasks,
   predictTrainingImage,
   startTraining,
   stopTraining,
+  uploadTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
 import { getScenesApi } from '@/api/models'
@@ -484,6 +508,7 @@ let predictChart = null
 
 const trainForm = ref({
   scene_id: null,
+  dataset_path: '',
   model_name: 'yolo11n',
   epochs: 50,
   batch_size: 8,
@@ -493,6 +518,8 @@ const trainForm = ref({
   lr0: 0.01,
 })
 const scenes = ref([])
+const datasets = ref([])
+const uploadingDataset = ref(false)
 
 const metricCards = computed(() => {
   const task = selectedTask.value
@@ -645,6 +672,33 @@ function handleCurrentTaskChange(task) {
   if (task) selectTask(task)
 }
 
+async function fetchDatasets() {
+  try {
+    const response = await getTrainingDatasets()
+    datasets.value = response.items || []
+    if (!trainForm.value.dataset_path) {
+      trainForm.value.dataset_path = datasets.value.find((item) => item.ready)?.path ?? ''
+    }
+  } catch (error) {
+    console.error('获取训练数据集失败', error)
+  }
+}
+
+async function handleDatasetUpload(uploadFile) {
+  if (!uploadFile.raw) return
+  uploadingDataset.value = true
+  try {
+    const dataset = await uploadTrainingDataset(uploadFile.raw)
+    await fetchDatasets()
+    trainForm.value.dataset_path = dataset.path
+    ElMessage.success('数据集上传并校验通过')
+  } catch (error) {
+    console.error('上传训练数据集失败', error)
+  } finally {
+    uploadingDataset.value = false
+  }
+}
+
 async function selectTask(task) {
   stopPolling()
   selectedTask.value = { ...task }
@@ -774,6 +828,10 @@ function stopPolling() {
 async function createTask() {
   if (!trainForm.value.scene_id) {
     ElMessage.warning('请先选择检测场景')
+    return
+  }
+  if (!trainForm.value.dataset_path) {
+    ElMessage.warning('请先选择训练数据集')
     return
   }
   creating.value = true
@@ -940,6 +998,7 @@ function resizeCharts() {
 
 onMounted(() => {
   fetchTasks()
+  fetchDatasets()
   window.addEventListener('resize', resizeCharts)
 })
 
@@ -1079,6 +1138,12 @@ onBeforeUnmount(() => {
 
 .full-width {
   width: 100%;
+}
+
+.dataset-picker {
+  display: flex;
+  width: 100%;
+  gap: 8px;
 }
 
 .upload-icon {
