@@ -170,7 +170,7 @@ import { CloseBold, Close, UploadFilled } from '@element-plus/icons-vue'
 import { Image, ArrowUpStroke } from '@boxicons/vue'
 import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
-import { useLlmStore } from '@/stores/llm'
+import { DEFAULT_LLM_MODEL_VALUE, useLlmStore } from '@/stores/llm'
 import {
   getAgentDetectionHistoryApi,
   searchAgentKnowledgeApi,
@@ -503,7 +503,9 @@ function doSend(text) {
   const formData = new FormData()
   formData.append('message', buildContextualMessage(text))
   formData.append('session_id', agentStore.currentSessionId)
-  formData.append('model', model.value)
+  if (model.value && model.value !== DEFAULT_LLM_MODEL_VALUE) {
+    formData.append('model', model.value)
+  }
   if (agentStore.selectedImage) { formData.append('image', agentStore.selectedImage) }
 
   agentStore.abortController = streamAgentChat(formData, {

@@ -5,12 +5,14 @@
 import { defineStore } from 'pinia'
 import request from '@/utils/request'
 
+export const DEFAULT_LLM_MODEL_VALUE = '__default__'
+
 const FALLBACK_MODELS = [
-  { id: 'qwen3.7-plus', owned_by: 'default' },
-  { id: 'qwen-plus', owned_by: 'default' },
-  { id: 'qwen-max', owned_by: 'default' },
-  { id: 'gpt-4o-mini', owned_by: 'default' },
-  { id: 'gpt-4o', owned_by: 'default' },
+  {
+    id: DEFAULT_LLM_MODEL_VALUE,
+    label: '后端默认对话模型',
+    owned_by: '未获取到模型列表',
+  },
 ]
 
 export const useLlmStore = defineStore('llm', {
@@ -31,9 +33,9 @@ export const useLlmStore = defineStore('llm', {
     /** 是否有可用模型 */
     hasModels: (state) => state.models.length > 0,
 
-    /** 推荐模型（优先取 qwen3.7-plus） */
+    /** 推荐模型（优先后端真实列表，否则使用后端默认配置） */
     defaultModel: (state) => {
-      if (!state.models.length) return 'qwen3.7-plus'
+      if (!state.models.length) return DEFAULT_LLM_MODEL_VALUE
       const preferred = state.models.find(m => m.id === 'qwen3.7-plus')
       if (preferred) return preferred.id
       // fallback: qwen-plus > qwen-max > first model
@@ -48,7 +50,7 @@ export const useLlmStore = defineStore('llm', {
     modelOptions: (state) => {
       const source = state.models.length ? state.models : FALLBACK_MODELS
       return source.map((m) => ({
-        label: m.id,
+        label: m.label || m.id,
         value: m.id,
         ownedBy: m.owned_by,
       }))
