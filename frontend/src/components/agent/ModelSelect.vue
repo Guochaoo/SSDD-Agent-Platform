@@ -50,6 +50,7 @@ const currentLabel = computed(() => {
   const found = options.value.find(m => m.value === model.value)
   return found?.label || model.value || '选择模型'
 })
+
 </script>
 
 <style lang="scss" scoped>

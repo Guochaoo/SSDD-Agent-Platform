@@ -415,13 +415,47 @@ async function runBatchDetect(files, options) {
 function handleAgentEvent(event) {
   if (event.type === 'text_delta') { agentStore.appendAssistantContent(event.content || '') }
   if (event.type === 'tool_start') { agentStore.setToolCall({ name: event.tool_name, status: 'running', input: event.input }) }
-  if (event.type === 'tool_result') { agentStore.setToolCall({ name: event.tool_name, status: 'success', result: event.result }) }
+  if (event.type === 'tool_result') {
+    agentStore.setToolCall({ name: event.tool_name, status: 'success', result: event.result })
+    attachToolResultCard(event.result)
+  }
   if (event.type === 'message_end') { agentStore.isStreaming = false }
   if (event.type === 'error') {
     agentStore.errorMessage = event.message || '智能体请求失败'
     agentStore.isStreaming = false
     ElMessage.error(agentStore.errorMessage)
   }
+}
+
+function attachToolResultCard(rawResult) {
+  let payload = rawResult
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload) } catch { return }
+  }
+  const result = payload?.result || payload
+  if (!result || result.error) return
+  const detections = result.detections || result.results?.flatMap((item) => item.detections || []) || []
+  const assistantMessage = [...agentStore.messages].reverse().find((message) => message.role === 'assistant')
+  const userMessage = [...agentStore.messages].reverse().find((message) => message.role === 'user')
+  if (!assistantMessage) return
+  assistantMessage.detectionResult = {
+    taskId: `agent-${Date.now()}`,
+    fileName: result.filename || '',
+    originalImageUrl: result.image_url || result.originalImageUrl || '',
+    annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '',
+    totalObjects: result.total_objects ?? result.totalObjects ?? detections.length,
+    totalImages: result.total_images ?? 1,
+    inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0),
+    objects: detections.map((item, index) => ({
+      id: String(index),
+      className: item.class_name || item.className || 'unknown',
+      classNameCn: item.class_name_cn || item.classNameCn || item.class_name || 'unknown',
+      confidence: Number(item.confidence || 0),
+      bbox: Array.isArray(item.bbox) ? item.bbox.map(Number) : [0, 0, 0, 0],
+      bboxPercent: null,
+    })),
+  }
+  assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrl || ''
 }
 
 function doSend(text) {

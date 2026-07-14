@@ -17,6 +17,11 @@ from app.services.detection_service import detection_service
 
 router = APIRouter(prefix="/api/detection", tags=["detection"])
 
+
+@router.get("/models/status")
+async def detection_model_status():
+    return detection_service.warmup_status()
+
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
 
 

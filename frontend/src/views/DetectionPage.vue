@@ -20,6 +20,38 @@
               <el-icon><Setting /></el-icon>
             </div>
 
+            <el-alert
+              v-if="modelWarmupStatus === 'loading'"
+              title="检测模型预热中，请稍候"
+              type="info"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'error'"
+              :title="`检测模型预热失败${warmupError ? `：${warmupError}` : ''}，首次检测时将自动加载`"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'ready' && (singleLoading || batchLoading)"
+              title="模型加载成功，正在进行检测"
+              type="success"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
+            <el-alert
+              v-else-if="modelWarmupStatus === 'ready'"
+              title="检测模型加载成功，可以开始检测"
+              type="success"
+              :closable="false"
+              show-icon
+              class="model-warmup-alert"
+            />
             <el-form label-position="top">
               <el-form-item label="检测场景">
                 <el-select v-model="form.sceneId" class="full-width" @change="loadModels">
@@ -248,7 +280,7 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { detectBatchApi, detectSingleApi } from "@/api/detection";
+import { detectBatchApi, detectSingleApi, getDetectionModelStatus } from "@/api/detection";
 import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
@@ -265,6 +297,10 @@ const singleFile = ref(null);
 const singlePreviewUrl = ref("");
 const singleResult = ref(null);
 const singleLoading = ref(false);
+const modelWarmupStatus = ref("loading");
+const warmupError = ref("");
+let warmupTimer;
+let warmupRequesting = false;
 
 const batchFileList = ref([]);
 const batchUploadRef = ref();
@@ -358,6 +394,25 @@ async function loadOptions() {
   }
 }
 
+async function refreshModelWarmupStatus() {
+  if (warmupRequesting || ["ready", "error"].includes(modelWarmupStatus.value)) return;
+  warmupRequesting = true;
+  try {
+    const response = await getDetectionModelStatus();
+    modelWarmupStatus.value = response.status || "loading";
+    warmupError.value = response.error || "";
+  } catch {
+    modelWarmupStatus.value = "error";
+    warmupError.value = "无法获取模型预热状态";
+  } finally {
+    warmupRequesting = false;
+    clearTimeout(warmupTimer);
+    if (modelWarmupStatus.value === "loading") {
+      warmupTimer = window.setTimeout(refreshModelWarmupStatus, 1500);
+    }
+  }
+}
+
 async function startSingleDetection() {
   if (!singleFile.value) return;
   singleLoading.value = true;
@@ -422,10 +477,14 @@ function resetCurrentMode() {
   }
 }
 
-onMounted(loadOptions);
+onMounted(() => {
+  loadOptions();
+  refreshModelWarmupStatus();
+});
 onBeforeUnmount(() => {
   revokePreview();
   stopCamera();
+  clearTimeout(warmupTimer);
 });
 </script>
 
@@ -446,6 +505,7 @@ onBeforeUnmount(() => {
 .slider-label { display: flex; width: 100%; justify-content: space-between; }
 .slider-label b { color: #2563eb; }
 .steel-uploader { margin-top: 4px; }
+.model-warmup-alert { margin-bottom: 14px; }
 .steel-uploader :deep(.el-upload-dragger) { padding: 26px 12px; border-radius: 11px; background: #f8fafc; }
 .steel-uploader__icon { color: #2563eb; font-size: 36px; }
 .batch-upload-actions { display: flex; justify-content: center; gap: 10px; }

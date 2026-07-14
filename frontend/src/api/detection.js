@@ -99,3 +99,7 @@ export async function detectBatchApi(files, options) {
     })),
   };
 }
+
+export function getDetectionModelStatus() {
+  return request.get("/detection/models/status");
+}
