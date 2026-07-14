@@ -65,6 +65,7 @@
             </el-form>
 
             <el-upload
+              ref="singleUploadRef"
               v-model:file-list="singleFileList"
               class="steel-uploader"
               drag
@@ -262,6 +263,7 @@ const models = ref([]);
 const form = reactive({ sceneId: "", modelId: "", confThreshold: 0.25, iouThreshold: 0.45 });
 
 const singleFileList = ref([]);
+const singleUploadRef = ref();
 const singleFile = ref(null);
 const singlePreviewUrl = ref("");
 const singleResult = ref(null);
@@ -322,8 +324,12 @@ function clearSingleFile() {
   revokePreview();
 }
 
-function handleSingleExceed() {
-  ElMessage.info("单图模式一次只能选择一张图片，请先移除当前图片");
+function handleSingleExceed(files) {
+  const nextFile = files[0];
+  if (!nextFile || !validateImage(nextFile)) return;
+
+  singleUploadRef.value?.clearFiles();
+  singleUploadRef.value?.handleStart(nextFile);
 }
 
 function validateBatchFile(uploadFile) {
