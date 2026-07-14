@@ -1,8 +1,14 @@
-"""YOLO 单图与批量推理服务。"""
+"""YOLO 图片、视频和摄像头推理服务。"""
 
+import base64
 import io
+import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,9 +22,11 @@ from app.config.detection import (
     DEFAULT_IMAGE_SIZE,
     MAX_BATCH_SIZE,
     MAX_IMAGE_SIZE,
+    MAX_ZIP_EXTRACTED_SIZE,
 )
 from app.core.logger import get_logger
 from app.entity.db_models import ModelVersion
+from app.database.session import SessionLocal
 from app.services.history_service import history_service
 from app.storage.minio_client import MinIOClient
 
@@ -111,6 +119,22 @@ class DetectionService:
                 conf=task.conf_threshold,
                 iou=task.iou_threshold,
                 imgsz=task.image_size,
+                verbose=False,
+            )
+
+    def _predict_frame(self, model_version, model, frame, conf, iou, image_size, device):
+        model_path = self._resolve_model_path(model_version.model_path)
+        cache_key = (model_version.id, str(model_path))
+        inference_lock = self._inference_locks.setdefault(cache_key, threading.Lock())
+        with inference_lock:
+            return model.predict(
+                source=frame,
+                conf=conf,
+                iou=iou,
+                imgsz=image_size,
+                device=device,
+                half=False,
+                save=False,
                 verbose=False,
             )
 
@@ -246,7 +270,16 @@ class DetectionService:
         result.pop("db_results")
         return {"task_id": task.id, "status": "completed", **result}
 
-    async def detect_batch(self, db, user_id, files, model_id, conf_threshold, iou_threshold):
+    async def detect_batch(
+        self,
+        db,
+        user_id,
+        files,
+        model_id,
+        conf_threshold,
+        iou_threshold,
+        task_type="batch",
+    ):
         if not files or len(files) > MAX_BATCH_SIZE:
             raise HTTPException(status_code=400, detail=f"批量检测需上传 1-{MAX_BATCH_SIZE} 张图片")
         model_version = self._resolve_model(db, model_id)
@@ -254,7 +287,7 @@ class DetectionService:
             db,
             user_id=user_id,
             scene_id=model_version.scene_id,
-            task_type="batch",
+            task_type=task_type,
             model_version_id=model_version.id,
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
@@ -298,9 +331,357 @@ class DetectionService:
         return {
             "task_id": task.id,
             "status": "completed",
+            "source": task_type,
             "success_count": success_count,
             "failed_count": len(items) - success_count,
             "items": items,
+        }
+
+    @staticmethod
+    def _safe_zip_images(zip_path: str, extract_dir: str) -> list[Path]:
+        """校验 ZIP 内容并安全解压图片，阻止路径穿越和压缩炸弹。"""
+        # Keep this aligned with the existing single-image upload contract.
+        allowed_suffixes = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
+        extract_root = Path(extract_dir).resolve()
+        image_paths = []
+        total_size = 0
+        try:
+            archive = zipfile.ZipFile(zip_path)
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="无效的 ZIP 压缩包") from exc
+
+        with archive:
+            image_members = []
+            for member in archive.infolist():
+                if member.is_dir() or member.filename.startswith("__MACOSX/"):
+                    continue
+                member_path = Path(member.filename)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise HTTPException(status_code=400, detail="ZIP 包含不安全的文件路径")
+                if member.file_size > MAX_IMAGE_SIZE:
+                    raise HTTPException(status_code=400, detail=f"ZIP 内图片超过 10 MB: {member.filename}")
+                total_size += member.file_size
+                if total_size > MAX_ZIP_EXTRACTED_SIZE:
+                    raise HTTPException(status_code=400, detail="ZIP 解压后总大小不能超过 200 MB")
+                if member_path.suffix.lower() in allowed_suffixes:
+                    image_members.append(member)
+
+            if not image_members:
+                raise HTTPException(status_code=400, detail="ZIP 中没有支持的图片")
+            if len(image_members) > MAX_BATCH_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"ZIP 中图片数量不能超过 {MAX_BATCH_SIZE} 张",
+                )
+
+            for member in image_members:
+                target = (extract_root / member.filename).resolve()
+                if extract_root not in target.parents:
+                    raise HTTPException(status_code=400, detail="ZIP 包含不安全的文件路径")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+                image_paths.append(target)
+        return image_paths
+
+    async def detect_zip(
+        self,
+        db,
+        user_id,
+        zip_path,
+        model_id,
+        conf_threshold,
+        iou_threshold,
+        original_filename,
+    ):
+        """安全解压 ZIP，并复用批量检测流程。"""
+        with tempfile.TemporaryDirectory(prefix="ssdd_zip_") as extract_dir:
+            image_paths = self._safe_zip_images(zip_path, extract_dir)
+            uploads = []
+            handles = []
+            try:
+                for image_path in image_paths:
+                    handle = image_path.open("rb")
+                    handles.append(handle)
+                    content_type = {
+                        ".jpg": "image/jpeg",
+                        ".jpeg": "image/jpeg",
+                        ".png": "image/png",
+                        ".bmp": "image/bmp",
+                        ".webp": "image/webp",
+                        ".tiff": "image/tiff",
+                        ".tif": "image/tiff",
+                    }[image_path.suffix.lower()]
+                    uploads.append(
+                        UploadFile(
+                            filename=image_path.name,
+                            file=handle,
+                            headers={"content-type": content_type},
+                        )
+                    )
+                result = await self.detect_batch(
+                    db,
+                    user_id,
+                    uploads,
+                    model_id,
+                    conf_threshold,
+                    iou_threshold,
+                    task_type="zip",
+                )
+                result["zip_filename"] = original_filename
+                result["total_images_in_zip"] = len(image_paths)
+                return result
+            finally:
+                for handle in handles:
+                    handle.close()
+
+    @staticmethod
+    def _draw_detections(frame, detections):
+        import cv2
+
+        annotated = frame.copy()
+        for detection in detections:
+            x1, y1, x2, y2 = (int(value) for value in detection["bbox"])
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 2)
+            label = f"{detection['class_name']} {detection['confidence']:.2f}"
+            cv2.putText(
+                annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX,
+                0.5, (0, 165, 255), 2,
+            )
+        return annotated
+
+    def detect_video(
+        self,
+        video_path,
+        model_id,
+        task_id,
+        conf=0.25,
+        iou=0.45,
+        frame_sample_rate=5,
+        max_frames=50,
+        progress_callback=None,
+    ):
+        """按采样间隔处理视频，生成关键帧、标注视频和检测记录。"""
+        import cv2
+
+        db = SessionLocal()
+        cap = None
+        writer = None
+        output_path = None
+        h264_path = None
+        try:
+            model_version = self._resolve_model(db, model_id)
+            model = self._get_model(model_version)
+            task = history_service._get_task_or_404(db, task_id)
+            cap = cv2.VideoCapture(str(video_path))
+            if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+            if not cap.isOpened():
+                raise RuntimeError("无法打开视频文件")
+
+            total_frames = max(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            if width <= 0 or height <= 0:
+                raise RuntimeError("无法读取视频分辨率")
+            duration_seconds = total_frames / fps if fps > 0 else 0
+            effective_interval = max(frame_sample_rate, max(1, total_frames // max_frames))
+            estimated_samples = min(max_frames, (total_frames + effective_interval - 1) // effective_interval)
+            task.total_images = estimated_samples
+            db.commit()
+
+            output_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            output_path = output_file.name
+            output_file.close()
+            writer = cv2.VideoWriter(
+                output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+            )
+            if not writer.isOpened():
+                raise RuntimeError("无法创建标注视频")
+
+            key_frames = []
+            db_results = []
+            class_counts = {}
+            total_objects = 0
+            total_inference_time = 0.0
+            processed_frames = 0
+            frame_index = 0
+            previous_gray = None
+            last_detections = []
+
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (100, 100))
+                scene_changed = previous_gray is None or cv2.absdiff(previous_gray, gray).mean() > 10
+                previous_gray = gray
+                should_sample = frame_index % effective_interval == 0 or scene_changed
+
+                if should_sample and processed_frames < max_frames:
+                    started_at = time.perf_counter()
+                    results = self._predict_frame(
+                        model_version, model, frame, conf, iou, DEFAULT_IMAGE_SIZE, "cpu"
+                    )
+                    inference_time = round((time.perf_counter() - started_at) * 1000, 2)
+                    result = results[0]
+                    detections = self._parse_result(result, task.scene)
+                    last_detections = detections
+                    processed_frames += 1
+                    total_inference_time += inference_time
+                    total_objects += len(detections)
+                    for detection in detections:
+                        class_counts[detection["class_name"]] = class_counts.get(detection["class_name"], 0) + 1
+                        db_results.append(
+                            {
+                                "image_path": f"frame_{frame_index}.jpg",
+                                **detection,
+                                "inference_time": inference_time,
+                                "image_width": width,
+                                "image_height": height,
+                            }
+                        )
+                    annotated = self._draw_detections(frame, detections)
+                    encoded_frame = None
+                    if len(key_frames) < 6:
+                        encoded_ok, buffer = cv2.imencode(
+                            ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70]
+                        )
+                        if encoded_ok:
+                            encoded_frame = base64.b64encode(buffer).decode("ascii")
+                    key_frames.append(
+                        {
+                            "frame_index": frame_index,
+                            "timestamp": round(frame_index / fps, 2),
+                            "annotated_image_base64": encoded_frame,
+                            "object_count": len(detections),
+                            "detections": detections,
+                            "inference_time": inference_time,
+                        }
+                    )
+                else:
+                    annotated = self._draw_detections(frame, last_detections)
+                writer.write(annotated)
+                frame_index += 1
+                if progress_callback and total_frames:
+                    progress_callback(frame_index, total_frames)
+
+            cap.release()
+            cap = None
+            writer.release()
+            writer = None
+            if frame_index == 0:
+                raise RuntimeError("视频中没有可读取的帧")
+
+            h264_path = output_path.replace(".mp4", "_h264.mp4")
+            ffmpeg = shutil.which("ffmpeg")
+            if ffmpeg:
+                try:
+                    subprocess.run(
+                        [ffmpeg, "-y", "-i", output_path, "-c:v", "libx264", "-preset", "fast",
+                         "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", h264_path],
+                        capture_output=True, timeout=300, check=True,
+                    )
+                    os.replace(h264_path, output_path)
+                    h264_path = None
+                except (OSError, subprocess.SubprocessError):
+                    logger.warning("ffmpeg 转码失败，保留 mp4v 视频", exc_info=True)
+
+            annotated_video_url = None
+            try:
+                annotated_video_url = MinIOClient().upload_file(
+                    f"detections/{task_id}/annotated_video.mp4", output_path
+                )
+            except Exception:
+                logger.warning("标注视频上传失败，仅返回关键帧和统计", exc_info=True)
+
+            if db_results:
+                history_service.add_results(db, task_id, db_results)
+            history_service.mark_completed(
+                db, task_id, total_images=processed_frames, total_objects=total_objects,
+                total_inference_time=round(total_inference_time, 2),
+            )
+            logger.info(
+                "视频检测完成 task_id=%s frames=%s sampled=%s objects=%s",
+                task_id, frame_index, processed_frames, total_objects,
+            )
+            return {
+                "task_id": task_id,
+                "model": {
+                    "id": model_version.id,
+                    "name": model_version.model_name,
+                    "version": model_version.version,
+                    "path": model_version.model_path,
+                },
+                "total_frames": total_frames or frame_index,
+                "processed_frames": processed_frames,
+                "frame_sample_rate": effective_interval,
+                "fps": round(fps, 2),
+                "duration_seconds": round(duration_seconds, 2),
+                "video_resolution": {"width": width, "height": height},
+                "total_objects": total_objects,
+                "class_counts": class_counts,
+                "key_frames": key_frames,
+                "annotated_video_url": annotated_video_url,
+                "total_inference_time": round(total_inference_time, 2),
+            }
+        except Exception as exc:
+            logger.exception("视频检测失败 task_id=%s", task_id)
+            history_service.mark_failed(db, task_id, str(exc))
+            raise
+        finally:
+            if cap is not None:
+                cap.release()
+            if writer is not None:
+                writer.release()
+            for path in (output_path, h264_path):
+                if path:
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
+            db.close()
+
+    def warmup_camera(self, db, model_id, mode, conf, iou):
+        import numpy as np
+
+        model_version = self._resolve_model(db, model_id)
+        model = self._get_model(model_version)
+        device = "cpu" if mode == "cpu" else "0"
+        image_size = 416 if mode == "cpu" else 640
+        self._predict_frame(
+            model_version, model, np.zeros((480, 640, 3), dtype=np.uint8),
+            conf, iou, image_size, device,
+        )
+        return model_version, model
+
+    def detect_camera_frame(self, model_version, model, frame, mode, conf, iou):
+        import cv2
+
+        image_size = 416 if mode == "cpu" else 640
+        device = "cpu" if mode == "cpu" else "0"
+        started_at = time.perf_counter()
+        results = self._predict_frame(
+            model_version, model, frame, conf, iou, image_size, device
+        )
+        inference_time = round((time.perf_counter() - started_at) * 1000, 2)
+        result = results[0]
+        detections = self._parse_result(result, model_version.scene)
+        encoded_ok, buffer = cv2.imencode(
+            ".jpg", result.plot(), [cv2.IMWRITE_JPEG_QUALITY, 70]
+        )
+        if not encoded_ok:
+            raise RuntimeError("标注帧编码失败")
+        return {
+            "annotated_frame": base64.b64encode(buffer).decode("ascii"),
+            "detections": detections,
+            "object_count": len(detections),
+            "inference_time": inference_time,
+            "model_id": model_version.id,
+            "model_name": model_version.model_name,
         }
 
 

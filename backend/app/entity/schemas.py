@@ -248,6 +248,9 @@ class BatchDetectionResponse(BaseModel):
     """批量检测响应。"""
     task_id: int
     status: str
+    source: str = "batch"
+    zip_filename: Optional[str] = None
+    total_images_in_zip: Optional[int] = None
     success_count: int
     failed_count: int
     items: list[BatchDetectionItem]

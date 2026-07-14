@@ -86,6 +86,7 @@ export const useAgentStore = defineStore('agent', {
       this.stopStreaming()
       this.messages.forEach((message) => {
         if (message.imagePreviewUrl) URL.revokeObjectURL(message.imagePreviewUrl)
+        if (message.videoUrl) URL.revokeObjectURL(message.videoUrl)
         if (message.detectionPreviewUrl) URL.revokeObjectURL(message.detectionPreviewUrl)
       })
       this.currentSessionId = crypto.randomUUID()

@@ -183,7 +183,6 @@ function handleCopy() {
     }
   }
 }
-
 /* ── Footer: actions ── */
 .msg-footer {
   max-width: 780px;

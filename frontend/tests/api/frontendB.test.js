@@ -61,6 +61,26 @@ describe("前端 B 检测数据适配", () => {
     expect(result.inferenceTimeMs).toBe(120);
     expect(result.objects[0].bbox).toEqual([10, 20, 30, 40]);
   });
+
+  it("保留批量检测标注图字段用于详细预览", () => {
+    const result = normalizeDetectionResponse({
+      file_name: "steel.jpg",
+      image_url: "/original/steel.jpg",
+      annotated_image_url: "/annotated/steel.jpg",
+      image_width: 640,
+      image_height: 480,
+      objects: [{
+        class_name: "scratches",
+        class_name_cn: "划痕",
+        confidence: 0.93,
+        bbox: [12, 20, 120, 80],
+      }],
+    });
+
+    expect(result.originalImageUrl).toBe("/original/steel.jpg");
+    expect(result.annotatedImageUrl).toBe("/annotated/steel.jpg");
+    expect(result.objects[0].bboxPercent).toEqual([1.875, 4.166666666666666, 16.875, 12.5]);
+  });
 });
 
 describe("前端 B 训练与看板适配", () => {

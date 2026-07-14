@@ -100,6 +100,51 @@ export async function detectBatchApi(files, options) {
   };
 }
 
+export async function detectZipApi(file, options) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model_id", options.modelId);
+  formData.append("conf_threshold", String(options.confThreshold));
+  formData.append("iou_threshold", String(options.iouThreshold));
+  const data = unwrap(await request.post("/detection/zip", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 300000,
+  }));
+  return {
+    taskId: String(data.task_id ?? ""),
+    status: data.status ?? "completed",
+    source: data.source ?? "zip",
+    zipFilename: data.zip_filename ?? file.name,
+    totalImagesInZip: data.total_images_in_zip ?? data.items?.length ?? 0,
+    successCount: data.success_count ?? 0,
+    failedCount: data.failed_count ?? 0,
+    items: (data.items ?? []).map((item) => ({
+      ...normalizeDetectionResponse(item),
+      status: item.status,
+      fileName: item.file_name ?? "",
+      error: item.error ?? null,
+    })),
+  };
+}
+
+export async function detectVideoApi(file, options) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model_id", options.modelId);
+  formData.append("conf_threshold", String(options.confThreshold ?? 0.25));
+  formData.append("iou_threshold", String(options.iouThreshold ?? 0.45));
+  formData.append("frame_sample_rate", String(options.frameSampleRate ?? 5));
+  formData.append("max_frames", String(options.maxFrames ?? 50));
+  return unwrap(await request.post("/detection/video", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  }));
+}
+
+export async function getVideoStatusApi(taskId) {
+  return unwrap(await request.get(`/detection/video/status/${taskId}`));
+}
+
 export function getDetectionModelStatus() {
   return request.get("/detection/models/status");
 }

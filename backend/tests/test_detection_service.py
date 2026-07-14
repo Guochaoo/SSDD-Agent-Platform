@@ -1,6 +1,9 @@
 """YOLO 单图、批量检测服务测试。"""
 
+import base64
+import base64
 import io
+import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -86,6 +89,10 @@ class _FakeMinIO:
 
     def upload_bytes(self, object_name, data, content_type):
         self.uploaded.append((object_name, data, content_type))
+        return f"http://minio/ssdd-images/{object_name}"
+
+    def upload_file(self, object_name, file_path):
+        self.uploaded.append((object_name, file_path, "video/mp4"))
         return f"http://minio/ssdd-images/{object_name}"
 
     def delete_by_url(self, url):
@@ -174,6 +181,160 @@ async def test_batch_detection_keeps_partial_success(db_session, tmp_path, monke
 def test_model_path_must_exist(tmp_path):
     with pytest.raises(HTTPException, match="模型权重不存在"):
         DetectionService._resolve_model_path(str(tmp_path / "missing.pt"))
+
+
+def test_video_detection_samples_frames_and_persists_results(db_session, tmp_path, monkeypatch):
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    weights = tmp_path / "model.pt"
+    weights.write_bytes(b"weights")
+    user, model_version = _seed_detection_data(db_session, weights)
+    task = DetectionTask(
+        user_id=user.id,
+        scene_id=model_version.scene_id,
+        model_version_id=model_version.id,
+        task_type="video",
+        status="processing",
+        conf_threshold=0.25,
+        iou_threshold=0.45,
+        image_size=640,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    video_path = tmp_path / "sample.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (32, 24)
+    )
+    assert writer.isOpened()
+    for index in range(12):
+        writer.write(np.full((24, 32, 3), index * 10, dtype=np.uint8))
+    writer.release()
+
+    service = DetectionService()
+    monkeypatch.setattr(service, "_get_model", lambda _version: _FakeModel())
+    monkeypatch.setattr("app.services.detection_service.SessionLocal", lambda: db_session)
+    monkeypatch.setattr("app.services.detection_service.MinIOClient", _FakeMinIO)
+    progress = []
+
+    result = service.detect_video(
+        video_path,
+        model_version.id,
+        task.id,
+        frame_sample_rate=3,
+        max_frames=3,
+        progress_callback=lambda current, total: progress.append((current, total)),
+    )
+
+    assert result["processed_frames"] == 3
+    assert result["model"]["name"] == "ssdd_yolo11n_v1"
+    assert result["model"]["path"] == str(weights)
+    assert result["total_objects"] == 3
+    assert result["class_counts"] == {"scratches": 3}
+    assert result["video_resolution"] == {"width": 32, "height": 24}
+    assert result["annotated_video_url"].endswith("annotated_video.mp4")
+    assert len(result["key_frames"]) == 3
+    assert progress[-1][0] == 12
+    db_session.expire_all()
+    completed = db_session.query(DetectionTask).filter_by(id=task.id).one()
+    assert completed.status == "completed"
+    assert len(completed.results) == 3
+
+
+def test_camera_frame_returns_annotated_image(tmp_path, monkeypatch):
+    pytest.importorskip("cv2")
+    import numpy as np
+
+    service = DetectionService()
+    model_path = tmp_path / "model.pt"
+    model_path.write_bytes(b"weights")
+    scene = SimpleNamespace(class_names_cn={"scratches": "划痕"})
+    model_version = SimpleNamespace(
+        id=1,
+        model_name="ssdd_yolo11n_v1",
+        model_path=str(model_path),
+        scene=scene,
+    )
+    monkeypatch.setattr(service, "_predict_frame", lambda *_args: [_FakeResult()])
+
+    result = service.detect_camera_frame(
+        model_version, _FakeModel(), np.zeros((24, 32, 3), dtype=np.uint8),
+        "cpu", 0.25, 0.45,
+    )
+
+    assert result["object_count"] == 1
+    assert result["model_id"] == 1
+    assert result["model_name"] == "ssdd_yolo11n_v1"
+    assert result["detections"][0]["class_name_cn"] == "划痕"
+    assert base64.b64decode(result["annotated_frame"])
+
+
+@pytest.mark.asyncio
+async def test_zip_detection_reuses_batch_pipeline(db_session, tmp_path, monkeypatch):
+    weights = tmp_path / "model.pt"
+    weights.write_bytes(b"weights")
+    user, model_version = _seed_detection_data(db_session, weights)
+    zip_path = tmp_path / "images.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        for filename, color in (("a.jpg", "white"), ("nested/b.jpg", "gray")):
+            output = io.BytesIO()
+            Image.new("RGB", (32, 24), color).save(output, format="JPEG")
+            archive.writestr(filename, output.getvalue())
+
+    service = DetectionService()
+    monkeypatch.setattr(service, "_get_model", lambda _version: _FakeModel())
+    monkeypatch.setattr("app.services.detection_service.MinIOClient", _FakeMinIO)
+
+    response = await service.detect_zip(
+        db_session,
+        user.id,
+        zip_path,
+        model_version.id,
+        0.25,
+        0.45,
+        "images.zip",
+    )
+
+    assert response["source"] == "zip"
+    assert response["zip_filename"] == "images.zip"
+    assert response["total_images_in_zip"] == 2
+    assert response["success_count"] == 2
+    assert all(item["annotated_image_url"] for item in response["items"])
+    task = db_session.query(DetectionTask).one()
+    assert task.task_type == "zip"
+    assert task.total_images == 2
+
+
+def test_zip_rejects_path_traversal(tmp_path):
+    zip_path = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("../escape.jpg", b"not-an-image")
+
+    with pytest.raises(HTTPException, match="不安全的文件路径"):
+        DetectionService._safe_zip_images(zip_path, tmp_path / "extract")
+
+
+def test_zip_rejects_more_than_batch_limit(tmp_path):
+    zip_path = tmp_path / "too-many.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        for index in range(21):
+            archive.writestr(f"{index}.jpg", b"image")
+
+    with pytest.raises(HTTPException, match="图片数量不能超过 20 张"):
+        DetectionService._safe_zip_images(zip_path, tmp_path / "extract")
+
+
+def test_zip_preserves_tiff_support(tmp_path):
+    zip_path = tmp_path / "tiff.zip"
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(output, format="TIFF")
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("sample.tiff", output.getvalue())
+
+    extracted = DetectionService._safe_zip_images(zip_path, tmp_path / "extract")
+
+    assert [path.suffix for path in extracted] == [".tiff"]
 
 
 def test_supported_image_types_match_detection_page_options():
