@@ -4,8 +4,10 @@ import json
 import os
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -99,7 +101,7 @@ async def upload_image(
     _current_user=Depends(get_current_user),
 ):
     suffix = Path(file.filename).suffix.lower() or ".jpg"
-    filename = f"{os.getpid()}_{file.filename}"
+    filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
     filepath = os.path.join(UPLOAD_DIR, filename)
     content = await file.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
@@ -151,7 +153,7 @@ async def chat_stream(
             if len(content) > MAX_IMAGE_BYTES:
                 raise HTTPException(status_code=413, detail="图片大小不能超过 10MB")
             suffix = Path(image_file.filename).suffix.lower() or ".jpg"
-            filename = f"{os.getpid()}_{image_file.filename}"
+            filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
             filepath = os.path.join(UPLOAD_DIR, filename)
             with open(filepath, "wb") as f:
                 f.write(content)
@@ -169,7 +171,7 @@ async def chat_stream(
     user_id = _current_user.id
 
     # ── load chat history ──
-    history = _load_history(session_id) if session_id else []
+    history = _load_history(session_id, user_id) if session_id else []
 
     async def event_generator():
         full_reply = ""
@@ -230,11 +232,14 @@ def _ensure_session(session_id: str, user_id: int):
         db.close()
 
 
-def _load_history(session_id: str) -> list[dict]:
+def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
     """加载最近的对话历史，转为 LangChain 消息格式"""
     db = SessionLocal()
     try:
-        s = db.query(ChatSession).filter(ChatSession.session_uuid == session_id).first()
+        query = db.query(ChatSession).filter(ChatSession.session_uuid == session_id)
+        if user_id is not None:
+            query = query.filter(ChatSession.user_id == user_id)
+        s = query.first()
         if not s:
             return []
         messages = (
@@ -259,10 +264,17 @@ def _save_message(session_id: str, user_id: int, role: str, content: str):
         return
     db = SessionLocal()
     try:
-        s = _ensure_session(session_id, user_id)
+        s = db.query(ChatSession).filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == user_id,
+        ).first()
+        if not s:
+            s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
+            db.add(s)
+            db.flush()
         db.add(ChatMessage(session_id=s.id, role=role, content=content))
         s.message_count = (s.message_count or 0) + 1
-        s.last_message_at = __import__("datetime").datetime.now()
+        s.last_message_at = datetime.now()
         if role == "user" and (not s.title or s.title == ""):
             s.title = content[:50]
         db.commit()
