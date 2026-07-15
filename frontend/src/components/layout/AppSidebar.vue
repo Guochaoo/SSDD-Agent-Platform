@@ -90,7 +90,7 @@ import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { Setting, SwitchButton } from '@element-plus/icons-vue'
 import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft } from '@boxicons/vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps({
   collapsed: { type: Boolean, default: false },
@@ -140,6 +140,11 @@ function handleDeleteSession(id) {
 }
 
 function handleCommand(command) {
+  if (command === 'settings') {
+    ElMessage.info('设置功能暂未开放')
+    return
+  }
+
   if (command === 'logout') {
     ElMessageBox.confirm('确定要退出登录吗？', '提示', {
       confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning',
