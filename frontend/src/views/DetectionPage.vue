@@ -8,6 +8,16 @@
       <el-button :icon="Refresh" @click="resetCurrentMode">重置当前模式</el-button>
     </ModulePageHeader>
 
+    <el-alert
+      v-if="pageError"
+      class="page-alert"
+      :title="pageError"
+      type="error"
+      show-icon
+      closable
+      @close="pageError = ''"
+    />
+
     <el-tabs v-model="activeMode" class="mode-tabs">
       <el-tab-pane label="单图检测" name="single">
         <div class="detection-layout">
@@ -384,9 +394,11 @@ import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
 import { createCameraWs } from "@/utils/cameraWs";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
+import { getApiErrorMessage } from "@/utils/apiError";
 
 const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp";
 const activeMode = ref("single");
+const pageError = ref("");
 const scenes = ref([]);
 const models = ref([]);
 const form = reactive({ sceneId: "", modelId: "", confThreshold: 0.25, iouThreshold: 0.45 });
@@ -512,12 +524,13 @@ async function loadModels() {
 }
 
 async function loadOptions() {
+  pageError.value = "";
   try {
     scenes.value = await getScenesApi();
     form.sceneId = scenes.value[0]?.id || "";
     await loadModels();
-  } catch {
-    ElMessage.error("检测场景或模型列表加载失败");
+  } catch (error) {
+    pageError.value = getApiErrorMessage(error, "检测场景或模型列表加载失败");
   }
 }
 
@@ -528,9 +541,9 @@ async function refreshModelWarmupStatus() {
     const response = await getDetectionModelStatus();
     modelWarmupStatus.value = response.status || "loading";
     warmupError.value = response.error || "";
-  } catch {
+  } catch (error) {
     modelWarmupStatus.value = "error";
-    warmupError.value = "无法获取模型预热状态";
+    warmupError.value = getApiErrorMessage(error, "无法获取模型预热状态");
   } finally {
     warmupRequesting = false;
     clearTimeout(warmupTimer);
@@ -544,11 +557,12 @@ async function startSingleDetection() {
   if (!singleFile.value) return;
   singleLoading.value = true;
   singleResult.value = null;
+  pageError.value = "";
   try {
     singleResult.value = await detectSingleApi(singleFile.value, form);
     ElMessage.success("检测完成");
-  } catch {
-    ElMessage.error("检测失败，请检查模型服务后重试");
+  } catch (error) {
+    pageError.value = getApiErrorMessage(error, "单图检测失败，请检查模型服务后重试");
   } finally {
     singleLoading.value = false;
   }
@@ -559,11 +573,12 @@ async function startBatchDetection() {
   if (!files.length) return;
   batchLoading.value = true;
   batchResult.value = null;
+  pageError.value = "";
   try {
     batchResult.value = await detectBatchApi(files, form);
     ElMessage.success(`批量任务完成：${batchResult.value.successCount} 张成功`);
-  } catch {
-    ElMessage.error("批量检测失败");
+  } catch (error) {
+    pageError.value = getApiErrorMessage(error, "批量检测失败");
   } finally {
     batchLoading.value = false;
   }
@@ -587,11 +602,12 @@ async function startZipDetection() {
   if (!file) return;
   zipLoading.value = true;
   batchResult.value = null;
+  pageError.value = "";
   try {
     batchResult.value = await detectZipApi(file, form);
     ElMessage.success(`ZIP 检测完成：${batchResult.value.successCount} 张成功`);
-  } catch {
-    ElMessage.error("ZIP 检测失败");
+  } catch (error) {
+    pageError.value = getApiErrorMessage(error, "ZIP 检测失败");
   } finally {
     zipLoading.value = false;
   }
@@ -618,9 +634,11 @@ async function pollVideoStatus() {
       clearInterval(videoPollTimer);
       ElMessage.error(data.message || "视频检测失败");
     }
-  } catch {
+  } catch (error) {
     clearInterval(videoPollTimer);
     videoStatus.value = "failed";
+    videoMessage.value = getApiErrorMessage(error, "视频任务进度查询失败");
+    pageError.value = videoMessage.value;
   }
 }
 
@@ -632,6 +650,7 @@ async function startVideoTask() {
   videoProgress.value = 0;
   videoMessage.value = "正在上传视频...";
   videoResult.value = null;
+  pageError.value = "";
   try {
     const data = await detectVideoApi(file, {
       ...form,
@@ -642,9 +661,10 @@ async function startVideoTask() {
     videoMessage.value = data.message;
     videoPollTimer = window.setInterval(pollVideoStatus, 1500);
     await pollVideoStatus();
-  } catch {
+  } catch (error) {
     videoStatus.value = "failed";
-    videoMessage.value = "视频上传或任务创建失败";
+    videoMessage.value = getApiErrorMessage(error, "视频上传或任务创建失败");
+    pageError.value = videoMessage.value;
   }
 }
 async function startCamera() {
@@ -675,15 +695,20 @@ async function startCamera() {
       onFrameSkipped: (data) => window.setTimeout(sendCameraFrame, data.retry_after_ms ?? 300),
       onError: (message) => {
         cameraConnecting.value = false;
+        pageError.value = message;
         ElMessage.error(message);
       },
       onClose: () => { cameraConnecting.value = false; },
     });
     cameraWs.connect();
     cameraActive.value = true;
-  } catch {
+  } catch (error) {
     cameraConnecting.value = false;
-    ElMessage.error("无法访问摄像头，请检查浏览器权限");
+    pageError.value =
+      error?.name === "NotAllowedError"
+        ? "摄像头权限被拒绝，请在浏览器设置中允许访问"
+        : "无法访问摄像头，请检查浏览器权限和设备状态";
+    ElMessage.error(pageError.value);
   }
 }
 
@@ -769,6 +794,7 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .frontend-b-page { min-height: 100%; }
+.page-alert { margin-bottom: 16px; }
 .mode-tabs :deep(.el-tabs__header) { margin-bottom: 18px; }
 .mode-tabs :deep(.el-tabs__item) { height: 44px; font-weight: 600; }
 .detection-layout { display: grid; grid-template-columns: minmax(290px, 0.78fr) minmax(480px, 1.55fr); gap: 18px; align-items: start; }

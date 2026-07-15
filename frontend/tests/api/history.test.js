@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  HISTORY_TASK_TYPE_OPTIONS,
+  getHistoryTaskTypeLabel,
   normalizeHistoryDetail,
   normalizeHistoryPage,
 } from "@/api/history";
 
 describe("前端 B 历史记录适配", () => {
+  it("使用后端真实任务类型并提供 ZIP 筛选", () => {
+    expect(HISTORY_TASK_TYPE_OPTIONS).toContainEqual({
+      value: "zip",
+      label: "ZIP 检测",
+    });
+    expect(HISTORY_TASK_TYPE_OPTIONS.some((item) => item.value === "folder")).toBe(false);
+    expect(getHistoryTaskTypeLabel("zip")).toBe("ZIP 检测");
+  });
+
   it("统一分页任务字段并计算单图平均耗时", () => {
     const page = normalizeHistoryPage({
       total: 1,
