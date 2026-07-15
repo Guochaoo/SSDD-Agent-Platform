@@ -1,12 +1,12 @@
 <template>
   <div class="frontend-b-page">
     <ModulePageHeader
-      title="历史记录"
-      description="查询真实检测任务，按场景、检测类型和状态筛选，并查看或删除属于当前用户的记录。"
+      :title="text.title"
+      :description="text.description"
       :mock="false"
     >
       <el-button :icon="Refresh" :loading="loading" @click="loadHistory">
-        刷新
+        {{ text.refresh }}
       </el-button>
     </ModulePageHeader>
 
@@ -19,24 +19,24 @@
       :closable="false"
     >
       <template #default>
-        <el-button link type="primary" @click="loadHistory">重新加载</el-button>
+        <el-button link type="primary" @click="loadHistory">{{ text.reload }}</el-button>
       </template>
     </el-alert>
 
     <section class="filter-bar">
       <div class="filter-bar__title">
         <el-icon><Filter /></el-icon>
-        <span>记录筛选</span>
+        <span>{{ text.filterTitle }}</span>
       </div>
-      <el-select v-model="filters.sceneId" placeholder="全部场景" clearable>
+      <el-select v-model="filters.sceneId" :placeholder="text.allScenes" clearable>
         <el-option
           v-for="scene in scenes"
           :key="scene.id"
-          :label="scene.displayName"
+          :label="sceneLabel(scene)"
           :value="scene.id"
         />
       </el-select>
-      <el-select v-model="filters.taskType" placeholder="全部类型" clearable>
+      <el-select v-model="filters.taskType" :placeholder="text.allTypes" clearable>
         <el-option
           v-for="option in taskTypeOptions"
           :key="option.value"
@@ -44,7 +44,7 @@
           :value="option.value"
         />
       </el-select>
-      <el-select v-model="filters.status" placeholder="全部状态" clearable>
+      <el-select v-model="filters.status" :placeholder="text.allStatuses" clearable>
         <el-option
           v-for="option in statusOptions"
           :key="option.value"
@@ -52,8 +52,8 @@
           :value="option.value"
         />
       </el-select>
-      <el-button type="primary" :icon="Search" @click="applyFilters">查询</el-button>
-      <el-button @click="resetFilters">重置</el-button>
+      <el-button type="primary" :icon="Search" @click="applyFilters">{{ text.search }}</el-button>
+      <el-button @click="resetFilters">{{ text.reset }}</el-button>
     </section>
 
     <section class="history-card">
@@ -61,32 +61,34 @@
         v-loading="loading"
         :data="history.items"
         row-key="id"
-        empty-text="当前筛选条件下暂无检测记录"
+        :empty-text="text.emptyHistory"
       >
-        <el-table-column prop="id" label="任务 ID" width="92" />
-        <el-table-column prop="sceneName" label="检测场景" min-width="150" show-overflow-tooltip />
-        <el-table-column label="检测类型" width="112">
+        <el-table-column prop="id" :label="text.taskId" width="92" />
+        <el-table-column :label="text.scene" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ displayScene(row.sceneName) }}</template>
+        </el-table-column>
+        <el-table-column :label="text.taskType" width="112">
           <template #default="{ row }">{{ taskTypeLabel(row.taskType) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="105">
+        <el-table-column :label="text.status" width="105">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" effect="light" round>
               {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="totalImages" label="图片" width="82" align="right" />
-        <el-table-column prop="totalObjects" label="缺陷" width="82" align="right" />
-        <el-table-column label="总耗时" width="110" align="right">
+        <el-table-column prop="totalImages" :label="text.images" width="82" align="right" />
+        <el-table-column prop="totalObjects" :label="text.defects" width="82" align="right" />
+        <el-table-column :label="text.duration" width="110" align="right">
           <template #default="{ row }">{{ formatDuration(row.totalInferenceTimeMs) }}</template>
         </el-table-column>
-        <el-table-column label="创建时间" min-width="170">
+        <el-table-column :label="text.createdAt" min-width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column :label="text.actions" width="150" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :icon="View" @click="openDetail(row)">
-              详情
+              {{ text.detail }}
             </el-button>
             <el-button
               link
@@ -95,7 +97,7 @@
               :loading="deletingId === row.id"
               @click="removeHistory(row)"
             >
-              删除
+              {{ text.delete }}
             </el-button>
           </template>
         </el-table-column>
@@ -114,7 +116,7 @@
       />
     </section>
 
-    <el-drawer v-model="detailVisible" title="检测任务详情" size="min(720px, 92vw)">
+    <el-drawer v-model="detailVisible" :title="text.detailTitle" size="min(720px, 92vw)">
       <div v-loading="detailLoading" class="detail-content">
         <el-alert
           v-if="detailError"
@@ -126,28 +128,28 @@
 
         <template v-if="detail.task && !detailError">
           <el-descriptions :column="2" border>
-            <el-descriptions-item label="任务 ID">{{ detail.task.id }}</el-descriptions-item>
-            <el-descriptions-item label="状态">
+            <el-descriptions-item :label="text.taskId">{{ detail.task.id }}</el-descriptions-item>
+            <el-descriptions-item :label="text.status">
               <el-tag :type="statusType(detail.task.status)" effect="light">
                 {{ statusLabel(detail.task.status) }}
               </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="检测场景">{{ detail.task.sceneName }}</el-descriptions-item>
-            <el-descriptions-item label="检测类型">{{ taskTypeLabel(detail.task.taskType) }}</el-descriptions-item>
-            <el-descriptions-item label="图片数量">{{ detail.task.totalImages }}</el-descriptions-item>
-            <el-descriptions-item label="缺陷数量">{{ detail.task.totalObjects }}</el-descriptions-item>
-            <el-descriptions-item label="置信度阈值">{{ formatNumber(detail.task.confThreshold, 2) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.scene">{{ displayScene(detail.task.sceneName) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.taskType">{{ taskTypeLabel(detail.task.taskType) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.imageCount">{{ detail.task.totalImages }}</el-descriptions-item>
+            <el-descriptions-item :label="text.defectCount">{{ detail.task.totalObjects }}</el-descriptions-item>
+            <el-descriptions-item :label="text.confThreshold">{{ formatNumber(detail.task.confThreshold, 2) }}</el-descriptions-item>
             <el-descriptions-item label="IoU 阈值">{{ formatNumber(detail.task.iouThreshold, 2) }}</el-descriptions-item>
-            <el-descriptions-item label="总推理耗时">{{ formatDuration(detail.task.totalInferenceTimeMs) }}</el-descriptions-item>
-            <el-descriptions-item label="单图平均耗时">{{ formatDuration(detail.task.avgInferenceTimeMs) }}</el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{ formatDateTime(detail.task.createdAt) }}</el-descriptions-item>
-            <el-descriptions-item label="完成时间">{{ formatDateTime(detail.task.completedAt) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.totalInference">{{ formatDuration(detail.task.totalInferenceTimeMs) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.avgInference">{{ formatDuration(detail.task.avgInferenceTimeMs) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.createdAt">{{ formatDateTime(detail.task.createdAt) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.completedAt">{{ formatDateTime(detail.task.completedAt) }}</el-descriptions-item>
           </el-descriptions>
 
           <el-alert
             v-if="detail.task.errorMessage"
             class="detail-error"
-            title="任务错误信息"
+            :title="text.taskError"
             :description="detail.task.errorMessage"
             type="error"
             show-icon
@@ -155,11 +157,11 @@
           />
 
           <div class="result-heading">
-            <h3>缺陷明细</h3>
-            <span>共 {{ detail.results.length }} 条目标记录</span>
+            <h3>{{ text.defectDetails }}</h3>
+            <span>{{ text.resultCount(detail.results.length) }}</span>
           </div>
-          <el-table :data="detail.results" empty-text="该任务没有缺陷目标明细" max-height="430">
-            <el-table-column label="结果图" width="84">
+          <el-table :data="detail.results" :empty-text="text.emptyDetail" max-height="430">
+            <el-table-column :label="text.resultImage" width="84">
               <template #default="{ row }">
                 <el-image
                   v-if="row.annotatedImageUrl"
@@ -172,14 +174,16 @@
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column label="文件" min-width="140" show-overflow-tooltip>
+            <el-table-column :label="text.file" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">{{ fileName(row.imagePath) }}</template>
             </el-table-column>
-            <el-table-column prop="classNameCn" label="缺陷类别" width="110" />
-            <el-table-column label="置信度" width="92" align="right">
+            <el-table-column :label="text.defectClass" width="110">
+              <template #default="{ row }">{{ displayDefect(row.classNameCn) }}</template>
+            </el-table-column>
+            <el-table-column :label="text.confidence" width="92" align="right">
               <template #default="{ row }">{{ formatPercent(row.confidence) }}</template>
             </el-table-column>
-            <el-table-column label="边界框" min-width="150">
+            <el-table-column :label="text.bbox" min-width="150">
               <template #default="{ row }">{{ formatBbox(row.bbox) }}</template>
             </el-table-column>
           </el-table>
@@ -192,7 +196,8 @@
 <script setup>
 import { Delete, Filter, Refresh, Search, View } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { useSettingsStore } from '@/stores/settings'
 import {
   HISTORY_TASK_TYPE_OPTIONS,
   deleteHistoryApi,
@@ -203,14 +208,131 @@ import {
 import { getScenesApi } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
+import { displayDefectName, displaySceneName } from "@/utils/displayText";
 
-const taskTypeOptions = HISTORY_TASK_TYPE_OPTIONS;
-const statusOptions = [
-  { value: "pending", label: "等待中" },
-  { value: "processing", label: "处理中" },
-  { value: "completed", label: "已完成" },
-  { value: "failed", label: "失败" },
-];
+const settingsStore = useSettingsStore()
+const taskTypeOptions = computed(() => HISTORY_TASK_TYPE_OPTIONS.map((item) => ({
+  ...item,
+  label: taskTypeLabel(item.value),
+})));
+const statusOptions = computed(() => [
+  { value: "pending", label: text.value.pending },
+  { value: "processing", label: text.value.processing },
+  { value: "completed", label: text.value.completed },
+  { value: "failed", label: text.value.failed },
+]);
+
+const text = computed(() => settingsStore.isEnglish ? {
+  title: 'History',
+  description: 'Search real detection tasks, filter by scene, type and status, then view or delete your records.',
+  refresh: 'Refresh',
+  reload: 'Reload',
+  filterTitle: 'Filters',
+  allScenes: 'All scenes',
+  allTypes: 'All types',
+  allStatuses: 'All statuses',
+  search: 'Search',
+  reset: 'Reset',
+  emptyHistory: 'No detection records for the current filters',
+  taskId: 'Task ID',
+  scene: 'Scene',
+  taskType: 'Type',
+  status: 'Status',
+  images: 'Images',
+  defects: 'Defects',
+  duration: 'Duration',
+  createdAt: 'Created at',
+  actions: 'Actions',
+  detail: 'Details',
+  delete: 'Delete',
+  detailTitle: 'Detection Task Details',
+  imageCount: 'Images',
+  defectCount: 'Defects',
+  confThreshold: 'Confidence threshold',
+  totalInference: 'Total inference time',
+  avgInference: 'Average image time',
+  completedAt: 'Completed at',
+  taskError: 'Task error',
+  defectDetails: 'Defect Details',
+  resultCount: (count) => `${count} target records`,
+  emptyDetail: 'No defect target details for this task',
+  resultImage: 'Result',
+  file: 'File',
+  defectClass: 'Class',
+  confidence: 'Confidence',
+  bbox: 'Bbox',
+  pending: 'Pending',
+  processing: 'Processing',
+  completed: 'Completed',
+  failed: 'Failed',
+  single: 'Single image',
+  batch: 'Batch',
+  zip: 'ZIP',
+  video: 'Video',
+  camera: 'Camera',
+  sceneFailed: 'Failed to load detection scenes',
+  historyFailed: 'Failed to load history',
+  detailFailed: 'Failed to load detection details',
+  deleteTitle: 'Delete history record',
+  deleteConfirm: (id) => `Delete detection task #${id}? Related results will also be deleted.`,
+  deleteSuccess: 'History record deleted',
+  deleteFailed: 'Failed to delete history record',
+} : {
+  title: '历史记录',
+  description: '查询真实检测任务，按场景、检测类型和状态筛选，并查看或删除属于当前用户的记录。',
+  refresh: '刷新',
+  reload: '重新加载',
+  filterTitle: '记录筛选',
+  allScenes: '全部场景',
+  allTypes: '全部类型',
+  allStatuses: '全部状态',
+  search: '查询',
+  reset: '重置',
+  emptyHistory: '当前筛选条件下暂无检测记录',
+  taskId: '任务 ID',
+  scene: '检测场景',
+  taskType: '检测类型',
+  status: '状态',
+  images: '图片',
+  defects: '缺陷',
+  duration: '总耗时',
+  createdAt: '创建时间',
+  actions: '操作',
+  detail: '详情',
+  delete: '删除',
+  detailTitle: '检测任务详情',
+  imageCount: '图片数量',
+  defectCount: '缺陷数量',
+  confThreshold: '置信度阈值',
+  totalInference: '总推理耗时',
+  avgInference: '单图平均耗时',
+  completedAt: '完成时间',
+  taskError: '任务错误信息',
+  defectDetails: '缺陷明细',
+  resultCount: (count) => `共 ${count} 条目标记录`,
+  emptyDetail: '该任务没有缺陷目标明细',
+  resultImage: '结果图',
+  file: '文件',
+  defectClass: '缺陷类别',
+  confidence: '置信度',
+  bbox: '边界框',
+  pending: '等待中',
+  processing: '处理中',
+  completed: '已完成',
+  failed: '失败',
+  single: '单图检测',
+  batch: '批量检测',
+  zip: 'ZIP 检测',
+  video: '视频检测',
+  camera: '摄像头',
+  sceneFailed: '检测场景加载失败',
+  historyFailed: '历史记录加载失败',
+  detailFailed: '检测详情加载失败',
+  deleteTitle: '删除历史记录',
+  deleteConfirm: (id) => `确定删除检测任务 #${id} 吗？相关结果记录也会被删除。`,
+  deleteSuccess: '历史记录已删除',
+  deleteFailed: '历史记录删除失败',
+})
 
 const loading = ref(false);
 const pageError = ref("");
@@ -226,11 +348,31 @@ const detailError = ref("");
 const detail = reactive({ task: null, results: [] });
 
 function taskTypeLabel(value) {
-  return getHistoryTaskTypeLabel(value);
+  const cnLabel = getHistoryTaskTypeLabel(value);
+  if (!settingsStore.isEnglish) return cnLabel;
+  return {
+    single: text.value.single,
+    batch: text.value.batch,
+    zip: text.value.zip,
+    video: text.value.video,
+    camera: text.value.camera,
+  }[value] || value || "—";
+}
+
+function sceneLabel(scene) {
+  return displaySceneName(scene.displayName || scene.name, settingsStore.isEnglish);
+}
+
+function displayScene(name) {
+  return displaySceneName(name, settingsStore.isEnglish);
+}
+
+function displayDefect(name) {
+  return displayDefectName(name, settingsStore.isEnglish);
 }
 
 function statusLabel(value) {
-  return statusOptions.find((item) => item.value === value)?.label || value || "—";
+  return statusOptions.value.find((item) => item.value === value)?.label || value || "—";
 }
 
 function statusType(value) {
@@ -240,7 +382,7 @@ function statusType(value) {
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(settingsStore.isEnglish ? "en-US" : "zh-CN", { hour12: false });
 }
 
 function formatDuration(value) {
@@ -272,7 +414,7 @@ async function loadScenes() {
   try {
     scenes.value = await getScenesApi();
   } catch (error) {
-    pageError.value = getApiErrorMessage(error, "检测场景加载失败");
+    pageError.value = getApiErrorMessage(error, text.value.sceneFailed);
   }
 }
 
@@ -290,7 +432,7 @@ async function loadHistory() {
   } catch (error) {
     history.items = [];
     history.total = 0;
-    pageError.value = getApiErrorMessage(error, "历史记录加载失败");
+    pageError.value = getApiErrorMessage(error, text.value.historyFailed);
   } finally {
     loading.value = false;
   }
@@ -321,7 +463,7 @@ async function openDetail(row) {
   try {
     Object.assign(detail, await getHistoryDetailApi(row.id));
   } catch (error) {
-    detailError.value = getApiErrorMessage(error, "检测详情加载失败");
+    detailError.value = getApiErrorMessage(error, text.value.detailFailed);
   } finally {
     detailLoading.value = false;
   }
@@ -330,18 +472,18 @@ async function openDetail(row) {
 async function removeHistory(row) {
   try {
     await ElMessageBox.confirm(
-      `确定删除检测任务 #${row.id} 吗？相关结果记录也会被删除。`,
-      "删除历史记录",
-      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
+      text.value.deleteConfirm(row.id),
+      text.value.deleteTitle,
+      { type: "warning", confirmButtonText: text.value.delete, cancelButtonText: text.value.reset },
     );
     deletingId.value = row.id;
     await deleteHistoryApi(row.id);
-    ElMessage.success("历史记录已删除");
+    ElMessage.success(text.value.deleteSuccess);
     if (history.items.length === 1 && pagination.page > 1) pagination.page -= 1;
     await loadHistory();
   } catch (error) {
     if (error !== "cancel" && error !== "close") {
-      pageError.value = getApiErrorMessage(error, "历史记录删除失败");
+      pageError.value = getApiErrorMessage(error, text.value.deleteFailed);
     }
   } finally {
     deletingId.value = null;

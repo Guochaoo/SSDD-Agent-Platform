@@ -7,7 +7,7 @@
     </div>
     <div class="module-header__actions">
       <el-tag :type="mock ? 'warning' : 'success'" effect="light" round>
-        {{ mock ? "Mock 演示数据" : "真实接口" }}
+        {{ mock ? text.mock : text.real }}
       </el-tag>
       <slot />
     </div>
@@ -15,11 +15,20 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
+
 defineProps({
   title: { type: String, required: true },
   description: { type: String, default: "" },
   mock: { type: Boolean, default: false },
 });
+
+const settingsStore = useSettingsStore()
+const text = computed(() => settingsStore.isEnglish
+  ? { mock: 'Mock data', real: 'Live API' }
+  : { mock: 'Mock 演示数据', real: '真实接口' },
+)
 </script>
 
 <style lang="scss" scoped>

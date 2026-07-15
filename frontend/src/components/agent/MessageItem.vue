@@ -5,7 +5,7 @@
       v-if="message.imagePreviewUrl"
       :src="message.imagePreviewUrl"
       class="user-image"
-      alt="上传图片"
+      :alt="text.uploadAlt"
     />
     <span class="user-text">{{ message.content }}</span>
   </div>
@@ -33,7 +33,7 @@
 
       <el-alert
         v-if="message.status === 'error'"
-        :title="message.errorMessage || '智能体响应失败，请重试'"
+        :title="message.errorMessage || text.agentError"
         type="error"
         :closable="false"
         show-icon
@@ -42,13 +42,13 @@
     </div>
 
     <div v-if="!isLastStreaming && message.content" class="msg-footer">
-      <button class="footer-btn" :class="{ copied }" title="复制" @click="handleCopy">
+      <button class="footer-btn" :class="{ copied }" :title="text.copy" @click="handleCopy">
         <el-icon :size="14"><DocumentCopy v-if="!copied" /><Check v-else /></el-icon>
-        <span>{{ copied ? '已复制' : '复制' }}</span>
+        <span>{{ copied ? text.copied : text.copy }}</span>
       </button>
-      <button class="footer-btn" title="重新生成" @click="$emit('regenerate', message)">
+      <button class="footer-btn" :title="text.regenerate" @click="$emit('regenerate', message)">
         <el-icon :size="14"><Refresh /></el-icon>
-        <span>重新生成</span>
+        <span>{{ text.regenerate }}</span>
       </button>
       <span class="msg-time">{{ formattedTime }}</span>
     </div>
@@ -58,6 +58,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { DocumentCopy, Check, Refresh } from '@element-plus/icons-vue'
+import { useSettingsStore } from '@/stores/settings'
 import { renderMarkdown } from '@/utils/markdown'
 import DetectionResultCard from './DetectionResultCard.vue'
 
@@ -69,7 +70,40 @@ const props = defineProps({
 defineEmits(['regenerate'])
 
 const copied = ref(false)
+const settingsStore = useSettingsStore()
 let copyTimer = null
+
+const text = computed(() => settingsStore.isEnglish ? {
+  uploadAlt: 'Uploaded image',
+  agentError: 'Agent response failed. Please try again.',
+  copy: 'Copy',
+  copied: 'Copied',
+  regenerate: 'Regenerate',
+  called: 'Called',
+  running: 'Running',
+  success: 'Success',
+  error: 'Failed',
+  singleTool: 'Single-image detection tool',
+  batchTool: 'Batch detection tool',
+  detectionTool: 'Defect detection tool',
+  historyTool: 'Detection history tool',
+  knowledgeTool: 'Knowledge search tool',
+} : {
+  uploadAlt: '上传图片',
+  agentError: '智能体响应失败，请重试',
+  copy: '复制',
+  copied: '已复制',
+  regenerate: '重新生成',
+  called: '已调用',
+  running: '运行中',
+  success: '成功',
+  error: '失败',
+  singleTool: '单图检测工具',
+  batchTool: '批量检测工具',
+  detectionTool: '缺陷检测工具',
+  historyTool: '检测历史工具',
+  knowledgeTool: '知识库检索工具',
+})
 
 const renderedContent = computed(() => {
   return renderMarkdown(props.message.content || '')
@@ -94,22 +128,22 @@ function handleCopy() {
 function getToolName(tool) {
   const name = tool.name || tool.tool_name || 'tool'
   const map = {
-    detect_single: '单图检测工具',
-    detect_batch: '批量检测工具',
-    detection_tool: '缺陷检测工具',
-    history_query: '检测历史工具',
-    knowledge_search: '知识库检索工具',
+    detect_single: text.value.singleTool,
+    detect_batch: text.value.batchTool,
+    detection_tool: text.value.detectionTool,
+    history_query: text.value.historyTool,
+    knowledge_search: text.value.knowledgeTool,
   }
   return map[name] || name
 }
 
 function getToolStatus(tool) {
   const map = {
-    running: '运行中',
-    success: '成功',
-    error: '失败',
+    running: text.value.running,
+    success: text.value.success,
+    error: text.value.error,
   }
-  return map[tool.status] || '已调用'
+  return map[tool.status] || text.value.called
 }
 
 function getToolTag(tool) {
@@ -143,8 +177,8 @@ function getToolTag(tool) {
   display: inline-block;
   max-width: 70%;
   padding: 6px 14px;
-  background: #f1f1f0;
-  color: #525252;
+  background: var(--app-active);
+  color: var(--app-text);
   border-radius: 20px;
   font-size: 14px;
   line-height: 1.5;
@@ -165,7 +199,7 @@ function getToolTag(tool) {
   .markdown-body {
     font-size: 15px;
     line-height: 1.75;
-    color: #171717;
+    color: var(--app-text);
 
     :deep(p) {
       margin: 0 0 12px;
@@ -176,7 +210,7 @@ function getToolTag(tool) {
     :deep(h1), :deep(h2), :deep(h3), :deep(h4) {
       margin: 20px 0 10px;
       font-weight: 600;
-      color: #171717;
+      color: var(--app-text);
     }
     :deep(h1) { font-size: 1.4em; }
     :deep(h2) { font-size: 1.2em; }
@@ -189,15 +223,15 @@ function getToolTag(tool) {
       margin: 4px 0;
     }
     :deep(code) {
-      background: #f2f3f5;
+      background: var(--app-subtle);
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 13px;
       font-family: 'SF Mono', 'Fira Code', monospace;
     }
     :deep(pre) {
-      background: #f8f9fa;
-      border: 1px solid #ebebeb;
+      background: var(--app-subtle);
+      border: 1px solid var(--app-border);
       padding: 14px 16px;
       border-radius: 10px;
       overflow-x: auto;
@@ -211,7 +245,7 @@ function getToolTag(tool) {
       border-left: 3px solid #8F8AB0;
       margin: 12px 0;
       padding: 4px 14px;
-      color: #737373;
+      color: var(--app-muted);
     }
     :deep(table) {
       width: 100%;
@@ -219,13 +253,13 @@ function getToolTag(tool) {
       margin: 12px 0;
     }
     :deep(th), :deep(td) {
-      border: 1px solid #e8e8e8;
+      border: 1px solid var(--app-border);
       padding: 8px 12px;
       text-align: left;
       font-size: 14px;
     }
     :deep(th) {
-      background: #f8f9fa;
+      background: var(--app-subtle);
       font-weight: 600;
     }
   }
@@ -253,8 +287,8 @@ function getToolTag(tool) {
   transition: all 0.15s;
 
   &:hover {
-    color: #525252;
-    background: #f1f1f0;
+    color: var(--app-text);
+    background: var(--app-hover);
   }
 
   &.copied {
@@ -274,9 +308,9 @@ function getToolTag(tool) {
   gap: 6px;
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--app-border);
   border-radius: 10px;
-  background: #fafafa;
+  background: var(--app-surface);
 }
 
 .tool-trace-item {
@@ -288,7 +322,7 @@ function getToolTag(tool) {
 }
 
 .tool-name {
-  color: #525252;
+  color: var(--app-text);
 }
 
 .message-error {

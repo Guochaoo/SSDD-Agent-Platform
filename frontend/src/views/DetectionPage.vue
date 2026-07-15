@@ -1,11 +1,11 @@
 <template>
   <div class="frontend-b-page">
     <ModulePageHeader
-      title="检测工作台"
-      description="上传钢铁表面图像，选择模型与阈值，查看缺陷位置、类别和置信度。批量、视频和摄像头模式按同一任务模型组织。"
+      :title="text.title"
+      :description="text.description"
       :mock="isFrontendBMockMode"
     >
-      <el-button :icon="Refresh" @click="resetCurrentMode">重置当前模式</el-button>
+      <el-button :icon="Refresh" @click="resetCurrentMode">{{ text.resetMode }}</el-button>
     </ModulePageHeader>
 
     <el-alert
@@ -19,20 +19,20 @@
     />
 
     <el-tabs v-model="activeMode" class="mode-tabs">
-      <el-tab-pane label="单图检测" name="single">
+      <el-tab-pane :label="text.singleTab" name="single">
         <div class="detection-layout">
           <section class="control-card">
             <div class="section-title">
               <div>
-                <h3>检测配置</h3>
-                <p>支持 JPG、PNG、BMP、TIF，单文件不超过 10 MB</p>
+                <h3>{{ text.configTitle }}</h3>
+                <p>{{ text.configHint }}</p>
               </div>
               <el-icon><Setting /></el-icon>
             </div>
 
             <el-alert
               v-if="modelWarmupStatus === 'loading'"
-              title="检测模型预热中，请稍候"
+              :title="text.modelWarming"
               type="info"
               :closable="false"
               show-icon
@@ -40,7 +40,7 @@
             />
             <el-alert
               v-else-if="modelWarmupStatus === 'error'"
-              :title="`检测模型预热失败${warmupError ? `：${warmupError}` : ''}，首次检测时将自动加载`"
+              :title="text.modelWarmFailed(warmupError)"
               type="warning"
               :closable="false"
               show-icon
@@ -48,7 +48,7 @@
             />
             <el-alert
               v-else-if="modelWarmupStatus === 'ready' && (singleLoading || batchLoading)"
-              title="模型加载成功，正在进行检测"
+              :title="text.modelDetecting"
               type="success"
               :closable="false"
               show-icon
@@ -56,24 +56,24 @@
             />
             <el-alert
               v-else-if="modelWarmupStatus === 'ready'"
-              title="检测模型加载成功，可以开始检测"
+              :title="text.modelReady"
               type="success"
               :closable="false"
               show-icon
               class="model-warmup-alert"
             />
             <el-form label-position="top">
-              <el-form-item label="检测场景">
+              <el-form-item :label="text.scene">
                 <el-select v-model="form.sceneId" class="full-width" @change="loadModels">
                   <el-option
                     v-for="scene in scenes"
                     :key="scene.id"
-                    :label="scene.displayName"
+                    :label="sceneLabel(scene)"
                     :value="scene.id"
                   />
                 </el-select>
               </el-form-item>
-              <el-form-item label="模型版本">
+              <el-form-item :label="text.modelVersion">
                 <el-select v-model="form.modelId" class="full-width">
                   <el-option
                     v-for="model in models"
@@ -91,7 +91,7 @@
               <el-form-item>
                 <template #label>
                   <span class="slider-label">
-                    置信度阈值 <b>{{ form.confThreshold.toFixed(2) }}</b>
+                    {{ text.confThreshold }} <b>{{ form.confThreshold.toFixed(2) }}</b>
                   </span>
                 </template>
                 <el-slider v-model="form.confThreshold" :min="0.1" :max="0.9" :step="0.05" />
@@ -99,7 +99,7 @@
               <el-form-item>
                 <template #label>
                   <span class="slider-label">
-                    IoU 阈值 <b>{{ form.iouThreshold.toFixed(2) }}</b>
+                    {{ text.iouThreshold }} <b>{{ form.iouThreshold.toFixed(2) }}</b>
                   </span>
                 </template>
                 <el-slider v-model="form.iouThreshold" :min="0.1" :max="0.9" :step="0.05" />
@@ -119,9 +119,9 @@
               :on-exceed="handleSingleExceed"
             >
               <el-icon class="steel-uploader__icon"><UploadFilled /></el-icon>
-              <div class="el-upload__text">拖入钢铁表面图像，或 <em>点击选择</em></div>
+              <div class="el-upload__text">{{ text.dragSingle }} <em>{{ text.clickSelect }}</em></div>
               <template #tip>
-                <div class="el-upload__tip">上传后仅生成本地预览；点击开始检测才会提交。</div>
+                <div class="el-upload__tip">{{ text.uploadTip }}</div>
               </template>
             </el-upload>
 
@@ -134,7 +134,7 @@
               :disabled="!singleFile || !form.modelId"
               @click="startSingleDetection"
             >
-              {{ singleLoading ? "正在检测" : "开始缺陷检测" }}
+              {{ singleLoading ? text.detecting : text.startDetect }}
             </el-button>
           </section>
 
@@ -146,12 +146,12 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="批量检测" name="batch">
+      <el-tab-pane :label="text.batchTab" name="batch">
         <div class="workspace-card">
           <div class="section-title section-title--inline">
             <div>
-              <h3>批量图片检测</h3>
-              <p>一次最多 20 张；单张失败不会影响其他图片结果。</p>
+              <h3>{{ text.batchTitle }}</h3>
+              <p>{{ text.batchHint }}</p>
             </div>
             <el-button
               type="primary"
@@ -159,7 +159,7 @@
               :loading="batchLoading"
               :disabled="batchFileList.length === 0"
               @click="startBatchDetection"
-            >开始批量检测</el-button>
+            >{{ text.startBatch }}</el-button>
           </div>
           <el-upload
             ref="batchUploadRef"
@@ -174,17 +174,17 @@
           >
             <el-icon class="steel-uploader__icon"><FolderAdd /></el-icon>
             <template v-if="batchFileList.length === 0">
-              <div class="el-upload__text">拖入多张钢铁表面图片，或 <em>点击选择</em></div>
+              <div class="el-upload__text">{{ text.dragBatch }} <em>{{ text.clickSelect }}</em></div>
             </template>
             <template v-else>
-              <div class="el-upload__text">拖入图片可新增，或选择操作</div>
+              <div class="el-upload__text">{{ text.dragMore }}</div>
               <div class="batch-upload-actions">
-                <el-button type="primary" plain @click.stop="openBatchFilePicker()">新增图片</el-button>
-                <el-button @click.stop="openBatchFilePicker(true)">重新选择</el-button>
+                <el-button type="primary" plain @click.stop="openBatchFilePicker()">{{ text.addImages }}</el-button>
+                <el-button @click.stop="openBatchFilePicker(true)">{{ text.reselect }}</el-button>
               </div>
             </template>
           </el-upload>
-          <el-divider content-position="left">或上传 ZIP 压缩包</el-divider>
+          <el-divider content-position="left">{{ text.orZip }}</el-divider>
           <div class="zip-upload-row">
             <el-upload
               v-model:file-list="zipFileList"
@@ -193,15 +193,15 @@
               accept=".zip,application/zip"
               :on-change="validateZipFile"
             >
-              <el-button :icon="FolderAdd">选择 ZIP</el-button>
+              <el-button :icon="FolderAdd">{{ text.selectZip }}</el-button>
             </el-upload>
-            <span>最多 20 张图片，ZIP 不超过 50 MB</span>
+            <span>{{ text.zipHint }}</span>
             <el-button
               type="primary"
               :loading="zipLoading"
               :disabled="zipFileList.length === 0 || !form.modelId"
               @click="startZipDetection"
-            >检测 ZIP</el-button>
+            >{{ text.detectZip }}</el-button>
           </div>
           <div v-if="batchResult" class="batch-summary">
             <el-tag type="info">{{ batchResult.source === "zip" ? "ZIP" : "多图" }}</el-tag>
@@ -262,11 +262,11 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="视频检测" name="video">
+      <el-tab-pane :label="text.videoTab" name="video">
         <div class="two-column-cards">
           <section class="workspace-card">
             <div class="section-title">
-              <div><h3>短视频任务</h3><p>使用当前选择的本地模型抽帧检测，展示关键帧标注图和完整标注视频。</p></div>
+              <div><h3>{{ text.videoTaskTitle }}</h3><p>{{ text.videoTaskHint }}</p></div>
             </div>
             <el-upload
               v-model:file-list="videoFileList"
@@ -277,16 +277,16 @@
               :on-change="validateVideoFile"
             >
               <el-icon class="steel-uploader__icon"><VideoCamera /></el-icon>
-              <div class="el-upload__text">选择 MP4 / AVI / MOV / MKV 短视频</div>
+              <div class="el-upload__text">{{ text.selectVideo }}</div>
             </el-upload>
             <el-form label-position="top" class="video-options">
-              <el-form-item label="抽帧间隔">
+              <el-form-item :label="text.frameInterval">
                 <el-input-number v-model="videoFrameInterval" :min="1" :max="30" />
-                <span class="field-suffix">帧</span>
+                <span class="field-suffix">{{ text.frames }}</span>
               </el-form-item>
-              <el-form-item label="最多关键帧">
+              <el-form-item :label="text.maxKeyFrames">
                 <el-input-number v-model="videoMaxFrames" :min="1" :max="100" />
-                <span class="field-suffix">帧</span>
+                <span class="field-suffix">{{ text.frames }}</span>
               </el-form-item>
             </el-form>
             <el-button
@@ -294,31 +294,31 @@
               :loading="videoStatus === 'processing'"
               :disabled="videoFileList.length === 0 || videoStatus === 'processing' || !form.modelId"
               @click="startVideoTask"
-            >创建视频检测任务</el-button>
+            >{{ text.createVideoTask }}</el-button>
           </section>
           <section class="workspace-card video-progress-card">
             <el-result
               v-if="videoStatus === 'idle'"
               icon="warning"
-              title="尚未创建视频任务"
-              sub-title="选择视频和抽帧参数后开始检测。"
+              :title="text.noVideoTask"
+              :sub-title="text.noVideoTaskHint"
             />
             <template v-else>
               <div class="video-progress-card__header">
-                <div><span>视频任务</span><strong>{{ videoTaskId }}</strong></div>
+                <div><span>{{ text.videoTask }}</span><strong>{{ videoTaskId }}</strong></div>
                 <el-tag :type="videoStatus === 'completed' ? 'success' : videoStatus === 'failed' ? 'danger' : 'warning'">
-                  {{ videoStatus === "completed" ? "已完成" : videoStatus === "failed" ? "失败" : "处理中" }}
+                  {{ videoStatusText(videoStatus) }}
                 </el-tag>
               </div>
               <el-progress type="dashboard" :percentage="videoProgress" :status="videoStatus === 'completed' ? 'success' : videoStatus === 'failed' ? 'exception' : ''" />
               <p>{{ videoMessage }}</p>
               <template v-if="videoResult">
                 <div class="video-summary">
-                  <el-tag type="primary">本地模型 {{ videoResult.model?.name || "未知" }}</el-tag>
-                  <el-tag>时长 {{ videoResult.duration_seconds }}s</el-tag>
+                  <el-tag type="primary">{{ text.localModel }} {{ videoResult.model?.name || text.unknown }}</el-tag>
+                  <el-tag>{{ text.duration }} {{ videoResult.duration_seconds }}s</el-tag>
                   <el-tag>FPS {{ videoResult.fps }}</el-tag>
-                  <el-tag>分辨率 {{ videoResult.video_resolution.width }}×{{ videoResult.video_resolution.height }}</el-tag>
-                  <el-tag type="success">目标 {{ videoResult.total_objects }}</el-tag>
+                  <el-tag>{{ text.resolution }} {{ videoResult.video_resolution.width }}×{{ videoResult.video_resolution.height }}</el-tag>
+                  <el-tag type="success">{{ text.objects }} {{ videoResult.total_objects }}</el-tag>
                 </div>
                 <video v-if="videoResult.annotated_video_url" class="annotated-video" :src="videoResult.annotated_video_url" controls preload="metadata" />
                 <div class="class-counts">
@@ -328,48 +328,50 @@
                   <figure v-for="frame in thumbnailFrames" :key="frame.frame_index">
                     <el-image :src="`data:image/jpeg;base64,${frame.annotated_image_base64}`" :preview-src-list="thumbnailFrameUrls" fit="cover" preview-teleported />
                     <figcaption>
-                      <strong>{{ frame.timestamp }}s · {{ frame.object_count }} 个目标</strong>
-                      <span v-for="item in frame.detections" :key="`${frame.frame_index}-${item.class_id}-${item.bbox.join('-')}`">{{ item.class_name_cn }} {{ (item.confidence * 100).toFixed(1) }}%</span>
+                      <strong>{{ frame.timestamp }}s · {{ text.objectCount(frame.object_count) }}</strong>
+                      <span v-for="item in frame.detections" :key="`${frame.frame_index}-${item.class_id}-${item.bbox.join('-')}`">{{ displayDefect(item.class_name_cn) }} {{ (item.confidence * 100).toFixed(1) }}%</span>
                     </figcaption>
                   </figure>
                 </div>
-                <el-empty v-else description="没有可展示的关键帧" :image-size="72" />
+                <el-empty v-else :description="text.noKeyFrames" :image-size="72" />
               </template>
             </template>
           </section>
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="摄像头" name="camera">
+      <el-tab-pane :label="text.cameraTab" name="camera">
         <div class="two-column-cards">
           <section class="workspace-card camera-stage">
             <video ref="cameraVideo" autoplay muted playsinline class="camera-source" />
             <canvas ref="cameraCanvas" class="camera-canvas" width="640" height="480" />
             <div v-if="!cameraActive" class="camera-placeholder">
-              <el-icon><VideoCamera /></el-icon><span>摄像头尚未开启</span>
+              <el-icon><VideoCamera /></el-icon><span>{{ text.cameraNotStarted }}</span>
             </div>
           </section>
           <section class="workspace-card camera-control">
-            <div class="section-title"><div><h3>浏览器摄像头</h3><p>当前帧经 WebSocket 发送到本地 YOLO 模型，返回真实标注画面。</p></div></div>
+            <div class="section-title"><div><h3>{{ text.cameraTitle }}</h3><p>{{ text.cameraHint }}</p></div></div>
             <el-radio-group v-model="cameraMode" :disabled="cameraActive || cameraConnecting" class="camera-mode">
-              <el-radio-button value="cpu">CPU 节能</el-radio-button>
-              <el-radio-button value="gpu">GPU 加速</el-radio-button>
+              <el-radio-button value="cpu">{{ text.cpuMode }}</el-radio-button>
+              <el-radio-button value="gpu">{{ text.gpuMode }}</el-radio-button>
             </el-radio-group>
             <div class="camera-metrics">
-              <div><span>状态</span><strong>{{ cameraConnecting ? "连接中" : cameraActive ? "运行中" : "未启动" }}</strong></div>
-              <div><span>本地模型</span><strong>{{ selectedModelName }}</strong></div>
-              <div><span>实时帧率</span><strong>{{ cameraFps }} FPS</strong></div>
-              <div><span>推理耗时</span><strong>{{ cameraInferenceTime }} ms</strong></div>
-              <div><span>已处理帧</span><strong>{{ cameraFrameCount }}</strong></div>
-              <div><span>当前目标</span><strong>{{ cameraDetections.length }}</strong></div>
+              <div><span>{{ text.status }}</span><strong>{{ cameraStatusText }}</strong></div>
+              <div><span>{{ text.localModel }}</span><strong>{{ selectedModelName }}</strong></div>
+              <div><span>{{ text.liveFps }}</span><strong>{{ cameraFps }} FPS</strong></div>
+              <div><span>{{ text.inferenceTime }}</span><strong>{{ cameraInferenceTime }} ms</strong></div>
+              <div><span>{{ text.processedFrames }}</span><strong>{{ cameraFrameCount }}</strong></div>
+              <div><span>{{ text.currentObjects }}</span><strong>{{ cameraDetections.length }}</strong></div>
             </div>
             <el-table v-if="cameraDetections.length" :data="cameraDetections" size="small" max-height="180">
-              <el-table-column prop="class_name_cn" label="缺陷" min-width="100" />
-              <el-table-column label="置信度" width="90"><template #default="{ row }">{{ (row.confidence * 100).toFixed(1) }}%</template></el-table-column>
+              <el-table-column :label="text.defect" min-width="100">
+                <template #default="{ row }">{{ displayDefect(row.class_name_cn) }}</template>
+              </el-table-column>
+              <el-table-column :label="text.confidence" width="90"><template #default="{ row }">{{ (row.confidence * 100).toFixed(1) }}%</template></el-table-column>
               <el-table-column label="bbox" min-width="180"><template #default="{ row }">[{{ row.bbox.map((value) => Math.round(value)).join(", ") }}]</template></el-table-column>
             </el-table>
-            <el-button v-if="!cameraActive" type="primary" :icon="VideoCamera" :loading="cameraConnecting" :disabled="!form.modelId" @click="startCamera">开启摄像头</el-button>
-            <el-button v-else type="danger" plain native-type="button" @click.stop.prevent="stopCamera">停止摄像头</el-button>
+            <el-button v-if="!cameraActive" type="primary" :icon="VideoCamera" :loading="cameraConnecting" :disabled="!form.modelId" @click="startCamera">{{ text.startCamera }}</el-button>
+            <el-button v-else type="danger" plain native-type="button" @click.stop.prevent="stopCamera">{{ text.stopCamera }}</el-button>
           </section>
         </div>
       </el-tab-pane>
@@ -389,14 +391,17 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { useSettingsStore } from '@/stores/settings'
 import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getDetectionModelStatus, getVideoStatusApi } from "@/api/detection";
 import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
 import { createCameraWs } from "@/utils/cameraWs";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
+import { displayDefectName, displaySceneName } from "@/utils/displayText";
 
 const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp";
+const settingsStore = useSettingsStore()
 const activeMode = ref("single");
 const pageError = ref("");
 const scenes = ref([]);
@@ -438,8 +443,172 @@ const thumbnailFrameUrls = computed(() =>
 );
 const selectedModelName = computed(() => {
   const model = models.value.find((item) => item.id === form.modelId);
-  return model ? `${model.modelType} · ${model.version}` : "未选择";
+  return model ? `${model.modelType} · ${model.version}` : text.value.notSelected;
 });
+
+const cameraStatusText = computed(() => {
+  if (cameraConnecting.value) return text.value.connecting
+  if (cameraActive.value) return text.value.running
+  return text.value.notStarted
+})
+
+const text = computed(() => settingsStore.isEnglish ? {
+  title: 'Detection Workspace',
+  description: 'Upload steel surface images, choose a model and thresholds, then inspect defect locations, classes and confidence.',
+  resetMode: 'Reset current mode',
+  singleTab: 'Single image',
+  batchTab: 'Batch',
+  videoTab: 'Video',
+  cameraTab: 'Camera',
+  configTitle: 'Detection Config',
+  configHint: 'Supports JPG, PNG, BMP and TIF. Single file up to 10 MB.',
+  modelWarming: 'Warming up detection model...',
+  modelWarmFailed: (error) => `Model warmup failed${error ? `: ${error}` : ''}. It will load on first detection.`,
+  modelDetecting: 'Model loaded, running detection',
+  modelReady: 'Detection model is ready',
+  scene: 'Detection scene',
+  modelVersion: 'Model version',
+  confThreshold: 'Confidence threshold',
+  iouThreshold: 'IoU threshold',
+  dragSingle: 'Drop a steel surface image, or',
+  dragBatch: 'Drop multiple steel surface images, or',
+  clickSelect: 'click to select',
+  uploadTip: 'Only local preview is generated before you start detection.',
+  detecting: 'Detecting',
+  startDetect: 'Start defect detection',
+  batchTitle: 'Batch Image Detection',
+  batchHint: 'Up to 20 images; one failed image will not affect others.',
+  startBatch: 'Start batch detection',
+  dragMore: 'Drop images to add more, or choose an action',
+  addImages: 'Add images',
+  reselect: 'Reselect',
+  orZip: 'Or upload a ZIP package',
+  selectZip: 'Select ZIP',
+  zipHint: 'Up to 20 images; ZIP must be under 50 MB',
+  detectZip: 'Detect ZIP',
+  notSelected: 'Not selected',
+  invalidImage: 'Please choose a JPG, PNG, BMP, TIF or WebP image',
+  imageTooLarge: 'Single image cannot exceed 10 MB',
+  batchLimit: 'Batch mode supports up to 20 images',
+  optionsFailed: 'Failed to load scenes or models',
+  detectSuccess: 'Detection completed',
+  singleFailed: 'Single-image detection failed. Check the model service and try again.',
+  videoTaskTitle: 'Short Video Task',
+  videoTaskHint: 'Sample frames with the selected local model, then show key-frame annotations and the annotated video.',
+  selectVideo: 'Select an MP4 / AVI / MOV / MKV video',
+  frameInterval: 'Frame interval',
+  maxKeyFrames: 'Max key frames',
+  frames: 'frames',
+  createVideoTask: 'Create video detection task',
+  noVideoTask: 'No video task created',
+  noVideoTaskHint: 'Select a video and frame sampling parameters to start detection.',
+  videoTask: 'Video task',
+  localModel: 'Local model',
+  unknown: 'Unknown',
+  duration: 'Duration',
+  resolution: 'Resolution',
+  objects: 'Objects',
+  objectCount: (count) => `${count} objects`,
+  noKeyFrames: 'No key frames to display',
+  cameraNotStarted: 'Camera is not started',
+  cameraTitle: 'Browser Camera',
+  cameraHint: 'Frames are sent to the local YOLO model through WebSocket and annotated frames are returned.',
+  cpuMode: 'CPU power saving',
+  gpuMode: 'GPU acceleration',
+  status: 'Status',
+  liveFps: 'Live FPS',
+  inferenceTime: 'Inference time',
+  processedFrames: 'Processed frames',
+  currentObjects: 'Current objects',
+  defect: 'Defect',
+  confidence: 'Confidence',
+  connecting: 'Connecting',
+  running: 'Running',
+  notStarted: 'Not started',
+  startCamera: 'Start camera',
+  stopCamera: 'Stop camera',
+  completed: 'Completed',
+  failed: 'Failed',
+  processing: 'Processing',
+} : {
+  title: '检测工作台',
+  description: '上传钢铁表面图像，选择模型与阈值，查看缺陷位置、类别和置信度。批量、视频和摄像头模式按同一任务模型组织。',
+  resetMode: '重置当前模式',
+  singleTab: '单图检测',
+  batchTab: '批量检测',
+  videoTab: '视频检测',
+  cameraTab: '摄像头',
+  configTitle: '检测配置',
+  configHint: '支持 JPG、PNG、BMP、TIF，单文件不超过 10 MB',
+  modelWarming: '检测模型预热中，请稍候',
+  modelWarmFailed: (error) => `检测模型预热失败${error ? `：${error}` : ''}，首次检测时将自动加载`,
+  modelDetecting: '模型加载成功，正在进行检测',
+  modelReady: '检测模型加载成功，可以开始检测',
+  scene: '检测场景',
+  modelVersion: '模型版本',
+  confThreshold: '置信度阈值',
+  iouThreshold: 'IoU 阈值',
+  dragSingle: '拖入钢铁表面图像，或',
+  dragBatch: '拖入多张钢铁表面图片，或',
+  clickSelect: '点击选择',
+  uploadTip: '上传后仅生成本地预览；点击开始检测才会提交。',
+  detecting: '正在检测',
+  startDetect: '开始缺陷检测',
+  batchTitle: '批量图片检测',
+  batchHint: '一次最多 20 张；单张失败不会影响其他图片结果。',
+  startBatch: '开始批量检测',
+  dragMore: '拖入图片可新增，或选择操作',
+  addImages: '新增图片',
+  reselect: '重新选择',
+  orZip: '或上传 ZIP 压缩包',
+  selectZip: '选择 ZIP',
+  zipHint: '最多 20 张图片，ZIP 不超过 50 MB',
+  detectZip: '检测 ZIP',
+  notSelected: '未选择',
+  invalidImage: '请选择 JPG、PNG、BMP、TIF 或 WebP 图片',
+  imageTooLarge: '单张图片不能超过 10 MB',
+  batchLimit: '批量模式一次最多选择 20 张图片',
+  optionsFailed: '检测场景或模型列表加载失败',
+  detectSuccess: '检测完成',
+  singleFailed: '单图检测失败，请检查模型服务后重试',
+  videoTaskTitle: '短视频任务',
+  videoTaskHint: '使用当前选择的本地模型抽帧检测，展示关键帧标注图和完整标注视频。',
+  selectVideo: '选择 MP4 / AVI / MOV / MKV 短视频',
+  frameInterval: '抽帧间隔',
+  maxKeyFrames: '最多关键帧',
+  frames: '帧',
+  createVideoTask: '创建视频检测任务',
+  noVideoTask: '尚未创建视频任务',
+  noVideoTaskHint: '选择视频和抽帧参数后开始检测。',
+  videoTask: '视频任务',
+  localModel: '本地模型',
+  unknown: '未知',
+  duration: '时长',
+  resolution: '分辨率',
+  objects: '目标',
+  objectCount: (count) => `${count} 个目标`,
+  noKeyFrames: '没有可展示的关键帧',
+  cameraNotStarted: '摄像头尚未开启',
+  cameraTitle: '浏览器摄像头',
+  cameraHint: '当前帧经 WebSocket 发送到本地 YOLO 模型，返回真实标注画面。',
+  cpuMode: 'CPU 节能',
+  gpuMode: 'GPU 加速',
+  status: '状态',
+  liveFps: '实时帧率',
+  inferenceTime: '推理耗时',
+  processedFrames: '已处理帧',
+  currentObjects: '当前目标',
+  defect: '缺陷',
+  confidence: '置信度',
+  connecting: '连接中',
+  running: '运行中',
+  notStarted: '未启动',
+  startCamera: '开启摄像头',
+  stopCamera: '停止摄像头',
+  completed: '已完成',
+  failed: '失败',
+  processing: '处理中',
+})
 
 const cameraVideo = ref();
 const cameraCanvas = ref();
@@ -457,14 +626,28 @@ function formatPercent(value) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }
 
+function sceneLabel(scene) {
+  return displaySceneName(scene.displayName || scene.name, settingsStore.isEnglish);
+}
+
+function displayDefect(name) {
+  return displayDefectName(name, settingsStore.isEnglish);
+}
+
+function videoStatusText(status) {
+  if (status === "completed") return text.value.completed;
+  if (status === "failed") return text.value.failed;
+  return text.value.processing;
+}
+
 function validateImage(file) {
   const allowed = ["image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"];
   if (!allowed.includes(file.type)) {
-    ElMessage.warning("请选择 JPG、PNG、BMP、TIF 或 WebP 图片");
+    ElMessage.warning(text.value.invalidImage);
     return false;
   }
   if (file.size > 10 * 1024 * 1024) {
-    ElMessage.warning("单张图片不能超过 10 MB");
+    ElMessage.warning(text.value.imageTooLarge);
     return false;
   }
   return true;
@@ -507,7 +690,7 @@ function validateBatchFile(uploadFile) {
 }
 
 function handleBatchExceed() {
-  ElMessage.info("批量模式一次最多选择 20 张图片");
+  ElMessage.info(text.value.batchLimit);
 }
 
 function openBatchFilePicker(replace = false) {
@@ -530,7 +713,7 @@ async function loadOptions() {
     form.sceneId = scenes.value[0]?.id || "";
     await loadModels();
   } catch (error) {
-    pageError.value = getApiErrorMessage(error, "检测场景或模型列表加载失败");
+    pageError.value = getApiErrorMessage(error, text.value.optionsFailed);
   }
 }
 
@@ -560,9 +743,9 @@ async function startSingleDetection() {
   pageError.value = "";
   try {
     singleResult.value = await detectSingleApi(singleFile.value, form);
-    ElMessage.success("检测完成");
+    ElMessage.success(text.value.detectSuccess);
   } catch (error) {
-    pageError.value = getApiErrorMessage(error, "单图检测失败，请检查模型服务后重试");
+    pageError.value = getApiErrorMessage(error, text.value.singleFailed);
   } finally {
     singleLoading.value = false;
   }

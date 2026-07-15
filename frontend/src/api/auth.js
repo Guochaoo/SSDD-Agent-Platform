@@ -26,3 +26,19 @@ export function loginApi(data) {
 export function getUserInfoApi() {
   return request.get('/auth/me')
 }
+
+/**
+ * 更新当前用户资料
+ * @param {Object} data - { username?, email?, phone?, avatar? }
+ */
+export function updateUserProfileApi(data) {
+  return request.put('/auth/me', data)
+}
+
+/**
+ * 修改当前用户密码
+ * @param {Object} data - { old_password, new_password }
+ */
+export function changePasswordApi(data) {
+  return request.post('/auth/change-password', data)
+}

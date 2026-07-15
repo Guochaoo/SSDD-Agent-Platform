@@ -8,9 +8,10 @@ const sidebar = readFileSync(
 )
 
 describe('AppSidebar user menu', () => {
-  it('keeps the settings entry explicit while the settings page is unavailable', () => {
+  it('opens the settings modal from the explicit user menu entry', () => {
     expect(sidebar).toContain('command="settings"')
     expect(sidebar).toContain("if (command === 'settings')")
-    expect(sidebar).toContain("ElMessage.info('设置功能暂未开放')")
+    expect(sidebar).toContain('settingsVisible.value = true')
+    expect(sidebar).toContain('<SettingsModal v-model="settingsVisible" @closed="restoreSettingsFocus" />')
   })
 })

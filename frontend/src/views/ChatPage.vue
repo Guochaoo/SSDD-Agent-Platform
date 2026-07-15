@@ -18,7 +18,7 @@
             <textarea
               v-model="heroInput"
               class="prompt-textarea"
-              placeholder="输入检测问题…"
+              :placeholder="chatText.inputPlaceholder"
               rows="1"
               :disabled="agentStore.isStreaming"
               @keydown.enter.exact.prevent="handleHeroSend"
@@ -36,7 +36,7 @@
             <div class="card-footer">
               <div class="footer-left">
                 <ModelSelect v-model="model" />
-                <button class="footer-btn" title="上传图片" @click="triggerFileInput">
+                <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
                   <Image :size="16" />
                 </button>
                 <input
@@ -51,7 +51,7 @@
               <button
                 class="send-btn"
                 :disabled="!canSend"
-                :title="agentStore.isStreaming ? '停止' : '发送'"
+                :title="agentStore.isStreaming ? chatText.stop : chatText.send"
                 @click="handleHeroSend"
               >
                 <el-icon :size="16">
@@ -64,7 +64,7 @@
 
           <div v-if="isDragover" class="drag-overlay">
             <el-icon :size="32"><UploadFilled /></el-icon>
-            <span>释放以上传图片</span>
+            <span>{{ chatText.dropToUpload }}</span>
           </div>
         </div>
 
@@ -81,6 +81,7 @@
 
         <QuickDetectBar
           :disabled="agentStore.isStreaming || isQuickDetecting"
+          :labels="chatText.quickDetect"
           @single="handleQuickDetect('single')"
           @batch="handleQuickDetect('batch')"
           @zip="handleQuickDetect('zip')"
@@ -102,6 +103,7 @@
         <QuickDetectBar
           class="chat-quick-detect"
           :disabled="agentStore.isStreaming || isQuickDetecting"
+          :labels="chatText.quickDetect"
           @single="handleQuickDetect('single')"
           @batch="handleQuickDetect('batch')"
           @zip="handleQuickDetect('zip')"
@@ -118,7 +120,7 @@
           <textarea
             v-model="chatInput"
             class="prompt-textarea"
-            placeholder="输入检测问题…"
+            :placeholder="chatText.inputPlaceholder"
             rows="1"
             :disabled="agentStore.isStreaming"
             @keydown.enter.exact.prevent="handleChatSend"
@@ -129,7 +131,7 @@
           <div class="card-footer">
             <div class="footer-left">
               <ModelSelect v-model="model" />
-              <button class="footer-btn" title="上传图片" @click="triggerFileInput">
+              <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
                 <Image :size="16" />
               </button>
               <input
@@ -155,8 +157,8 @@
         </div>
 
         <div v-if="isDragover" class="drag-overlay">
-          <el-icon :size="32"><UploadFilled /></el-icon>
-          <span>释放以上传图片</span>
+            <el-icon :size="32"><UploadFilled /></el-icon>
+          <span>{{ chatText.dropToUpload }}</span>
         </div>
       </div>
     </template>
@@ -169,6 +171,7 @@ import { ElMessage } from 'element-plus'
 import { CloseBold, Close, UploadFilled } from '@element-plus/icons-vue'
 import { Image, ArrowUpStroke } from '@boxicons/vue'
 import { useAgentStore } from '@/stores/agent'
+import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { DEFAULT_LLM_MODEL_VALUE, useLlmStore } from '@/stores/llm'
 import {
@@ -183,6 +186,7 @@ import ModelSelect from '@/components/agent/ModelSelect.vue'
 import QuickDetectBar from '@/components/agent/QuickDetectBar.vue'
 
 const agentStore = useAgentStore()
+const settingsStore = useSettingsStore()
 const userStore = useUserStore()
 
 const heroInput = ref('')
@@ -197,11 +201,82 @@ let dragCounter = 0
 
 const greeting = computed(() => {
   const hour = new Date().getHours()
+  const name = userStore.username
+  if (settingsStore.isEnglish) {
+    let t = 'Good evening'
+    if (hour < 12) t = 'Good morning'
+    else if (hour < 18) t = 'Good afternoon'
+    return name ? `${t}, ${name}` : t
+  }
+
   let t = '晚上好'
   if (hour < 12) t = '早上好'
   else if (hour < 18) t = '下午好'
-  const name = userStore.username
   return name ? `${t}，${name}` : t
+})
+
+const chatText = computed(() => settingsStore.isEnglish ? {
+  inputPlaceholder: 'Enter a detection question...',
+  uploadImage: 'Upload image',
+  send: 'Send',
+  stop: 'Stop',
+  dropToUpload: 'Release to upload image',
+  onlyImages: 'Only JPG and PNG images are supported',
+  imageTooLarge: 'Image size cannot exceed 10MB',
+  zipUnavailable: 'ZIP detection is not available yet. Please use batch image detection first.',
+  noScene: 'No detection scene is available',
+  noModel: 'No detection model is available',
+  reconnecting: (count) => `Connection lost. Reconnecting (${count})...`,
+  agentUnavailable: 'Agent service is temporarily unavailable',
+  agentFailed: 'Agent request failed',
+  singleDetecting: 'Running single-image detection...',
+  batchDetecting: 'Running batch detection...',
+  singleDone: (count) => `Single-image detection completed. Found ${count} possible defects.`,
+  batchDone: (images, count) => `Batch detection completed. Processed ${images} images and found ${count} possible defects.`,
+  singleFailed: 'Single-image detection failed. Please try again later.',
+  batchFailed: 'Batch detection failed. Please try again later.',
+  analyzing: 'Analyzing the steel surface image...',
+  detectFailed: 'Detection failed. Check the backend service, model and authentication, then try again.',
+  noDefect: 'No obvious defect detected. Review the threshold with the production context before rechecking.',
+  unknownDefect: 'Unknown defect',
+  quickDetect: { single: 'Single image', batch: 'Batch images', zip: 'ZIP' },
+  chips: [
+    'Analyze defects in this steel surface',
+    'What is the detection confidence?',
+    'What type of surface defect is this?',
+    'How to distinguish scratches and cracks?',
+  ],
+} : {
+  inputPlaceholder: '输入检测问题…',
+  uploadImage: '上传图片',
+  send: '发送',
+  stop: '停止',
+  dropToUpload: '释放以上传图片',
+  onlyImages: '仅支持 JPG 和 PNG 图片',
+  imageTooLarge: '图片大小不能超过 10MB',
+  zipUnavailable: '当前后端暂未开放 ZIP 检测接口，请先使用批量图片检测',
+  noScene: '未找到可用检测场景',
+  noModel: '未找到可用检测模型',
+  reconnecting: (count) => `连接中断，正在第 ${count} 次重连...`,
+  agentUnavailable: '智能体服务暂不可用',
+  agentFailed: '智能体请求失败',
+  singleDetecting: '正在进行单图检测，请稍候……',
+  batchDetecting: '正在进行批量检测，请稍候……',
+  singleDone: (count) => `单图检测完成，共发现 ${count} 个疑似缺陷。`,
+  batchDone: (images, count) => `批量检测完成，共处理 ${images} 张图片，发现 ${count} 个疑似缺陷。`,
+  singleFailed: '单图检测失败，请稍后重试。',
+  batchFailed: '批量检测失败，请稍后重试。',
+  analyzing: '正在分析钢铁表面图像……',
+  detectFailed: '检测失败，请检查后端服务、模型和鉴权状态后重试。',
+  noDefect: '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。',
+  unknownDefect: '未知缺陷',
+  quickDetect: { single: '单图检测', batch: '批量图片检测', zip: 'ZIP 检测' },
+  chips: [
+    '分析这张钢铁表面的缺陷',
+    '检测结果置信度是多少',
+    '这是什么类型的表面缺陷',
+    '如何区分划痕和裂纹',
+  ],
 })
 
 const canSend = computed(() => {
@@ -212,12 +287,7 @@ const canSendChat = computed(() => {
   return agentStore.isStreaming || chatInput.value.trim() || agentStore.selectedImage
 })
 
-const quickChips = [
-  { label: '分析这张钢铁表面的缺陷' },
-  { label: '检测结果置信度是多少' },
-  { label: '这是什么类型的表面缺陷' },
-  { label: '如何区分划痕和裂纹' },
-]
+const quickChips = computed(() => chatText.value.chips.map((label) => ({ label })))
 
 const quickDetectOptions = {
   confThreshold: 0.25,
@@ -227,13 +297,13 @@ const quickDetectOptions = {
 function summarizeDetectionResult(result) {
   const objects = result?.objects || []
   if (!objects.length) {
-    return '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。'
+    return chatText.value.noDefect
   }
 
   const statMap = new Map()
   let maxConfidence = 0
   for (const item of objects) {
-    const key = item.classNameCn || item.className || '未知缺陷'
+    const key = item.classNameCn || item.className || chatText.value.unknownDefect
     statMap.set(key, (statMap.get(key) || 0) + 1)
     maxConfidence = Math.max(maxConfidence, Number(item.confidence || 0))
   }
@@ -242,6 +312,9 @@ function summarizeDetectionResult(result) {
     .map(([name, count]) => `${name} ${count} 处`)
     .join('，')
 
+  if (settingsStore.isEnglish) {
+    return `Detection completed. Found ${objects.length} possible defects (${summary}); highest confidence ${(maxConfidence * 100).toFixed(1)}%.`
+  }
   return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。`
 }
 
@@ -267,8 +340,8 @@ function onFileChange(e) {
 
 function handleSelectedFile(file) {
   const allowed = ['image/jpeg', 'image/png']
-  if (!allowed.includes(file.type)) { ElMessage.error('仅支持 JPG 和 PNG 图片'); return }
-  if (file.size > 10 * 1024 * 1024) { ElMessage.error('图片大小不能超过 10MB'); return }
+  if (!allowed.includes(file.type)) { ElMessage.error(chatText.value.onlyImages); return }
+  if (file.size > 10 * 1024 * 1024) { ElMessage.error(chatText.value.imageTooLarge); return }
   agentStore.setSelectedImage(file)
 }
 
@@ -325,7 +398,7 @@ async function handleQuickDetect(type) {
   if (agentStore.isStreaming || isQuickDetecting.value) return
 
   if (type === 'zip') {
-    ElMessage.warning('当前后端暂未开放 ZIP 检测接口，请先使用批量图片检测')
+    ElMessage.warning(chatText.value.zipUnavailable)
     return
   }
 
@@ -351,11 +424,11 @@ async function handleQuickDetect(type) {
 async function getQuickDetectOptions() {
   const scenes = await getScenesApi()
   const scene = scenes[0]
-  if (!scene) throw new Error('未找到可用检测场景')
+  if (!scene) throw new Error(chatText.value.noScene)
 
   const models = await getModelsApi(scene.id)
   const model = models.find((item) => item.isDefault) || models[0]
-  if (!model?.id) throw new Error('未找到可用检测模型')
+  if (!model?.id) throw new Error(chatText.value.noModel)
 
   return { ...quickDetectOptions, modelId: model.id }
 }
@@ -364,26 +437,26 @@ async function runSingleDetect(file, options) {
   const previewUrl = URL.createObjectURL(file)
   agentStore.addMessage({
     role: 'user',
-    content: `[快捷单图检测] ${file.name}`,
+    content: settingsStore.isEnglish ? `[Quick single detection] ${file.name}` : `[快捷单图检测] ${file.name}`,
     imagePreviewUrl: previewUrl,
   })
   agentStore.addMessage({
     role: 'assistant',
-    content: '正在进行单图检测，请稍候……',
+    content: chatText.value.singleDetecting,
   })
   agentStore.setToolCall({ name: 'detect_single', status: 'running', input: { fileName: file.name } })
 
   const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
   try {
     const result = await detectSingleApi(file, options)
-    assistantMessage.content = `单图检测完成，共发现 ${result.totalObjects || 0} 个疑似缺陷。`
+    assistantMessage.content = chatText.value.singleDone(result.totalObjects || 0)
     assistantMessage.detectionResult = result
     assistantMessage.detectionPreviewUrl = previewUrl
     agentStore.setToolCall({ name: 'detect_single', status: 'success', result })
   } catch (error) {
-    assistantMessage.content = '单图检测失败，请稍后重试。'
-    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || '单图检测失败' })
-    ElMessage.error(error?.response?.data?.detail || '单图检测失败')
+    assistantMessage.content = chatText.value.singleFailed
+    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || chatText.value.singleFailed })
+    ElMessage.error(error?.response?.data?.detail || chatText.value.singleFailed)
   } finally {
     saveCurrentSession()
   }
@@ -392,11 +465,11 @@ async function runSingleDetect(file, options) {
 async function runBatchDetect(files, options) {
   agentStore.addMessage({
     role: 'user',
-    content: `[快捷批量检测] ${files.length} 张图片`,
+    content: settingsStore.isEnglish ? `[Quick batch detection] ${files.length} images` : `[快捷批量检测] ${files.length} 张图片`,
   })
   agentStore.addMessage({
     role: 'assistant',
-    content: '正在进行批量检测，请稍候……',
+    content: chatText.value.batchDetecting,
   })
   agentStore.setToolCall({ name: 'detect_batch', status: 'running', input: { count: files.length } })
 
@@ -404,13 +477,13 @@ async function runBatchDetect(files, options) {
   try {
     const result = await detectBatchApi(files, options)
     const totalObjects = (result.items || []).reduce((sum, item) => sum + Number(item.totalObjects || 0), 0)
-    assistantMessage.content = `批量检测完成，共处理 ${result.items?.length || files.length} 张图片，发现 ${totalObjects} 个疑似缺陷。`
+    assistantMessage.content = chatText.value.batchDone(result.items?.length || files.length, totalObjects)
     assistantMessage.detectionResult = result
     agentStore.setToolCall({ name: 'detect_batch', status: 'success', result })
   } catch (error) {
-    assistantMessage.content = '批量检测失败，请稍后重试。'
-    agentStore.setToolCall({ name: 'detect_batch', status: 'error', error: error?.message || '批量检测失败' })
-    ElMessage.error(error?.response?.data?.detail || '批量检测失败')
+    assistantMessage.content = chatText.value.batchFailed
+    agentStore.setToolCall({ name: 'detect_batch', status: 'error', error: error?.message || chatText.value.batchFailed })
+    ElMessage.error(error?.response?.data?.detail || chatText.value.batchFailed)
   } finally {
     saveCurrentSession()
   }
@@ -448,7 +521,7 @@ function handleAgentEvent(event) {
     saveCurrentSession()
   }
   if (event.type === 'error') {
-    agentStore.errorMessage = event.message || '智能体请求失败'
+    agentStore.errorMessage = event.message || chatText.value.agentFailed
     agentStore.isStreaming = false
     agentStore.setConnectionStatus('error')
     agentStore.markLastAssistantError(agentStore.errorMessage)
@@ -513,7 +586,7 @@ function doSend(text) {
     onRetry: ({ retryCount }) => {
       agentStore.reconnectCount = retryCount
       agentStore.setConnectionStatus('reconnecting')
-      ElMessage.warning(`连接中断，正在第 ${retryCount} 次重连...`)
+      ElMessage.warning(chatText.value.reconnecting(retryCount))
     },
     onDone: () => {
       agentStore.isStreaming = false
@@ -526,8 +599,8 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('error')
       agentStore.abortController = null
-      agentStore.markLastAssistantError(error?.message || '智能体服务暂不可用')
-      ElMessage.error('智能体服务暂不可用')
+      agentStore.markLastAssistantError(error?.message || chatText.value.agentUnavailable)
+      ElMessage.error(chatText.value.agentUnavailable)
     },
   })
 }
@@ -571,7 +644,7 @@ function handleSend(text) {
 async function runSingleDetectInChat(file, previewUrl) {
   agentStore.addMessage({
     role: 'assistant',
-    content: '正在分析钢铁表面图像……',
+    content: chatText.value.analyzing,
   })
   agentStore.setToolCall({ name: 'detect_single', status: 'running', input: { fileName: file.name } })
 
@@ -584,9 +657,9 @@ async function runSingleDetectInChat(file, previewUrl) {
     assistantMessage.detectionPreviewUrl = previewUrl
     agentStore.setToolCall({ name: 'detect_single', status: 'success', result })
   } catch (error) {
-    assistantMessage.content = '检测失败，请检查后端服务、模型和鉴权状态后重试。'
-    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || '检测失败' })
-    ElMessage.error(error?.response?.data?.detail || '检测失败')
+    assistantMessage.content = chatText.value.detectFailed
+    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || chatText.value.detectFailed })
+    ElMessage.error(error?.response?.data?.detail || chatText.value.detectFailed)
   } finally {
     agentStore.clearImage()
     saveCurrentSession()
@@ -649,7 +722,7 @@ checkAgentToolContracts()
 .hero-greeting {
   font-size: 34px;
   font-weight: 700;
-  color: #171717;
+  color: var(--app-text);
   letter-spacing: -0.5px;
   margin: 0;
   text-align: center;
@@ -664,8 +737,8 @@ checkAgentToolContracts()
 
 /* ── Unified prompt card ── */
 .prompt-card {
-  background: #fff;
-  border: 1px solid #e4e4e7;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
   border-radius: 16px;
   padding: 8px 10px 4px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.04);
@@ -679,7 +752,7 @@ checkAgentToolContracts()
   &.dragover {
     border-color: #8F8AB0;
     border-style: dashed;
-    background: #faf8fd;
+    background: var(--app-subtle);
   }
 }
 
@@ -690,7 +763,7 @@ checkAgentToolContracts()
   resize: none;
   font-size: 15px;
   line-height: 1.55;
-  color: #171717;
+  color: var(--app-text);
   background: transparent;
   padding: 6px 4px;
   font-family: inherit;
@@ -708,7 +781,7 @@ checkAgentToolContracts()
   justify-content: space-between;
   gap: 4px;
   padding-top: 4px;
-  border-top: 1px solid #f2f2f4;
+  border-top: 1px solid var(--app-border);
   margin-top: 4px;
 }
 
@@ -731,7 +804,7 @@ checkAgentToolContracts()
   cursor: pointer;
   transition: all 0.15s;
 
-  &:hover { background: #f1f1f0; color: #171717; }
+  &:hover { background: var(--app-hover); color: var(--app-text); }
 }
 
 .send-btn {
@@ -751,6 +824,15 @@ checkAgentToolContracts()
   &:disabled { opacity: 0.3; cursor: not-allowed; }
 }
 
+:root[data-theme='dark'] .send-btn {
+  background: #3f3f46;
+  color: #f4f4f5;
+
+  &:hover:not(:disabled) {
+    background: #52525b;
+  }
+}
+
 /* ── Inline image preview ── */
 .inline-preview {
   position: relative;
@@ -761,7 +843,7 @@ checkAgentToolContracts()
     width: 64px; height: 48px;
     border-radius: 8px;
     object-fit: cover;
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--app-border);
   }
 
   .remove-preview {
@@ -787,7 +869,7 @@ checkAgentToolContracts()
   position: absolute;
   inset: 0;
   border-radius: 16px;
-  background: rgba(250, 248, 253, 0.92);
+  background: color-mix(in srgb, var(--app-surface) 92%, transparent);
   border: 2px dashed #8F8AB0;
   display: flex;
   flex-direction: column;
@@ -820,10 +902,10 @@ checkAgentToolContracts()
   display: inline-flex;
   align-items: center;
   padding: 6px 14px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--app-border);
   border-radius: 20px;
-  background: #fff;
-  color: #525252;
+  background: var(--app-surface);
+  color: var(--app-text);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
@@ -832,7 +914,7 @@ checkAgentToolContracts()
   &:hover {
     border-color: #8F8AB0;
     color: #8F8AB0;
-    background: #f8f7fb;
+    background: var(--app-hover);
   }
 }
 
@@ -841,7 +923,7 @@ checkAgentToolContracts()
   position: sticky;
   bottom: 0;
   padding: 12px 16px 16px;
-  background: linear-gradient(to top, #fff 80%, transparent);
+  background: linear-gradient(to top, var(--app-bg) 80%, transparent);
   z-index: 10;
 
   .prompt-card {

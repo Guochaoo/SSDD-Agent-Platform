@@ -2,12 +2,12 @@
   <div class="training-page">
     <div class="page-header">
       <div>
-        <h2>模型训练与监控</h2>
-        <p>创建 YOLOv11 训练任务，实时查看训练进度并完成模型评估与导出。</p>
+        <h2>{{ text.title }}</h2>
+        <p>{{ text.description }}</p>
       </div>
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
-        新建训练任务
+        {{ text.newTask }}
       </el-button>
     </div>
 
@@ -25,12 +25,12 @@
       <template #header>
         <div class="card-header">
           <div>
-            <span class="card-title">训练任务列表</span>
-            <span class="card-caption">共 {{ taskList.length }} 个任务</span>
+            <span class="card-title">{{ text.taskList }}</span>
+            <span class="card-caption">{{ text.taskCount(taskList.length) }}</span>
           </div>
           <el-button text :loading="loadingTasks" @click="fetchTasks">
             <el-icon><Refresh /></el-icon>
-            刷新
+            {{ text.refresh }}
           </el-button>
         </div>
       </template>
@@ -40,14 +40,14 @@
         :data="taskList"
         row-key="id"
         stripe
-        empty-text="暂无训练任务"
+        :empty-text="text.emptyTasks"
         highlight-current-row
         @current-change="handleCurrentTaskChange"
       >
-        <el-table-column prop="task_uuid" label="任务 ID" min-width="108" />
-        <el-table-column prop="model_name" label="模型" min-width="106" />
-        <el-table-column prop="device" label="设备" min-width="82" />
-        <el-table-column label="进度" min-width="188">
+        <el-table-column prop="task_uuid" :label="text.taskId" min-width="108" />
+        <el-table-column prop="model_name" :label="text.model" min-width="106" />
+        <el-table-column prop="device" :label="text.device" min-width="82" />
+        <el-table-column :label="text.progress" min-width="188">
           <template #default="{ row }">
             <el-progress
               :percentage="normalizeProgress(row.progress)"
@@ -61,22 +61,22 @@
             {{ row.current_epoch || 0 }}/{{ row.epochs || 0 }}
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="96">
+        <el-table-column :label="text.status" min-width="96">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">
               {{ statusText(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" min-width="168">
+        <el-table-column :label="text.createdAt" min-width="168">
           <template #default="{ row }">
             {{ formatDateTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="148" fixed="right">
+        <el-table-column :label="text.actions" min-width="148" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" text @click.stop="selectTask(row)">
-              监控
+              {{ text.monitor }}
             </el-button>
             <el-button
               v-if="row.status === 'running'"
@@ -85,7 +85,7 @@
               text
               @click.stop="stopTask(row.id)"
             >
-              停止
+              {{ text.stop }}
             </el-button>
           </template>
         </el-table-column>
@@ -96,14 +96,14 @@
       <template #header>
         <div class="card-header monitor-header">
           <div>
-            <span class="card-title">训练监控 - 任务 {{ selectedTask.task_uuid }}</span>
+            <span class="card-title">{{ text.trainingMonitor }} - {{ text.task }} {{ selectedTask.task_uuid }}</span>
             <el-tag :type="statusType(selectedTask.status)" size="small">
               {{ statusText(selectedTask.status) }}
             </el-tag>
           </div>
           <div class="monitor-info">
-            <span>模型：{{ selectedTask.model_name }}</span>
-            <span>设备：{{ selectedTask.device }}</span>
+            <span>{{ text.model }}: {{ selectedTask.model_name }}</span>
+            <span>{{ text.device }}: {{ selectedTask.device }}</span>
             <span>Epoch：{{ selectedTask.current_epoch || 0 }}/{{ selectedTask.epochs || 0 }}</span>
           </div>
         </div>
@@ -158,24 +158,24 @@
       <template #header>
         <div class="card-header">
           <div>
-            <span class="card-title">模型操作</span>
-            <span class="card-caption">仅已完成的训练任务可评估、导出和验证</span>
+            <span class="card-title">{{ text.modelActions }}</span>
+            <span class="card-caption">{{ text.modelActionsHelp }}</span>
           </div>
         </div>
       </template>
 
       <el-space wrap>
         <el-button type="primary" :loading="validating" @click="validateModel">
-          评估模型
+          {{ text.evaluate }}
         </el-button>
         <el-button type="success" @click="showExportDialog = true">
-          导出模型
+          {{ text.exportModel }}
         </el-button>
         <el-button :loading="downloading" @click="downloadModel">
-          下载权重
+          {{ text.downloadWeights }}
         </el-button>
         <el-button type="warning" @click="openPredictDialog">
-          测试验证
+          {{ text.testValidate }}
         </el-button>
       </el-space>
     </el-card>
@@ -470,6 +470,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
 import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -491,6 +492,81 @@ import { getApiErrorMessage } from '@/utils/apiError'
 
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
+const settingsStore = useSettingsStore()
+
+const text = computed(() => settingsStore.isEnglish ? {
+  title: 'Model Training & Monitoring',
+  description: 'Create YOLOv11 training tasks, monitor progress, then evaluate and export models.',
+  newTask: 'New training task',
+  taskList: 'Training tasks',
+  taskCount: (count) => `${count} tasks`,
+  refresh: 'Refresh',
+  emptyTasks: 'No training tasks',
+  taskId: 'Task ID',
+  model: 'Model',
+  device: 'Device',
+  progress: 'Progress',
+  status: 'Status',
+  createdAt: 'Created at',
+  actions: 'Actions',
+  monitor: 'Monitor',
+  stop: 'Stop',
+  task: 'Task',
+  trainingMonitor: 'Training Monitor',
+  modelActions: 'Model Actions',
+  modelActionsHelp: 'Only completed training tasks can be evaluated, exported and validated.',
+  evaluate: 'Evaluate model',
+  exportModel: 'Export model',
+  downloadWeights: 'Download weights',
+  testValidate: 'Test validation',
+  pending: 'Pending',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  excellent: 'Excellent',
+  good: 'Good',
+  improve: 'Needs work',
+  dateLocale: 'en-US',
+  fetchTasksFailed: 'Failed to load training tasks',
+  fetchDatasetsFailed: 'Failed to load training datasets',
+} : {
+  title: '模型训练与监控',
+  description: '创建 YOLOv11 训练任务，实时查看训练进度并完成模型评估与导出。',
+  newTask: '新建训练任务',
+  taskList: '训练任务列表',
+  taskCount: (count) => `共 ${count} 个任务`,
+  refresh: '刷新',
+  emptyTasks: '暂无训练任务',
+  taskId: '任务 ID',
+  model: '模型',
+  device: '设备',
+  progress: '进度',
+  status: '状态',
+  createdAt: '创建时间',
+  actions: '操作',
+  monitor: '监控',
+  stop: '停止',
+  task: '任务',
+  trainingMonitor: '训练监控',
+  modelActions: '模型操作',
+  modelActionsHelp: '仅已完成的训练任务可评估、导出和验证',
+  evaluate: '评估模型',
+  exportModel: '导出模型',
+  downloadWeights: '下载权重',
+  testValidate: '测试验证',
+  pending: '等待中',
+  running: '训练中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  excellent: '优秀',
+  good: '良好',
+  improve: '需改进',
+  dateLocale: 'zh-CN',
+  fetchTasksFailed: '训练任务列表加载失败',
+  fetchDatasetsFailed: '训练数据集加载失败',
+})
 
 const taskList = ref([])
 const loadingTasks = ref(false)
@@ -617,11 +693,11 @@ function statusType(status) {
 
 function statusText(status) {
   return {
-    pending: '等待中',
-    running: '训练中',
-    completed: '已完成',
-    failed: '失败',
-    cancelled: '已取消',
+    pending: text.value.pending,
+    running: text.value.running,
+    completed: text.value.completed,
+    failed: text.value.failed,
+    cancelled: text.value.cancelled,
   }[status] || status || '-'
 }
 
@@ -649,7 +725,7 @@ function formatDateTime(value) {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('zh-CN', { hour12: false })
+  return date.toLocaleString(text.value.dateLocale, { hour12: false })
 }
 
 function formatBoundingBox(bbox) {
@@ -658,9 +734,9 @@ function formatBoundingBox(bbox) {
 }
 
 function apLevel(ap50) {
-  if (ap50 >= 0.7) return { type: 'success', text: '优秀' }
-  if (ap50 >= 0.5) return { type: 'warning', text: '良好' }
-  return { type: 'danger', text: '需改进' }
+  if (ap50 >= 0.7) return { type: 'success', text: text.value.excellent }
+  if (ap50 >= 0.5) return { type: 'warning', text: text.value.good }
+  return { type: 'danger', text: text.value.improve }
 }
 
 function tableRowClassName({ row }) {
@@ -686,7 +762,7 @@ async function fetchTasks() {
     taskList.value = response.items || []
   } catch (error) {
     console.error('获取训练任务列表失败', error)
-    pageError.value = getApiErrorMessage(error, '训练任务列表加载失败')
+    pageError.value = getApiErrorMessage(error, text.value.fetchTasksFailed)
   } finally {
     loadingTasks.value = false
   }
@@ -705,7 +781,7 @@ async function fetchDatasets() {
     }
   } catch (error) {
     console.error('获取训练数据集失败', error)
-    pageError.value = getApiErrorMessage(error, '训练数据集加载失败')
+    pageError.value = getApiErrorMessage(error, text.value.fetchDatasetsFailed)
   }
 }
 

@@ -5,7 +5,7 @@
         <strong>{{ title }}</strong>
         <p>{{ subtitle }}</p>
       </div>
-      <el-tag type="success" effect="light">检测完成</el-tag>
+      <el-tag type="success" effect="light">{{ text.done }}</el-tag>
     </div>
 
     <el-image
@@ -18,33 +18,34 @@
 
     <div class="summary">
       <div>
-        <span>图片数量</span>
+        <span>{{ text.imageCount }}</span>
         <strong>{{ imageCount }}</strong>
       </div>
       <div>
-        <span>缺陷数量</span>
+        <span>{{ text.defectCount }}</span>
         <strong>{{ objectCount }}</strong>
       </div>
       <div>
-        <span>最高置信度</span>
+        <span>{{ text.maxConfidence }}</span>
         <strong>{{ maxConfidence }}</strong>
       </div>
     </div>
 
     <el-table v-if="tableRows.length" :data="tableRows" size="small" max-height="240">
-      <el-table-column prop="fileName" label="图片" min-width="120" />
-      <el-table-column prop="className" label="缺陷类型" min-width="110" />
-      <el-table-column label="置信度" width="100">
+      <el-table-column prop="fileName" :label="text.image" min-width="120" />
+      <el-table-column prop="className" :label="text.defectType" min-width="110" />
+      <el-table-column :label="text.confidence" width="100">
         <template #default="{ row }">{{ formatPercent(row.confidence) }}</template>
       </el-table-column>
     </el-table>
 
-    <el-empty v-else :image-size="64" description="未检测到明显缺陷" />
+    <el-empty v-else :image-size="64" :description="text.noDefect" />
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
 
 const props = defineProps({
   result: {
@@ -57,13 +58,42 @@ const props = defineProps({
   },
 })
 
+const settingsStore = useSettingsStore()
+const text = computed(() => settingsStore.isEnglish ? {
+  done: 'Completed',
+  imageCount: 'Images',
+  defectCount: 'Defects',
+  maxConfidence: 'Max confidence',
+  image: 'Image',
+  defectType: 'Defect type',
+  confidence: 'Confidence',
+  noDefect: 'No obvious defect detected',
+  batchTitle: 'Batch Detection Result',
+  singleTitle: 'Single-image Detection Result',
+  task: 'Task',
+  unknownDefect: 'Unknown defect',
+} : {
+  done: '检测完成',
+  imageCount: '图片数量',
+  defectCount: '缺陷数量',
+  maxConfidence: '最高置信度',
+  image: '图片',
+  defectType: '缺陷类型',
+  confidence: '置信度',
+  noDefect: '未检测到明显缺陷',
+  batchTitle: '批量检测结果',
+  singleTitle: '单图检测结果',
+  task: '任务',
+  unknownDefect: '未知缺陷',
+})
+
 const isBatch = computed(() => Array.isArray(props.result.items))
 
-const title = computed(() => (isBatch.value ? '批量检测结果' : '单图检测结果'))
+const title = computed(() => (isBatch.value ? text.value.batchTitle : text.value.singleTitle))
 
 const subtitle = computed(() => {
   if (isBatch.value) return `任务 ${props.result.taskId || '-'}`
-  return props.result.fileName || `任务 ${props.result.taskId || '-'}`
+  return props.result.fileName || `${text.value.task} ${props.result.taskId || '-'}`
 })
 
 const displayImage = computed(() => {
@@ -91,13 +121,13 @@ const tableRows = computed(() => {
       if (!item.objects?.length) {
         return [{
           fileName: item.fileName || '-',
-          className: item.error || '未检测到明显缺陷',
+          className: item.error || text.value.noDefect,
           confidence: 0,
         }]
       }
       return item.objects.map((object) => ({
         fileName: item.fileName || '-',
-        className: object.classNameCn || object.className || '未知缺陷',
+        className: object.classNameCn || object.className || text.value.unknownDefect,
         confidence: object.confidence,
       }))
     })
@@ -105,7 +135,7 @@ const tableRows = computed(() => {
 
   return (props.result.objects || []).map((object) => ({
     fileName: props.result.fileName || '-',
-    className: object.classNameCn || object.className || '未知缺陷',
+    className: object.classNameCn || object.className || text.value.unknownDefect,
     confidence: object.confidence,
   }))
 })
@@ -124,10 +154,10 @@ function formatPercent(value) {
 .detection-card {
   margin-top: 12px;
   padding: 16px;
-  border: 1px solid #e7ebf1;
+  border: 1px solid var(--app-border);
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05);
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow);
 }
 
 .card-header {
@@ -137,7 +167,7 @@ function formatPercent(value) {
   margin-bottom: 12px;
 
   strong {
-    color: #171717;
+    color: var(--app-text);
     font-size: 15px;
   }
 
@@ -152,9 +182,9 @@ function formatPercent(value) {
   width: 100%;
   max-height: 320px;
   margin-bottom: 12px;
-  border: 1px solid #edf0f5;
+  border: 1px solid var(--app-border);
   border-radius: 10px;
-  background: #f7f9fc;
+  background: var(--app-subtle);
 }
 
 .summary {
@@ -166,7 +196,7 @@ function formatPercent(value) {
   div {
     padding: 10px 12px;
     border-radius: 9px;
-    background: #f7f9fc;
+    background: var(--app-subtle);
   }
 
   span,
@@ -181,7 +211,7 @@ function formatPercent(value) {
 
   strong {
     margin-top: 3px;
-    color: #172033;
+    color: var(--app-text);
     font-size: 16px;
   }
 }

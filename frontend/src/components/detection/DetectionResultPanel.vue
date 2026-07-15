@@ -2,15 +2,15 @@
   <section class="result-panel">
     <div class="result-panel__heading">
       <div>
-        <h3>检测结果</h3>
-        <p>{{ result ? `任务 ${result.taskId}` : "上传钢铁表面图片后查看标注结果" }}</p>
+        <h3>{{ text.title }}</h3>
+        <p>{{ result ? `${text.task} ${result.taskId}` : text.hint }}</p>
       </div>
-      <el-tag v-if="result" type="success" effect="light">检测完成</el-tag>
+      <el-tag v-if="result" type="success" effect="light">{{ text.done }}</el-tag>
     </div>
 
     <div v-loading="loading" class="result-panel__canvas">
       <div v-if="displayImage" class="image-stage" :style="stageStyle">
-        <img :src="displayImage" alt="钢铁表面检测预览" />
+        <img :src="displayImage" :alt="text.previewAlt" />
         <template v-if="!result?.annotatedImageUrl">
           <div
             v-for="item in result?.objects || []"
@@ -22,31 +22,31 @@
           </div>
         </template>
       </div>
-      <el-empty v-else :image-size="90" description="等待检测图片" />
+      <el-empty v-else :image-size="90" :description="text.empty" />
     </div>
 
     <template v-if="result">
       <div class="result-summary">
-        <div><span>缺陷数量</span><strong>{{ result.totalObjects }}</strong></div>
-        <div><span>推理耗时</span><strong>{{ result.inferenceTimeMs.toFixed(0) }} ms</strong></div>
-        <div><span>最高置信度</span><strong>{{ maxConfidence }}</strong></div>
+        <div><span>{{ text.defectCount }}</span><strong>{{ result.totalObjects }}</strong></div>
+        <div><span>{{ text.inferenceTime }}</span><strong>{{ result.inferenceTimeMs.toFixed(0) }} ms</strong></div>
+        <div><span>{{ text.maxConfidence }}</span><strong>{{ maxConfidence }}</strong></div>
       </div>
 
       <el-alert
         v-if="result.objects.length === 0"
-        title="未检测到明显缺陷"
+        :title="text.noDefect"
         type="success"
         :closable="false"
         show-icon
       />
       <el-table v-else :data="result.objects" size="small" max-height="255">
-        <el-table-column label="缺陷" min-width="124">
+        <el-table-column :label="text.defect" min-width="124">
           <template #default="{ row }">
             <strong>{{ row.classNameCn }}</strong>
             <small class="class-name">{{ row.className }}</small>
           </template>
         </el-table-column>
-        <el-table-column label="置信度" width="112">
+        <el-table-column :label="text.confidence" width="112">
           <template #default="{ row }">
             <el-progress
               :percentage="Math.round(row.confidence * 100)"
@@ -56,7 +56,7 @@
             <span class="confidence">{{ formatPercent(row.confidence) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="边界框 [x1, y1, x2, y2]" min-width="190">
+        <el-table-column :label="text.bbox" min-width="190">
           <template #default="{ row }">{{ row.bbox.map(Math.round).join(", ") }}</template>
         </el-table-column>
       </el-table>
@@ -66,12 +66,45 @@
 
 <script setup>
 import { computed } from "vue";
+import { useSettingsStore } from '@/stores/settings'
 
 const props = defineProps({
   previewUrl: { type: String, default: "" },
   result: { type: Object, default: null },
   loading: { type: Boolean, default: false },
 });
+
+const settingsStore = useSettingsStore()
+
+const text = computed(() => settingsStore.isEnglish ? {
+  title: 'Detection Result',
+  task: 'Task',
+  hint: 'Upload a steel surface image to view annotated results',
+  done: 'Completed',
+  previewAlt: 'Steel surface detection preview',
+  empty: 'Waiting for image',
+  defectCount: 'Defects',
+  inferenceTime: 'Inference time',
+  maxConfidence: 'Max confidence',
+  noDefect: 'No obvious defect detected',
+  defect: 'Defect',
+  confidence: 'Confidence',
+  bbox: 'Bounding box [x1, y1, x2, y2]',
+} : {
+  title: '检测结果',
+  task: '任务',
+  hint: '上传钢铁表面图片后查看标注结果',
+  done: '检测完成',
+  previewAlt: '钢铁表面检测预览',
+  empty: '等待检测图片',
+  defectCount: '缺陷数量',
+  inferenceTime: '推理耗时',
+  maxConfidence: '最高置信度',
+  noDefect: '未检测到明显缺陷',
+  defect: '缺陷',
+  confidence: '置信度',
+  bbox: '边界框 [x1, y1, x2, y2]',
+})
 
 const displayImage = computed(
   () => props.result?.annotatedImageUrl || props.previewUrl || "",

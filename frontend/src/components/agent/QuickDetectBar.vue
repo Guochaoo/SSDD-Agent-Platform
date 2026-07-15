@@ -1,13 +1,13 @@
 <template>
   <div class="quick-detect-bar">
     <button class="quick-detect-btn" :disabled="disabled" @click="$emit('single')">
-      单图检测
+      {{ labels.single }}
     </button>
     <button class="quick-detect-btn" :disabled="disabled" @click="$emit('batch')">
-      批量图片检测
+      {{ labels.batch }}
     </button>
     <button class="quick-detect-btn muted" :disabled="disabled" @click="$emit('zip')">
-      ZIP 检测
+      {{ labels.zip }}
     </button>
   </div>
 </template>
@@ -17,6 +17,14 @@ defineProps({
   disabled: {
     type: Boolean,
     default: false,
+  },
+  labels: {
+    type: Object,
+    default: () => ({
+      single: '单图检测',
+      batch: '批量图片检测',
+      zip: 'ZIP 检测',
+    }),
   },
 })
 
@@ -36,8 +44,8 @@ defineEmits(['single', 'batch', 'zip'])
   padding: 0 14px;
   border: 1px solid #e0e0e0;
   border-radius: 18px;
-  background: #fff;
-  color: #525252;
+  background: var(--app-surface);
+  color: var(--app-text);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
@@ -45,7 +53,7 @@ defineEmits(['single', 'batch', 'zip'])
   &:hover:not(:disabled) {
     border-color: #8f8ab0;
     color: #8f8ab0;
-    background: #f8f7fb;
+    background: var(--app-hover);
   }
 
   &:disabled {
@@ -54,7 +62,7 @@ defineEmits(['single', 'batch', 'zip'])
   }
 
   &.muted {
-    color: #737373;
+    color: var(--app-muted);
   }
 }
 </style>

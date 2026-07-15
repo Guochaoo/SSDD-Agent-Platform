@@ -30,7 +30,7 @@ onMounted(() => {
 .layout-content {
   flex: 1;
   min-width: 0;
-  background: #FCFCFC;
+  background: var(--app-bg);
   overflow-y: auto;
   padding: $spacing-lg;
 }
