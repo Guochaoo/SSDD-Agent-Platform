@@ -630,7 +630,6 @@ checkAgentToolContracts()
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #fff;
   position: relative;
 
   &.hero {
