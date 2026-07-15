@@ -86,7 +86,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
@@ -119,6 +119,10 @@ const router = useRouter()
 const userStore = useUserStore()
 const agentStore = useAgentStore()
 const settingsStore = useSettingsStore()
+
+onMounted(() => {
+  agentStore.fetchSessions().catch(() => {})
+})
 
 const activeMenu = computed(() => '/' + route.path.split('/')[1])
 

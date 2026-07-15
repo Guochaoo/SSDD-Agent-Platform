@@ -369,11 +369,17 @@ async def camera_detection(websocket: WebSocket):
                     logger.warning("摄像头帧处理失败 connection_id=%s error=%s", connection_id, exc)
                     await websocket.send_json({"type": "error", "message": f"帧处理失败: {exc}"})
             elif message_type == "close":
+                await websocket.close(code=1000, reason="Client requested close")
                 break
             else:
                 await websocket.send_json({"type": "error", "message": "未知消息类型"})
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        logger.info(
+            "摄像头 WebSocket 断开 connection_id=%s code=%s reason=%s",
+            connection_id,
+            exc.code,
+            exc.reason,
+        )
     finally:
         db.close()
         logger.info("摄像头连接关闭 connection_id=%s frames=%s", connection_id, frame_count)

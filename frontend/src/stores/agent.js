@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { getAgentSession, listAgentSessions } from '@/api/agent'
 
 const SESSION_KEY = 'ssdd_agent_session'
 const SESSIONS_KEY = 'ssdd_agent_sessions'
@@ -41,6 +42,20 @@ export const useAgentStore = defineStore('agent', {
   },
 
   actions: {
+    async fetchSessions() {
+      const sessions = await listAgentSessions()
+      this.sessions = (sessions || []).map((session) => ({
+        id: session.id,
+        title: session.title,
+        createdAt: session.created_at,
+        updatedAt: session.updated_at,
+        messages: [],
+      }))
+      if (this.sessions.some((session) => session.id === this.currentSessionId)) {
+        await this.loadSession(this.currentSessionId)
+      }
+    },
+
     addMessage(message) {
       localStorage.setItem(SESSION_KEY, this.currentSessionId)
       this.messages.push({
@@ -187,12 +202,20 @@ export const useAgentStore = defineStore('agent', {
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions))
     },
 
-    loadSession(id) {
+    async loadSession(id) {
       const session = this.sessions.find(s => s.id === id)
       if (!session) return
       this.stopStreaming()
+      const remote = await getAgentSession(id)
       this.currentSessionId = session.id
-      this.messages = session.messages.map(m => ({ ...m }))
+      session.title = remote.title
+      session.messages = remote.messages || []
+      this.messages = session.messages.map((message) => ({
+        id: String(message.id),
+        role: message.role,
+        content: message.content || '',
+        createdAt: message.created_at,
+      }))
       this.currentToolCall = null
       this.errorMessage = ''
       this.clearImage()
