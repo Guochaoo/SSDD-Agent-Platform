@@ -95,4 +95,6 @@ if __name__ == "__main__":
         reload_dirs=[str(Path(__file__).parent / "app")],
         reload_excludes=["**/__pycache__/**", "**/*.pyc"],
         reload_delay=0.5,
+        ws_ping_interval=20,
+        ws_ping_timeout=20,
     )
