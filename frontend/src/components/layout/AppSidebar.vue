@@ -1,9 +1,12 @@
 <template>
   <aside :class="['app-sidebar', { collapsed }]">
-    <!-- Header: brand -->
+    <!-- Header: brand + toggle -->
     <div class="sidebar-header">
       <img src="/favicon.svg" alt="logo" class="brand-logo" />
-      <span v-show="!collapsed" class="brand-text">SSDD</span>
+      <span class="brand-text">SSDD</span>
+      <button class="toggle-btn" :title="collapsed ? '展开侧栏' : '收起侧栏'" @click="emit('update:collapsed', !collapsed)">
+        <DockLeft class="toggle-icon" />
+      </button>
     </div>
 
     <!-- Body: navigation + sessions -->
@@ -83,12 +86,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { SwitchButton } from '@element-plus/icons-vue'
-import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash } from '@boxicons/vue'
+import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft } from '@boxicons/vue'
 import { ElMessageBox } from 'element-plus'
 
-defineProps({
+const props = defineProps({
   collapsed: { type: Boolean, default: false },
 })
+
+const emit = defineEmits(['update:collapsed'])
 
 const route = useRoute()
 const router = useRouter()
@@ -138,10 +143,11 @@ function handleCommand(command) {
   position: relative;
   width: $sidebar-width;
   height: 100vh;
-  background: #000;
+  background: #FCFCFC;
+  border-right: 1px solid rgba(0,0,0,0.08);
   display: flex;
   flex-direction: column;
-  transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: width 0.2s ease;
   overflow: hidden;
   flex-shrink: 0;
 
@@ -155,23 +161,83 @@ function handleCommand(command) {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 56px;
+  height: 52px;
   padding: 0 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
   flex-shrink: 0;
+  position: relative;
 }
 
 .brand-logo {
-  width: 28px; height: 28px;
+  width: 22px; height: 22px;
   flex-shrink: 0;
+  transition: opacity 0.2s;
 }
 
 .brand-text {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
-  color: #fff;
+  color: #0D0D0D;
   white-space: nowrap;
-  letter-spacing: -0.3px;
+  flex: 1;
+  opacity: 1;
+  transition: opacity 0.15s;
+}
+
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(0,0,0,0.3);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 1;
+  transition: opacity 0.15s;
+  padding: 0;
+
+  &:hover {
+    color: #0D0D0D;
+    background: rgba(0,0,0,0.06);
+  }
+}
+
+.toggle-icon {
+  width: 18px; height: 18px;
+}
+
+/* ── Collapsed state header ── */
+.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 0;
+}
+
+.collapsed .brand-text {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.collapsed .brand-logo {
+  opacity: 1;
+  transition: opacity 0.1s 0.05s;
+}
+
+.collapsed .toggle-btn {
+  position: absolute;
+  opacity: 0;
+}
+
+.collapsed:hover .brand-logo {
+  opacity: 0;
+  transition: opacity 0.08s;
+}
+
+.collapsed:hover .toggle-btn {
+  opacity: 1;
+  transition: opacity 0.12s 0.04s;
 }
 
 /* ── Body (nav + sessions) ── */
@@ -196,26 +262,27 @@ function handleCommand(command) {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 38px;
-  padding: 0 12px;
+  height: 40px;
+  padding: 0 14px;
   border-radius: 8px;
-  color: rgba(255,255,255,0.5);
+  color: #6e6e6e;
   text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.15s;
+  font-size: 14px;
+  font-weight: 400;
+  transition: all 0.15s ease;
   white-space: nowrap;
   overflow: hidden;
   position: relative;
 
   &:hover {
-    color: rgba(255,255,255,0.85);
-    background: rgba(255,255,255,0.06);
+    color: #0D0D0D;
+    background: rgba(0,0,0,0.04);
   }
 
   &.active {
-    color: #fff;
-    background: rgba(143,138,176,0.25);
+    color: #0D0D0D;
+    font-weight: 500;
+    background: rgba(0,0,0,0.06);
 
     &::before {
       content: '';
@@ -245,8 +312,8 @@ function handleCommand(command) {
 
 .nav-badge {
   font-size: 11px;
-  background: rgba(143,138,176,0.35);
-  color: #cfcbe6;
+  background: rgba(143,138,176,0.18);
+  color: #6b6390;
   min-width: 18px; height: 18px;
   line-height: 18px;
   text-align: center;
@@ -262,19 +329,16 @@ function handleCommand(command) {
   flex-direction: column;
   min-height: 0;
   padding: 0 8px 8px;
-  border-top: 1px solid rgba(255,255,255,0.06);
 }
 
 .sessions-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px 6px;
-  font-size: 11px;
+  padding: 12px 14px 8px;
+  font-size: 13px;
   font-weight: 600;
-  color: rgba(255,255,255,1);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: #0D0D0D;
   flex-shrink: 0;
 }
 
@@ -282,21 +346,21 @@ function handleCommand(command) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
-  color: rgba(255,255,255,0.4);
+  color: #6e6e6e;
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
-    color: #fff;
-    background: rgba(255,255,255,0.08);
+    color: #0D0D0D;
+    background: rgba(0,0,0,0.04);
   }
 
   svg {
-    width: 14px; height: 14px;
+    width: 16px; height: 16px;
   }
 }
 
@@ -309,9 +373,9 @@ function handleCommand(command) {
 }
 
 .sessions-empty {
-  padding: 16px 12px;
-  font-size: 12px;
-  color: rgba(255,255,255,0.25);
+  padding: 16px 14px;
+  font-size: 13px;
+  color: #b0b0b0;
   text-align: center;
 }
 
@@ -320,25 +384,27 @@ function handleCommand(command) {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 7px 12px;
+  padding: 8px 14px;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: rgba(255,255,255,0.55);
+  color: #6e6e6e;
   cursor: pointer;
   text-align: left;
-  font-size: 13px;
-  transition: all 0.1s;
+  font-size: 14px;
+  font-weight: 400;
+  transition: all 0.1s ease;
   gap: 6px;
 
   &:hover {
-    background: rgba(255,255,255,0.05);
-    color: rgba(255,255,255,0.8);
+    background: rgba(0,0,0,0.04);
+    color: #0D0D0D;
   }
 
   &.active {
-    background: rgba(143,138,176,0.2);
-    color: #fff;
+    background: rgba(0,0,0,0.06);
+    color: #0D0D0D;
+    font-weight: 500;
   }
 }
 
@@ -358,7 +424,7 @@ function handleCommand(command) {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: rgba(255,255,255,0.25);
+  color: rgba(0,0,0,0.15);
   cursor: pointer;
   flex-shrink: 0;
   opacity: 0;
@@ -381,7 +447,6 @@ function handleCommand(command) {
 
 /* ── Footer ── */
 .sidebar-footer {
-  border-top: 1px solid rgba(255,255,255,0.06);
   padding: 8px;
   flex-shrink: 0;
 }
@@ -390,14 +455,14 @@ function handleCommand(command) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 20px;
+  padding: 8px 14px;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s;
   overflow: hidden;
 
   &:hover {
-    background: rgba(255,255,255,0.06);
+    background: rgba(0,0,0,0.06);
   }
 }
 
@@ -409,7 +474,7 @@ function handleCommand(command) {
   flex: 1;
   font-size: 14px;
   font-weight: 500;
-  color: rgba(255,255,255,0.8);
+  color: rgba(0,0,0,0.8);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -417,7 +482,7 @@ function handleCommand(command) {
 
 .user-chevron {
   width: 20px; height: 20px;
-  color: rgba(255,255,255,0.35);
+  color: rgba(0,0,0,0.3);
   flex-shrink: 0;
 }
 </style>
