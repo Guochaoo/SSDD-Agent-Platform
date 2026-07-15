@@ -4,6 +4,9 @@ export function createCameraWs(options) {
   let socket;
   let connected = false;
   let closing = false;
+  let reconnectTimer;
+  let reconnectAttempts = 0;
+  const maxReconnectAttempts = 3;
 
   return {
     get isConnected() {
@@ -11,11 +14,20 @@ export function createCameraWs(options) {
     },
     connect() {
       if (socket?.readyState === WebSocket.OPEN) return;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const configuredBase = import.meta.env.VITE_WS_BASE_URL;
+      const defaultBase = import.meta.env.DEV
+        ? "ws://127.0.0.1:8000"
+        : `${protocol}//${window.location.host}`;
+      const wsBase = configuredBase || defaultBase;
       closing = false;
       const token = encodeURIComponent(useUserStore().token);
       const currentSocket = new WebSocket(
-        `${protocol}//${window.location.host}/api/detection/camera?token=${token}`,
+        `${wsBase}/api/detection/camera?token=${token}`,
       );
       socket = currentSocket;
       currentSocket.onopen = () => {
@@ -24,6 +36,7 @@ export function createCameraWs(options) {
           return;
         }
         connected = true;
+        reconnectAttempts = 0;
         currentSocket.send(JSON.stringify({
           type: "config",
           mode: options.mode ?? "cpu",
@@ -47,9 +60,17 @@ export function createCameraWs(options) {
       currentSocket.onerror = () => {
         if (!closing) options.onError?.("WebSocket 连接失败，请检查后端服务");
       };
-      currentSocket.onclose = () => {
+      currentSocket.onclose = (event) => {
         connected = false;
-        options.onClose?.();
+        options.onClose?.(event);
+        if (!closing && reconnectAttempts < maxReconnectAttempts) {
+          reconnectAttempts += 1;
+          options.onReconnect?.(reconnectAttempts, maxReconnectAttempts);
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = undefined;
+            if (!closing) this.connect();
+          }, 500 * reconnectAttempts);
+        }
       };
     },
     sendFrame(data) {
@@ -59,9 +80,17 @@ export function createCameraWs(options) {
     },
     close() {
       closing = true;
+      reconnectAttempts = maxReconnectAttempts;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "close" }));
-        socket.close();
+        const closingSocket = socket;
+        window.setTimeout(() => {
+          if (closingSocket.readyState === WebSocket.OPEN) closingSocket.close(1000, "Client stopped");
+        }, 100);
       } else if (socket?.readyState === WebSocket.CONNECTING) {
         const pendingSocket = socket;
         pendingSocket.addEventListener("open", () => pendingSocket.close(), { once: true });

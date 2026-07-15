@@ -12,12 +12,13 @@ from uuid import uuid4
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from app.agent.detection_agent import detection_agent
 from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.core.logger import get_logger
-from app.database.session import SessionLocal
+from app.database.session import SessionLocal, get_db
 from app.entity.db_models import ChatMessage, ChatSession
 
 router = APIRouter(prefix="/api/agent", tags=["智能体"])
@@ -89,6 +90,65 @@ async def cached_models():
     if _model_cache is None:
         return {"models": [], "provider": None}
     return _model_cache
+
+
+@router.get("/sessions")
+def list_chat_sessions(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return only the authenticated user's chat sessions."""
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == current_user.id)
+        .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": session.session_uuid,
+            "title": session.title or "新对话",
+            "message_count": session.message_count or 0,
+            "created_at": session.created_at,
+            "updated_at": session.last_message_at or session.created_at,
+        }
+        for session in sessions
+    ]
+
+
+@router.get("/sessions/{session_id}")
+def get_chat_session(
+    session_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return a session and messages only when it belongs to the current user."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {
+        "id": session.session_uuid,
+        "title": session.title or "新对话",
+        "message_count": session.message_count or 0,
+        "created_at": session.created_at,
+        "updated_at": session.last_message_at or session.created_at,
+        "messages": [
+            {
+                "id": message.id,
+                "role": message.role,
+                "content": message.content,
+                "created_at": message.created_at,
+            }
+            for message in session.messages
+        ],
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -165,6 +225,9 @@ async def chat_stream(
     else:
         body = await request.json()
         message = (body.get("message") or "").strip()
+        raw_session = body.get("session_id")
+        if raw_session and isinstance(raw_session, str) and raw_session.strip():
+            session_id = raw_session.strip()
         image_path = body.get("image_path")
         if image_path:
             image_path = _validate_uploaded_image_path(image_path)

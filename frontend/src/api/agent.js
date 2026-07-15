@@ -79,3 +79,11 @@ function mockAgentStream(callbacks) {
 
   return () => clearInterval(timer)
 }
+
+export function listAgentSessions() {
+  return request.get('/agent/sessions')
+}
+
+export function getAgentSession(sessionId) {
+  return request.get(`/agent/sessions/${encodeURIComponent(sessionId)}`)
+}
