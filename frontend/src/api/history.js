@@ -1,5 +1,21 @@
 import request from "@/utils/request";
 
+export const HISTORY_TASK_TYPE_OPTIONS = [
+  { value: "single", label: "单图检测" },
+  { value: "batch", label: "批量检测" },
+  { value: "zip", label: "ZIP 检测" },
+  { value: "video", label: "视频检测" },
+  { value: "camera", label: "摄像头检测" },
+];
+
+export function getHistoryTaskTypeLabel(value) {
+  return (
+    HISTORY_TASK_TYPE_OPTIONS.find((item) => item.value === value)?.label ||
+    value ||
+    "—"
+  );
+}
+
 function unwrap(payload) {
   return payload?.data ?? payload;
 }

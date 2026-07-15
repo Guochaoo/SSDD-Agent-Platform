@@ -194,7 +194,9 @@ import { Delete, Filter, Refresh, Search, View } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { onMounted, reactive, ref } from "vue";
 import {
+  HISTORY_TASK_TYPE_OPTIONS,
   deleteHistoryApi,
+  getHistoryTaskTypeLabel,
   getHistoryApi,
   getHistoryDetailApi,
 } from "@/api/history";
@@ -202,13 +204,7 @@ import { getScenesApi } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 
-const taskTypeOptions = [
-  { value: "single", label: "单图检测" },
-  { value: "batch", label: "批量检测" },
-  { value: "folder", label: "文件夹检测" },
-  { value: "video", label: "视频检测" },
-  { value: "camera", label: "摄像头检测" },
-];
+const taskTypeOptions = HISTORY_TASK_TYPE_OPTIONS;
 const statusOptions = [
   { value: "pending", label: "等待中" },
   { value: "processing", label: "处理中" },
@@ -230,7 +226,7 @@ const detailError = ref("");
 const detail = reactive({ task: null, results: [] });
 
 function taskTypeLabel(value) {
-  return taskTypeOptions.find((item) => item.value === value)?.label || value || "—";
+  return getHistoryTaskTypeLabel(value);
 }
 
 function statusLabel(value) {

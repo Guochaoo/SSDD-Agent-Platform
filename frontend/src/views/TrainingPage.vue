@@ -11,6 +11,16 @@
       </el-button>
     </div>
 
+    <el-alert
+      v-if="pageError"
+      class="page-alert"
+      :title="pageError"
+      type="error"
+      show-icon
+      closable
+      @close="pageError = ''"
+    />
+
     <el-card class="section-card" shadow="never">
       <template #header>
         <div class="card-header">
@@ -98,6 +108,15 @@
           </div>
         </div>
       </template>
+
+      <el-alert
+        v-if="monitorError"
+        class="monitor-alert"
+        :title="monitorError"
+        type="error"
+        show-icon
+        :closable="false"
+      />
 
       <el-progress
         class="monitor-progress"
@@ -468,12 +487,15 @@ import {
   validateTrainingModel,
 } from '@/api/training'
 import { getScenesApi } from '@/api/models'
+import { getApiErrorMessage } from '@/utils/apiError'
 
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 
 const taskList = ref([])
 const loadingTasks = ref(false)
+const pageError = ref('')
+const monitorError = ref('')
 const selectedTask = ref(null)
 const showCreateDialog = ref(false)
 const creating = ref(false)
@@ -656,6 +678,7 @@ function normalizeTaskStatusResponse(response) {
 
 async function fetchTasks() {
   loadingTasks.value = true
+  pageError.value = ''
   try {
     scenes.value = await getScenesApi()
     if (!trainForm.value.scene_id) trainForm.value.scene_id = Number(scenes.value[0]?.id) || null
@@ -663,6 +686,7 @@ async function fetchTasks() {
     taskList.value = response.items || []
   } catch (error) {
     console.error('获取训练任务列表失败', error)
+    pageError.value = getApiErrorMessage(error, '训练任务列表加载失败')
   } finally {
     loadingTasks.value = false
   }
@@ -681,12 +705,14 @@ async function fetchDatasets() {
     }
   } catch (error) {
     console.error('获取训练数据集失败', error)
+    pageError.value = getApiErrorMessage(error, '训练数据集加载失败')
   }
 }
 
 async function handleDatasetUpload(uploadFile) {
   if (!uploadFile.raw) return
   uploadingDataset.value = true
+  pageError.value = ''
   try {
     const dataset = await uploadTrainingDataset(uploadFile.raw)
     await fetchDatasets()
@@ -694,6 +720,7 @@ async function handleDatasetUpload(uploadFile) {
     ElMessage.success('数据集上传并校验通过')
   } catch (error) {
     console.error('上传训练数据集失败', error)
+    pageError.value = getApiErrorMessage(error, '训练数据集上传失败')
   } finally {
     uploadingDataset.value = false
   }
@@ -747,8 +774,10 @@ async function fetchMetrics() {
     if (!RUNNING_STATUSES.has(selectedTask.value.status)) {
       stopPolling()
     }
+    monitorError.value = ''
   } catch (error) {
     console.error('获取训练监控数据失败', error)
+    monitorError.value = getApiErrorMessage(error, '训练监控数据加载失败')
   }
 }
 
@@ -835,6 +864,7 @@ async function createTask() {
     return
   }
   creating.value = true
+  pageError.value = ''
   try {
     const response = await startTraining(trainForm.value)
     ElMessage.success(`训练任务已创建：${response.task_uuid}`)
@@ -844,12 +874,14 @@ async function createTask() {
     if (task) await selectTask(task)
   } catch (error) {
     console.error('创建训练任务失败', error)
+    pageError.value = getApiErrorMessage(error, '训练任务创建失败')
   } finally {
     creating.value = false
   }
 }
 
 async function stopTask(taskId) {
+  pageError.value = ''
   try {
     await ElMessageBox.confirm('确定要停止当前训练任务吗？训练进度将被保留。', '确认停止', {
       type: 'warning',
@@ -861,6 +893,7 @@ async function stopTask(taskId) {
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       console.error('停止训练任务失败', error)
+      pageError.value = getApiErrorMessage(error, '训练任务停止失败')
     }
   }
 }
@@ -868,6 +901,7 @@ async function stopTask(taskId) {
 async function validateModel() {
   if (!selectedTask.value) return
   validating.value = true
+  pageError.value = ''
   try {
     const response = await validateTrainingModel(selectedTask.value.id, {
       split: 'val',
@@ -878,6 +912,7 @@ async function validateModel() {
     ElMessage.success(`评估完成：mAP@50 ${formatPercent(response.overall?.map50)}`)
   } catch (error) {
     console.error('模型评估失败', error)
+    pageError.value = getApiErrorMessage(error, '模型评估失败')
   } finally {
     validating.value = false
   }
@@ -886,6 +921,7 @@ async function validateModel() {
 async function exportModel() {
   if (!selectedTask.value) return
   exporting.value = true
+  pageError.value = ''
   try {
     const response = await exportTrainingModel(selectedTask.value.id, {
       ...exportForm.value,
@@ -896,6 +932,7 @@ async function exportModel() {
     showExportDialog.value = false
   } catch (error) {
     console.error('模型导出失败', error)
+    pageError.value = getApiErrorMessage(error, '模型导出失败')
   } finally {
     exporting.value = false
   }
@@ -904,12 +941,14 @@ async function exportModel() {
 async function downloadModel() {
   if (!selectedTask.value) return
   downloading.value = true
+  pageError.value = ''
   try {
     const blob = await downloadTrainingModel(selectedTask.value.id)
     triggerBlobDownload(blob, `best_${selectedTask.value.task_uuid}.pt`)
     ElMessage.success('模型权重下载已开始')
   } catch (error) {
     console.error('模型权重下载失败', error)
+    pageError.value = getApiErrorMessage(error, '模型权重下载失败')
   } finally {
     downloading.value = false
   }
@@ -946,6 +985,7 @@ function handlePredictFileChange(file) {
 async function runPredict() {
   if (!predictFile.value || !selectedTask.value) return
   predicting.value = true
+  pageError.value = ''
   try {
     const formData = new FormData()
     formData.append('file', predictFile.value)
@@ -959,6 +999,7 @@ async function runPredict() {
     ElMessage.success(`检测完成：发现 ${predictResult.value.total_objects} 个目标`)
   } catch (error) {
     console.error('测试图验证失败', error)
+    pageError.value = getApiErrorMessage(error, '测试图验证失败')
   } finally {
     predicting.value = false
   }
@@ -1014,6 +1055,11 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .training-page {
   width: 100%;
+}
+
+.page-alert,
+.monitor-alert {
+  margin-bottom: 16px;
 }
 
 .page-header {
