@@ -88,8 +88,23 @@ class UserService:
     # ── 资料 / 密码管理 ──────────────────────────────────
 
     @staticmethod
-    def update_profile(db: Session, user: User, phone: str | None, avatar: str | None, email: str | None) -> User:
-        """更新用户资料（phone/avatar/email，均可选）"""
+    def update_profile(
+        db: Session,
+        user: User,
+        phone: str | None,
+        avatar: str | None,
+        email: str | None,
+        username: str | None = None,
+    ) -> User:
+        """更新用户资料（username/phone/avatar/email，均可选）"""
+        if username is not None:
+            username = username.strip()
+            if not username:
+                raise HTTPException(status_code=400, detail="用户名不能为空")
+            if username != user.username:
+                if db.query(User).filter(User.username == username, User.id != user.id).first():
+                    raise HTTPException(status_code=400, detail="用户名已存在")
+                user.username = username
         if email and email != user.email:
             if db.query(User).filter(User.email == email, User.id != user.id).first():
                 raise HTTPException(status_code=400, detail="邮箱已被其他账号使用")

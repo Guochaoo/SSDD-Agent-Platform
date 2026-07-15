@@ -71,6 +71,7 @@ class UserResponse(BaseModel):
 
 class UserUpdate(BaseModel):
     """用户信息更新"""
+    username: Optional[str] = None
     phone: Optional[str] = None
     avatar: Optional[str] = None
     email: Optional[str] = None
