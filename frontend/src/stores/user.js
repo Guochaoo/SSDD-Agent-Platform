@@ -3,7 +3,7 @@
  * 绠＄悊鐢ㄦ埛鐧诲綍淇℃伅銆乀oken銆佽鑹茬瓑
  */
 import { defineStore } from 'pinia'
-import { loginApi, getUserInfoApi } from '@/api/auth'
+import { loginApi, getUserInfoApi, updateUserProfileApi, changePasswordApi } from '@/api/auth'
 
 const TOKEN_KEY = 'ssdd_token'
 const USER_KEY = 'ssdd_user'
@@ -63,6 +63,17 @@ export const useUserStore = defineStore('user', {
       } catch {
         this.logout()
       }
+    },
+
+    async updateProfile(payload) {
+      const user = await updateUserProfileApi(payload)
+      this.user = user
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
+      return user
+    },
+
+    async changePassword(payload) {
+      return changePasswordApi(payload)
     },
 
     /**

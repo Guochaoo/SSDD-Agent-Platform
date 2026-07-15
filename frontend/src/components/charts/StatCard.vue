@@ -13,6 +13,7 @@
 
 <script setup>
 import { computed } from "vue";
+import { useSettingsStore } from '@/stores/settings'
 
 const props = defineProps({
   label: { type: String, required: true },
@@ -24,9 +25,11 @@ const props = defineProps({
   decimals: { type: Number, default: 0 },
 });
 
+const settingsStore = useSettingsStore()
+
 const displayValue = computed(() => {
   if (typeof props.value !== "number") return props.value;
-  return props.value.toLocaleString("zh-CN", {
+  return props.value.toLocaleString(settingsStore.isEnglish ? "en-US" : "zh-CN", {
     minimumFractionDigits: props.decimals,
     maximumFractionDigits: props.decimals,
   });

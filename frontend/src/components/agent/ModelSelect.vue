@@ -13,7 +13,7 @@
     </template>
 
     <div class="model-list">
-      <div v-if="llmStore.loading" class="model-hint">加载中…</div>
+        <div v-if="llmStore.loading" class="model-hint">{{ text.loading }}</div>
       <template v-else>
         <button
           v-for="m in options"
@@ -28,7 +28,7 @@
           <el-icon v-if="model === m.value" :size="14" color="#8F8AB0"><Check /></el-icon>
         </button>
         <div v-if="options.length === 0 && llmStore.error" class="model-hint error">
-          {{ llmStore.error }}
+          {{ text.loadFailed }}
         </div>
       </template>
     </div>
@@ -39,16 +39,37 @@
 import { computed } from 'vue'
 import { ArrowDown, Check } from '@element-plus/icons-vue'
 import { useLlmStore } from '@/stores/llm'
+import { DEFAULT_LLM_MODEL_VALUE } from '@/stores/llm'
+import { useSettingsStore } from '@/stores/settings'
 
 const llmStore = useLlmStore()
+const settingsStore = useSettingsStore()
 
 const model = defineModel({ default: useLlmStore().defaultModel })
 
-const options = computed(() => llmStore.modelOptions)
+const text = computed(() => settingsStore.isEnglish ? {
+  defaultModel: 'Default chat model',
+  selectModel: 'Select model',
+  loading: 'Loading...',
+  loadFailed: 'Failed to load models',
+} : {
+  defaultModel: '后端默认对话模型',
+  selectModel: '选择模型',
+  loading: '加载中…',
+  loadFailed: '获取模型列表失败',
+})
+
+const options = computed(() => llmStore.modelOptions.map((option) => {
+  if (option.value !== DEFAULT_LLM_MODEL_VALUE) return option
+  return { ...option, label: text.value.defaultModel }
+}))
 
 const currentLabel = computed(() => {
+  if (model.value === DEFAULT_LLM_MODEL_VALUE) {
+    return text.value.defaultModel
+  }
   const found = options.value.find(m => m.value === model.value)
-  return found?.label || model.value || '选择模型'
+  return found?.label || model.value || text.value.selectModel
 })
 
 </script>
@@ -62,14 +83,14 @@ const currentLabel = computed(() => {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #737373;
+  color: var(--app-muted);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
-    background: #f1f1f0;
-    color: #171717;
+    background: var(--app-hover);
+    color: var(--app-text);
   }
 }
 
@@ -91,14 +112,14 @@ const currentLabel = computed(() => {
   border-radius: 6px;
   background: transparent;
   font-size: 13px;
-  color: #171717;
+  color: var(--app-text);
   cursor: pointer;
   transition: background 0.1s;
   width: 100%;
   text-align: left;
 
   &:hover {
-    background: #f6f5f9;
+    background: var(--app-hover);
   }
 
   &.active {

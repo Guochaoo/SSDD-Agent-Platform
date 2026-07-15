@@ -4,7 +4,7 @@
     <div class="sidebar-header">
       <img src="/favicon.svg" alt="logo" class="brand-logo" />
       <span class="brand-text">SSDD</span>
-      <button class="toggle-btn" :title="collapsed ? '展开侧栏' : '收起侧栏'" @click="handleToggle">
+      <button class="toggle-btn" :title="collapsed ? text.expandSidebar : text.collapseSidebar" @click="handleToggle">
         <DockLeft class="toggle-icon" />
       </button>
     </div>
@@ -30,14 +30,14 @@
       <!-- Sessions section (chat history) -->
       <div v-show="!collapsed" class="sidebar-sessions">
         <div class="sessions-header">
-          <span>会话历史</span>
-          <button class="sessions-new-btn" title="新对话" @click="handleNewChat">
+          <span>{{ text.chatHistory }}</span>
+          <button class="sessions-new-btn" :title="text.newChat" @click="handleNewChat">
             <Plus />
           </button>
         </div>
         <div class="sessions-list">
           <div v-if="!agentStore.sessions.length" class="sessions-empty">
-            暂无会话
+            {{ text.noSessions }}
           </div>
           <div
             v-for="session in agentStore.sessions"
@@ -45,10 +45,10 @@
             :class="['session-item', { active: session.id === agentStore.currentSessionId && activeMenu === '/chat' }]"
             @click="handleSwitchSession(session.id)"
           >
-            <span class="session-title">{{ session.title || '新对话' }}</span>
+            <span class="session-title">{{ session.title || text.newChat }}</span>
             <span
               class="session-delete"
-              title="删除"
+              :title="text.delete"
               @click.stop="handleDeleteSession(session.id)"
             >
               <Trash />
@@ -71,26 +71,30 @@
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="settings">
-              <el-icon><Setting /></el-icon>设置
+              <el-icon><Setting /></el-icon>{{ text.settings }}
             </el-dropdown-item>
             <el-dropdown-item command="logout">
-              <el-icon><SwitchButton /></el-icon>退出登录
+              <el-icon><SwitchButton /></el-icon>{{ text.logout }}
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
     </div>
+
+    <SettingsModal v-model="settingsVisible" @closed="restoreSettingsFocus" />
   </aside>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
+import { useSettingsStore } from '@/stores/settings'
 import { Setting, SwitchButton } from '@element-plus/icons-vue'
 import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft } from '@boxicons/vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import SettingsModal from '@/components/settings/SettingsModal.vue'
 
 const props = defineProps({
   collapsed: { type: Boolean, default: false },
@@ -99,6 +103,8 @@ const props = defineProps({
 const emit = defineEmits(['update:collapsed'])
 
 const hoverLocked = ref(false)
+const settingsVisible = ref(false)
+const settingsReturnTarget = ref(null)
 let hoverLockTimer = null
 
 function handleToggle() {
@@ -112,10 +118,7 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const agentStore = useAgentStore()
-
-onMounted(() => {
-  agentStore.fetchSessions().catch(() => {})
-})
+const settingsStore = useSettingsStore()
 
 onMounted(() => {
   agentStore.fetchSessions().catch(() => {})
@@ -123,13 +126,51 @@ onMounted(() => {
 
 const activeMenu = computed(() => '/' + route.path.split('/')[1])
 
-const menuItems = [
-  { path: '/chat',       title: '智能对话',   icon: MessageCircleDetail },
-  { path: '/detection',  title: '检测工作台', icon: Capture },
-  { path: '/training',   title: '模型训练',   icon: Computer },
-  { path: '/history',    title: '历史记录',   icon: History },
-  { path: '/dashboard',  title: '数据看板',   icon: ChartTrend },
-]
+const text = computed(() => settingsStore.isEnglish ? {
+  expandSidebar: 'Expand sidebar',
+  collapseSidebar: 'Collapse sidebar',
+  chat: 'Chat',
+  detection: 'Detection',
+  training: 'Training',
+  history: 'History',
+  dashboard: 'Dashboard',
+  chatHistory: 'Chats',
+  newChat: 'New chat',
+  noSessions: 'No chats',
+  delete: 'Delete',
+  settings: 'Settings',
+  logout: 'Log out',
+  logoutTitle: 'Confirm',
+  logoutMessage: 'Are you sure you want to log out?',
+  confirm: 'Confirm',
+  cancel: 'Cancel',
+} : {
+  expandSidebar: '展开侧栏',
+  collapseSidebar: '收起侧栏',
+  chat: '智能对话',
+  detection: '检测工作台',
+  training: '模型训练',
+  history: '历史记录',
+  dashboard: '数据看板',
+  chatHistory: '会话历史',
+  newChat: '新对话',
+  noSessions: '暂无会话',
+  delete: '删除',
+  settings: '设置',
+  logout: '退出登录',
+  logoutTitle: '提示',
+  logoutMessage: '确定要退出登录吗？',
+  confirm: '确定',
+  cancel: '取消',
+})
+
+const menuItems = computed(() => [
+  { path: '/chat', title: text.value.chat, icon: MessageCircleDetail },
+  { path: '/detection', title: text.value.detection, icon: Capture },
+  { path: '/training', title: text.value.training, icon: Computer },
+  { path: '/history', title: text.value.history, icon: History },
+  { path: '/dashboard', title: text.value.dashboard, icon: ChartTrend },
+])
 
 function handleNewChat() {
   agentStore.saveSession()
@@ -149,18 +190,26 @@ function handleDeleteSession(id) {
 
 function handleCommand(command) {
   if (command === 'settings') {
-    ElMessage.info('设置功能暂未开放')
+    settingsReturnTarget.value = document.activeElement
+    settingsVisible.value = true
     return
   }
 
   if (command === 'logout') {
-    ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-      confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning',
+    ElMessageBox.confirm(text.value.logoutMessage, text.value.logoutTitle, {
+      confirmButtonText: text.value.confirm, cancelButtonText: text.value.cancel, type: 'warning',
     }).then(() => {
       userStore.logout()
       router.push('/login')
     }).catch(() => {})
   }
+}
+
+function restoreSettingsFocus() {
+  nextTick(() => {
+    settingsReturnTarget.value?.focus?.()
+    settingsReturnTarget.value = null
+  })
 }
 </script>
 
@@ -169,8 +218,8 @@ function handleCommand(command) {
   position: relative;
   width: $sidebar-width;
   height: 100vh;
-  background: #FCFCFC;
-  border-right: 1px solid rgba(0,0,0,0.08);
+  background: var(--app-sidebar-bg);
+  border-right: 1px solid var(--app-border);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
@@ -202,7 +251,7 @@ function handleCommand(command) {
 .brand-text {
   font-size: 18px;
   font-weight: 600;
-  color: #0D0D0D;
+  color: var(--app-text);
   white-space: nowrap;
   flex: 1;
   opacity: 1;
@@ -224,8 +273,8 @@ function handleCommand(command) {
   padding: 0;
 
   &:hover {
-    color: #0D0D0D;
-    background: rgba(0,0,0,0.04);
+    color: var(--app-text);
+    background: var(--app-hover);
   }
 }
 
@@ -296,7 +345,7 @@ function handleCommand(command) {
   height: 36px;
   padding: 6px 10px;
   border-radius: 10px;
-  color: #0D0D0D;
+  color: var(--app-text);
   text-decoration: none;
   font-size: 14px;
   font-weight: 400;
@@ -306,12 +355,12 @@ function handleCommand(command) {
   position: relative;
 
   &:hover {
-    background: rgba(0,0,0,0.04);
+    background: var(--app-hover);
   }
 
   &.active {
     font-weight: 500;
-    background: rgba(0,0,0,0.06);
+    background: var(--app-active);
 
     &::before {
       content: '';
@@ -369,7 +418,7 @@ function handleCommand(command) {
   padding: 12px 10px 8px;
   font-size: 14px;
   font-weight: 700;
-  color: #0D0D0D;
+  color: var(--app-text);
   flex-shrink: 0;
 }
 
@@ -386,8 +435,8 @@ function handleCommand(command) {
   transition: all 0.15s;
 
   &:hover {
-    color: #0D0D0D;
-    background: rgba(0,0,0,0.04);
+    color: var(--app-text);
+    background: var(--app-hover);
   }
 
   svg {
@@ -419,7 +468,7 @@ function handleCommand(command) {
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #0D0D0D;
+  color: var(--app-text);
   cursor: pointer;
   text-align: left;
   font-size: 14px;
@@ -428,11 +477,11 @@ function handleCommand(command) {
   gap: 6px;
 
   &:hover {
-    background: rgba(0,0,0,0.04);
+    background: var(--app-hover);
   }
 
   &.active {
-    background: rgba(0,0,0,0.06);
+    background: var(--app-active);
     font-weight: 500;
   }
 }
@@ -478,7 +527,7 @@ function handleCommand(command) {
 .sidebar-footer {
   padding: 12px 10px;
   flex-shrink: 0;
-  border-top: 1px solid rgba(0,0,0,0.08);
+  border-top: 1px solid var(--app-border);
 
   :deep(.el-dropdown) {
     display: block;
@@ -497,7 +546,7 @@ function handleCommand(command) {
   overflow: hidden;
 
   &:hover {
-    background: rgba(0,0,0,0.04);
+    background: var(--app-hover);
   }
 }
 
@@ -509,7 +558,7 @@ function handleCommand(command) {
   flex: 1;
   font-size: 16px;
   font-weight: 400;
-  color: #0D0D0D;
+  color: var(--app-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -530,8 +579,13 @@ function handleCommand(command) {
   width: calc($sidebar-width - 20px);
   padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
   box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+
+  .el-dropdown-menu {
+    background: transparent;
+  }
 
   .el-dropdown-menu__item {
     display: flex;
@@ -540,12 +594,35 @@ function handleCommand(command) {
     padding: 6px 10px;
     border-radius: 10px;
     font-size: 14px;
-    color: #0D0D0D;
+    color: var(--app-text);
     transition: background 0.1s;
 
     &:hover {
-      background: rgba(0,0,0,0.04);
-      color: #0D0D0D;
+      background: var(--app-hover);
+      color: var(--app-text);
+    }
+
+    .el-icon {
+      color: currentColor;
+    }
+  }
+}
+
+:root[data-theme='dark'] {
+  .user-dropdown.el-popper.is-light {
+    background: var(--app-surface);
+    border-color: var(--app-border);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.38);
+  }
+
+  .user-dropdown {
+    .el-dropdown-menu__item {
+      color: var(--app-text);
+
+      &:not(.is-disabled):focus {
+        background: var(--app-hover);
+        color: var(--app-text);
+      }
     }
   }
 }

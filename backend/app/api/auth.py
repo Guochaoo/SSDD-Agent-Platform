@@ -127,8 +127,15 @@ async def update_profile(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """更新当前用户资料（phone/avatar/email，均可选）"""
-    user = user_service.update_profile(db, current_user, payload.phone, payload.avatar, payload.email)
+    """更新当前用户资料（username/phone/avatar/email，均可选）"""
+    user = user_service.update_profile(
+        db,
+        current_user,
+        payload.phone,
+        payload.avatar,
+        payload.email,
+        payload.username,
+    )
     roles = user_service.get_user_roles(db, user)
     return {
         "id": user.id, "username": user.username, "email": user.email, "phone": user.phone,

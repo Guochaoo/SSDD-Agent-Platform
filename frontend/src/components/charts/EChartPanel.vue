@@ -9,13 +9,13 @@
     </div>
     <div v-if="loading" class="chart-panel__state">
       <el-icon class="is-loading"><Loading /></el-icon>
-      <span>正在加载图表数据</span>
+      <span>{{ text.loading }}</span>
     </div>
     <el-empty
       v-else-if="empty"
       class="chart-panel__state"
       :image-size="72"
-      description="当前筛选条件下暂无数据"
+      :description="text.empty"
     />
     <div v-show="!loading && !empty" ref="chartRef" :style="chartStyle" />
   </div>
@@ -32,6 +32,7 @@ import {
 import * as echarts from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useSettingsStore } from '@/stores/settings'
 
 echarts.use([
   BarChart,
@@ -51,6 +52,12 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   empty: { type: Boolean, default: false },
 });
+
+const settingsStore = useSettingsStore()
+const text = computed(() => settingsStore.isEnglish
+  ? { loading: 'Loading chart data', empty: 'No data for the current filters' }
+  : { loading: '正在加载图表数据', empty: '当前筛选条件下暂无数据' },
+)
 
 const chartRef = ref();
 let chart;

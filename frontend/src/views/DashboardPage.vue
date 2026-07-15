@@ -1,12 +1,12 @@
 <template>
   <div class="frontend-b-page">
     <ModulePageHeader
-      title="数据看板"
-      description="使用当前账号真实检测历史聚合任务、图片、缺陷类别和检测场景数据。"
+      :title="text.title"
+      :description="text.description"
       :mock="isFrontendBMockMode"
     >
-      <span class="updated-at">更新于 {{ dashboard.updatedAt || "—" }}</span>
-      <el-button :icon="Refresh" :loading="loading" @click="loadDashboard">刷新</el-button>
+      <span class="updated-at">{{ text.updatedAt }} {{ dashboard.updatedAt || "—" }}</span>
+      <el-button :icon="Refresh" :loading="loading" @click="loadDashboard">{{ text.refresh }}</el-button>
     </ModulePageHeader>
 
     <el-alert
@@ -18,35 +18,35 @@
       :closable="false"
     >
       <template #default>
-        <el-button link type="primary" @click="loadDashboard">重新加载</el-button>
+        <el-button link type="primary" @click="loadDashboard">{{ text.reload }}</el-button>
       </template>
     </el-alert>
 
     <section class="filter-bar">
-      <div class="filter-bar__title"><el-icon><Filter /></el-icon><span>统计周期</span></div>
-      <el-select v-model="filters.days" aria-label="统计周期">
-        <el-option label="最近 7 天" :value="7" />
-        <el-option label="最近 30 天" :value="30" />
-        <el-option label="最近 90 天" :value="90" />
-        <el-option label="最近 365 天" :value="365" />
+      <div class="filter-bar__title"><el-icon><Filter /></el-icon><span>{{ text.period }}</span></div>
+      <el-select v-model="filters.days" :aria-label="text.period">
+        <el-option :label="text.lastDays(7)" :value="7" />
+        <el-option :label="text.lastDays(30)" :value="30" />
+        <el-option :label="text.lastDays(90)" :value="90" />
+        <el-option :label="text.lastDays(365)" :value="365" />
       </el-select>
-      <el-button type="primary" @click="loadDashboard">应用</el-button>
-      <span class="filter-hint">统计范围由后端 `/history/statistics/summary` 接口提供</span>
+      <el-button type="primary" @click="loadDashboard">{{ text.apply }}</el-button>
+      <span class="filter-hint">{{ text.rangeHint }}</span>
     </section>
 
     <div class="stats-grid">
-      <StatCard label="检测任务" :value="dashboard.totals.totalTasks" unit="次" :icon="DocumentChecked" helper="已完成的检测任务" />
-      <StatCard label="检测图片" :value="dashboard.totals.totalImages" unit="张" :icon="Picture" accent="#7c3aed" helper="历史任务累计处理图片" />
-      <StatCard label="缺陷目标" :value="dashboard.totals.totalObjects" unit="处" :icon="WarningFilled" accent="#f97316" helper="历史结果累计缺陷目标" />
-      <StatCard label="平均任务耗时" :value="dashboard.totals.avgInferenceTimeMs" unit="ms" :decimals="1" :icon="Odometer" accent="#10b981" helper="完成任务的平均总推理耗时" />
+      <StatCard :label="text.totalTasks" :value="dashboard.totals.totalTasks" :unit="text.times" :icon="DocumentChecked" :helper="text.totalTasksHelp" />
+      <StatCard :label="text.totalImages" :value="dashboard.totals.totalImages" :unit="text.images" :icon="Picture" accent="#7c3aed" :helper="text.totalImagesHelp" />
+      <StatCard :label="text.totalObjects" :value="dashboard.totals.totalObjects" :unit="text.objects" :icon="WarningFilled" accent="#f97316" :helper="text.totalObjectsHelp" />
+      <StatCard :label="text.avgTime" :value="dashboard.totals.avgInferenceTimeMs" unit="ms" :decimals="1" :icon="Odometer" accent="#10b981" :helper="text.avgTimeHelp" />
     </div>
 
     <div class="dashboard-grid dashboard-grid--primary">
-      <EChartPanel title="每日检测任务趋势" subtitle="按创建日期统计检测任务数量" :option="trendOption" :loading="loading" :empty="dashboard.dailyTrend.length === 0" height="330px" />
-      <EChartPanel title="缺陷类别分布" subtitle="当前账号历史结果中的目标数量" :option="classOption" :loading="loading" :empty="dashboard.classDistribution.length === 0" height="330px" />
+      <EChartPanel :title="text.trendTitle" :subtitle="text.trendSubtitle" :option="trendOption" :loading="loading" :empty="dashboard.dailyTrend.length === 0" height="330px" />
+      <EChartPanel :title="text.classTitle" :subtitle="text.classSubtitle" :option="classOption" :loading="loading" :empty="dashboard.classDistribution.length === 0" height="330px" />
     </div>
     <div class="dashboard-grid dashboard-grid--single">
-      <EChartPanel title="检测场景分布" subtitle="已完成任务在各检测场景中的数量" :option="sceneOption" :loading="loading" :empty="dashboard.sceneDistribution.length === 0" height="300px" />
+      <EChartPanel :title="text.sceneTitle" :subtitle="text.sceneSubtitle" :option="sceneOption" :loading="loading" :empty="dashboard.sceneDistribution.length === 0" height="300px" />
     </div>
   </div>
 </template>
@@ -54,6 +54,7 @@
 <script setup>
 import { DocumentChecked, Filter, Odometer, Picture, Refresh, WarningFilled } from "@element-plus/icons-vue";
 import { computed, onMounted, reactive, ref } from "vue";
+import { useSettingsStore } from '@/stores/settings'
 import { isFrontendBMockMode } from "@/api/models";
 import { getDashboardApi } from "@/api/statistics";
 import EChartPanel from "@/components/charts/EChartPanel.vue";
@@ -62,6 +63,7 @@ import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 
 const loading = ref(false);
+const settingsStore = useSettingsStore()
 const pageError = ref("");
 const filters = reactive({ days: 30 });
 const dashboard = reactive({
@@ -73,17 +75,79 @@ const dashboard = reactive({
 });
 const axisStyle = { axisLine: { lineStyle: { color: "#d0d5dd" } }, axisLabel: { color: "#667085" } };
 
+const text = computed(() => settingsStore.isEnglish ? {
+  title: 'Dashboard',
+  description: 'Aggregate detection tasks, images, defect classes and scenes from the current account.',
+  updatedAt: 'Updated at',
+  refresh: 'Refresh',
+  reload: 'Reload',
+  period: 'Period',
+  lastDays: (days) => `Last ${days} days`,
+  apply: 'Apply',
+  rangeHint: 'Statistics are provided by `/history/statistics/summary`.',
+  totalTasks: 'Detection tasks',
+  totalImages: 'Images',
+  totalObjects: 'Defects',
+  avgTime: 'Average time',
+  times: '',
+  images: '',
+  objects: '',
+  totalTasksHelp: 'Completed detection tasks',
+  totalImagesHelp: 'Images processed by historical tasks',
+  totalObjectsHelp: 'Defect targets in historical results',
+  avgTimeHelp: 'Average total inference time',
+  trendTitle: 'Daily Detection Trend',
+  trendSubtitle: 'Task count by creation date',
+  classTitle: 'Defect Class Distribution',
+  classSubtitle: 'Target counts in historical results',
+  sceneTitle: 'Detection Scene Distribution',
+  sceneSubtitle: 'Completed tasks by scene',
+  taskSeries: 'Detection tasks',
+  objectUnit: 'defects',
+  loadFailed: 'Failed to load dashboard data',
+} : {
+  title: '数据看板',
+  description: '使用当前账号真实检测历史聚合任务、图片、缺陷类别和检测场景数据。',
+  updatedAt: '更新于',
+  refresh: '刷新',
+  reload: '重新加载',
+  period: '统计周期',
+  lastDays: (days) => `最近 ${days} 天`,
+  apply: '应用',
+  rangeHint: '统计范围由后端 `/history/statistics/summary` 接口提供',
+  totalTasks: '检测任务',
+  totalImages: '检测图片',
+  totalObjects: '缺陷目标',
+  avgTime: '平均任务耗时',
+  times: '次',
+  images: '张',
+  objects: '处',
+  totalTasksHelp: '已完成的检测任务',
+  totalImagesHelp: '历史任务累计处理图片',
+  totalObjectsHelp: '历史结果累计缺陷目标',
+  avgTimeHelp: '完成任务的平均总推理耗时',
+  trendTitle: '每日检测任务趋势',
+  trendSubtitle: '按创建日期统计检测任务数量',
+  classTitle: '缺陷类别分布',
+  classSubtitle: '当前账号历史结果中的目标数量',
+  sceneTitle: '检测场景分布',
+  sceneSubtitle: '已完成任务在各检测场景中的数量',
+  taskSeries: '检测任务',
+  objectUnit: '处',
+  loadFailed: '看板数据加载失败',
+})
+
 const trendOption = computed(() => ({
   tooltip: { trigger: "axis" },
   color: ["#2563eb"],
   grid: { left: 52, right: 18, top: 28, bottom: 34 },
   xAxis: { type: "category", data: dashboard.dailyTrend.map((item) => item.date), ...axisStyle },
   yAxis: { type: "value", minInterval: 1, splitLine: { lineStyle: { color: "#edf0f5" } }, ...axisStyle },
-  series: [{ name: "检测任务", type: "line", smooth: true, symbolSize: 7, areaStyle: { color: "rgba(37,99,235,.08)" }, data: dashboard.dailyTrend.map((item) => item.tasks) }],
+  series: [{ name: text.value.taskSeries, type: "line", smooth: true, symbolSize: 7, areaStyle: { color: "rgba(37,99,235,.08)" }, data: dashboard.dailyTrend.map((item) => item.tasks) }],
 }));
 
 const classOption = computed(() => ({
-  tooltip: { trigger: "item", formatter: "{b}<br/>{c} 处 · {d}%" },
+  tooltip: { trigger: "item", formatter: `{b}<br/>{c} ${text.value.objectUnit} · {d}%` },
   color: ["#2563eb", "#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#f97316"],
   legend: { type: "scroll", orient: "vertical", right: 4, top: "middle" },
   series: [{ type: "pie", radius: ["43%", "70%"], center: ["38%", "53%"], avoidLabelOverlap: true, itemStyle: { borderColor: "#fff", borderWidth: 3 }, label: { show: false }, emphasis: { label: { show: true, fontSize: 15, fontWeight: "bold" } }, data: dashboard.classDistribution }],
@@ -103,9 +167,9 @@ async function loadDashboard() {
   pageError.value = "";
   try {
     const data = await getDashboardApi({ days: filters.days });
-    Object.assign(dashboard, data, { updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }) });
+    Object.assign(dashboard, data, { updatedAt: new Date().toLocaleString(settingsStore.isEnglish ? "en-US" : "zh-CN", { hour12: false }) });
   } catch (error) {
-    pageError.value = getApiErrorMessage(error, "看板数据加载失败");
+    pageError.value = getApiErrorMessage(error, text.value.loadFailed);
   } finally {
     loading.value = false;
   }

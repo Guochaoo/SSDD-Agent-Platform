@@ -1,7 +1,7 @@
 <template>
   <div class="message-list">
     <div v-if="!messages.length && !isStreaming" class="empty-state">
-      <p>开始对话，询问钢铁表面缺陷相关问题。</p>
+      <p>{{ text.empty }}</p>
     </div>
 
     <MessageItem
@@ -23,6 +23,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
 import MessageItem from './MessageItem.vue'
 import ToolCallDisplay from './ToolCallDisplay.vue'
 import ThinkingIndicator from './ThinkingIndicator.vue'
@@ -32,6 +33,12 @@ const props = defineProps({
   toolCall: { type: Object, default: null },
   isStreaming: { type: Boolean, default: false },
 })
+
+const settingsStore = useSettingsStore()
+const text = computed(() => settingsStore.isEnglish
+  ? { empty: 'Start a chat and ask about steel surface defects.' }
+  : { empty: '开始对话，询问钢铁表面缺陷相关问题。' },
+)
 
 defineEmits(['regenerate'])
 
@@ -48,7 +55,7 @@ const showThinking = computed(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 0;
-  background: #fff;
+  background: var(--app-bg);
 }
 
 .empty-state {

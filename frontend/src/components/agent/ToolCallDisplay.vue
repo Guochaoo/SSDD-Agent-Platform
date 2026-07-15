@@ -3,32 +3,47 @@
     <!-- Running state -->
     <div v-if="toolCall.status === 'running'" class="tool-running">
       <div class="tool-dot" />
-      <span>正在调用缺陷检测工具…</span>
+      <span>{{ text.running }}</span>
     </div>
 
     <!-- Result state: keep this as a status trace only. Detection details are rendered by DetectionResultCard. -->
     <div v-else-if="toolCall.status === 'success'" class="tool-result">
       <div class="result-header">
         <el-icon :size="16" color="#67c23a"><CircleCheck /></el-icon>
-        <span>缺陷检测工具调用成功</span>
+        <span>{{ text.success }}</span>
       </div>
     </div>
 
     <!-- Error state -->
     <div v-else-if="toolCall.status === 'error'" class="tool-error">
       <el-icon :size="16"><CircleClose /></el-icon>
-      <span>工具调用失败</span>
+      <span>{{ text.error }}</span>
     </div>
   </div>
 </template>
 
 <script setup>
 import { CircleCheck, CircleClose } from '@element-plus/icons-vue'
+import { computed } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
 
 const props = defineProps({
   toolCall: { type: Object, default: null },
 })
 
+const settingsStore = useSettingsStore()
+const text = computed(() => settingsStore.isEnglish
+  ? {
+      running: 'Calling defect detection tool...',
+      success: 'Defect detection tool succeeded',
+      error: 'Tool call failed',
+    }
+  : {
+      running: '正在调用缺陷检测工具…',
+      success: '缺陷检测工具调用成功',
+      error: '工具调用失败',
+    },
+)
 </script>
 
 <style lang="scss" scoped>
@@ -46,9 +61,9 @@ const props = defineProps({
   font-size: 13px;
   color: $text-secondary;
   padding: 8px 12px;
-  background: #fff;
+  background: var(--app-surface);
   border-radius: 8px;
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--app-border);
 }
 
 .tool-dot {
@@ -65,8 +80,8 @@ const props = defineProps({
 
 /* ── Result ── */
 .tool-result {
-  background: #fff;
-  border: 1px solid #f0f0f0;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -79,7 +94,7 @@ const props = defineProps({
   font-size: 13px;
   font-weight: 600;
   color: #67c23a;
-  background: #f6fdf3;
+  background: color-mix(in srgb, #67c23a 12%, var(--app-surface));
 }
 
 /* ── Error ── */
@@ -90,7 +105,7 @@ const props = defineProps({
   font-size: 13px;
   color: #f56c6c;
   padding: 8px 12px;
-  background: #fef0f0;
+  background: color-mix(in srgb, #f56c6c 12%, var(--app-surface));
   border-radius: 8px;
 }
 </style>
