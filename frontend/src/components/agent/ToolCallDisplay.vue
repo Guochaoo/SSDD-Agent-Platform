@@ -1,9 +1,11 @@
 <template>
   <div v-if="toolCall" class="tool-call">
+    <!-- Agent label -->
+    <div v-if="toolCall.agentLabel" class="agent-label">{{ toolCall.agentLabel }}</div>
     <!-- Running state -->
     <div v-if="toolCall.status === 'running'" class="tool-running">
       <div class="tool-dot" />
-      <span>{{ text.running }}</span>
+      <span>{{ toolCall.name ? `${text.running} (${toolCall.name})` : text.running }}</span>
     </div>
 
     <!-- Result state: keep this as a status trace only. Detection details are rendered by DetectionResultCard. -->
@@ -51,6 +53,15 @@ const text = computed(() => settingsStore.isEnglish
   margin: 8px auto 16px;
   max-width: 780px;
   padding: 0 24px;
+}
+
+.agent-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8F8AB0;
+  margin-bottom: 4px;
+  padding-left: 2px;
+  letter-spacing: 0.3px;
 }
 
 /* ── Running ── */

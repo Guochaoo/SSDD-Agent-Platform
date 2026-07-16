@@ -31,8 +31,9 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   background: var(--app-bg);
-  overflow-y: auto;
+  overflow: hidden;
   padding: clamp(16px, 2vw, 28px);
+  padding-bottom: 0;
 
   > :deep(*) {
     width: min(100%, var(--app-content-max));

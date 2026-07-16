@@ -2,8 +2,9 @@
   <!-- User message: subtle, right-aligned chip -->
   <div v-if="message.role === 'user'" class="user-msg">
     <img
-      v-if="message.imagePreviewUrl"
-      :src="message.imagePreviewUrl"
+      v-for="(url, i) in message.imagePreviewUrls"
+      :key="i"
+      :src="url"
       class="user-image"
       :alt="text.uploadAlt"
     />
