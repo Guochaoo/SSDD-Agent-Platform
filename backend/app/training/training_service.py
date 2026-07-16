@@ -458,6 +458,10 @@ class TrainingService:
                 "device": task.device,
                 "batch_size": task.batch_size,
                 "img_size": task.img_size,
+                "dataset_path": task.dataset_path,
+                "dataset_name": os.path.basename(os.path.normpath(task.dataset_path)) if task.dataset_path else None,
+                "dataset_size": task.dataset_size,
+                "data_yaml": task.data_yaml,
                 "started_at": str(task.started_at) if task.started_at else None,
                 "completed_at": str(task.completed_at) if task.completed_at else None,
                 "error_message": task.error_message,
@@ -936,6 +940,8 @@ class TrainingService:
 
         if model_version:
             model_version.version = version
+            model_version.model_name = f"{task.model_name}_{scene.name}_{version}"
+            model_version.model_type = task.model_name
             model_version.model_path = exported_weight
             model_version.minio_url = minio_url
             model_version.map50 = overall.get("map50")
