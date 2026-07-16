@@ -51,3 +51,39 @@ def test_save_message_keeps_image_only_user_messages(db_session, monkeypatch, tm
     assert saved.image_path == str(image_path)
     assert session.message_count == 1
     assert session.title == "图片消息"
+
+
+def test_chat_stream_initializes_image_path_for_text_only_requests(monkeypatch):
+    """Text-only requests must reach the history save path without NameError."""
+    captured = {}
+
+    async def fake_chat_stream(**kwargs):
+        yield {"type": "text_chunk", "content": "收到"}
+
+    monkeypatch.setattr(agent.supervisor_agent, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(agent, "_load_history", lambda *_args: [])
+    monkeypatch.setattr(
+        agent,
+        "_save_message",
+        lambda *args, **kwargs: captured.setdefault("calls", []).append((args, kwargs)),
+    )
+
+    class User:
+        id = 7
+
+    class Request:
+        headers = {"content-type": "application/json"}
+
+        async def json(self):
+            return {"message": "你好", "session_id": "text-only"}
+
+    import asyncio
+
+    response = asyncio.run(agent.chat_stream(Request(), _current_user=User()))
+    asyncio.run(_consume(response.body_iterator))
+    assert captured["calls"][0][1]["image_path"] is None
+
+
+async def _consume(iterator):
+    async for _ in iterator:
+        pass

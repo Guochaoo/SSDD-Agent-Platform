@@ -202,6 +202,7 @@ async def chat_stream(
 
     message = ""
     image_paths = []
+    image_path = None
     model = None
     session_id = None
 

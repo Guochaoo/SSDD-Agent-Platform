@@ -286,10 +286,21 @@ class SupervisorAgent:
 
         graph = self._get_graph(model, user_id)
 
-        # 构建初始 state
-        from langchain_core.messages import HumanMessage
+        # 构建初始 state。API 层已经加载了当前用户所属会话的历史，必须
+        # 转换为 LangChain 消息后传入图，否则每次请求都会退化为单轮对话。
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        history_messages = []
+        for item in chat_history or []:
+            role = item.get("role") if isinstance(item, dict) else None
+            content = item.get("content", "") if isinstance(item, dict) else str(item)
+            if role == "user":
+                history_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                history_messages.append(AIMessage(content=content))
+
         initial_state: AgentState = {
-            "messages": [HumanMessage(content=message)],
+            "messages": [*history_messages, HumanMessage(content=message)],
             "next_agent": "",
             "current_agent": "",
             "user_id": user_id,
