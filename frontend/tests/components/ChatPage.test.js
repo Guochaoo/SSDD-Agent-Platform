@@ -26,4 +26,12 @@ describe('ChatPage integration', () => {
     expect(page).toContain('isQuickDetecting.value = true')
     expect(page).toContain(':disabled="agentStore.isStreaming || isQuickDetecting"')
   })
+
+  it('sends the user message without exposing a client-side context prompt', () => {
+    const page = readFileSync(resolve(process.cwd(), 'src/views/ChatPage.vue'), 'utf8')
+
+    expect(page).toContain("formData.append('message', text)")
+    expect(page).not.toContain('buildContextualMessage')
+    expect(page).not.toContain('[前端上下文]')
+  })
 })
