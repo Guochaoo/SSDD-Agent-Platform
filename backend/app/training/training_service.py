@@ -759,10 +759,12 @@ class TrainingService:
                 }
 
             curve_results = results.curves_results
-            pr_curve = {
-                "x": [round(float(value), 4) for value in curve_results[2][1].mean(axis=0)[::10]],
-                "y": [round(float(value), 4) for value in curve_results[3][1].mean(axis=0)[::10]],
-            }
+            # Ultralytics 8.3 returns [PR, F1, precision-confidence,
+            # recall-confidence].  The first curve already contains recall
+            # samples on x and precision samples on y; do not substitute the
+            # two confidence curves here, which would render a mislabeled
+            # recall-vs-precision chart.
+            pr_curve = average_curve(curve_results[0])
             visualization = {
                 "confusion_matrix": {
                     "labels": [model.names.get(i, f"class_{i}") for i in range(len(model.names))] + ["background"],

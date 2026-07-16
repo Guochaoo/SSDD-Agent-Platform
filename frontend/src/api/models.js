@@ -1,10 +1,14 @@
+import { mockModels, mockScenes } from './mockData'
 import request from "@/utils/request";
+
+export const isFrontendBMockMode = import.meta.env.VITE_USE_MOCK === "true";
 
 function unwrap(payload) {
   return payload?.data ?? payload;
 }
 
 export async function getScenesApi() {
+  if (isFrontendBMockMode) return mockScenes;
   const response = unwrap(await request.get("/scenes"));
   return (response?.items ?? response ?? []).map((scene) => ({
     id: String(scene.id),
@@ -15,6 +19,7 @@ export async function getScenesApi() {
 }
 
 export async function getModelsApi(sceneId) {
+  if (isFrontendBMockMode) return mockModels;
   const models = unwrap(await request.get(`/scenes/${sceneId}/models`));
   return (models ?? []).map((model) => ({
     id: String(model.id),
