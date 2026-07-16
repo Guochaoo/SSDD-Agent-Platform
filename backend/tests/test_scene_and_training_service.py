@@ -62,6 +62,33 @@ def test_set_default_model_swaps_atomically(db_session):
     assert m2.is_default is True
 
 
+def test_scene_model_list_keeps_non_default_versions_visible(db_session):
+    user = _make_user(db_session)
+    scene = scene_service.create_scene(db_session, "visible_versions", "Visible versions", "industry", ["crazing"])
+    old_model = training_service.create_model_version(db_session, scene.id, "v1.0.0", "yolo11n", "/models/v1.pt")
+    current_model = training_service.create_model_version(db_session, scene.id, "v3.0.0", "yolo11n", "/models/v3.pt")
+    deleted_model = training_service.create_model_version(db_session, scene.id, "v0.9.0", "yolo11n", "/models/old.pt")
+    scene_service.set_default_model(db_session, scene.id, current_model.id)
+    deleted_model.status = "deleted"
+    db_session.commit()
+
+    models = scene_service.list_model_versions(db_session, scene.id)
+
+    assert [model.id for model in models] == [current_model.id, old_model.id]
+
+
+def test_archived_model_cannot_become_default(db_session):
+    scene = scene_service.create_scene(db_session, "active_default", "Active default", "industry", ["crazing"])
+    model = training_service.create_model_version(db_session, scene.id, "v1.0.0", "yolo11n", "/models/v1.pt")
+    model.status = "archived"
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        scene_service.set_default_model(db_session, scene.id, model.id)
+
+    assert exc.value.status_code == 404
+
+
 def test_training_task_rejects_unknown_scene(db_session):
     user = _make_user(db_session)
     with pytest.raises(HTTPException) as exc:

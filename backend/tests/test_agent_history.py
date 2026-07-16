@@ -87,3 +87,34 @@ def test_chat_stream_initializes_image_path_for_text_only_requests(monkeypatch):
 async def _consume(iterator):
     async for _ in iterator:
         pass
+
+def test_delete_chat_session_removes_persisted_messages(db_session):
+    user = User(username="delete-chat", email="delete-chat@example.com", hashed_password="x")
+    db_session.add(user)
+    db_session.flush()
+    session = ChatSession(user_id=user.id, session_uuid="delete-chat-session")
+    db_session.add(session)
+    db_session.flush()
+    db_session.add(ChatMessage(session_id=session.id, role="user", content="delete me"))
+    db_session.commit()
+
+    result = agent.delete_chat_session(session.session_uuid, current_user=user, db=db_session)
+
+    assert result["id"] == session.session_uuid
+    assert db_session.query(ChatSession).filter_by(id=session.id).first() is None
+    assert db_session.query(ChatMessage).filter_by(session_id=session.id).count() == 0
+
+
+def test_saved_assistant_message_keeps_agent_tool_trace(db_session, monkeypatch):
+    user = User(username="tool-trace", email="tool-trace@example.com", hashed_password="x")
+    db_session.add(user)
+    db_session.commit()
+    monkeypatch.setattr(agent, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+
+    agent._save_message(
+        "tool-trace-session", user.id, "assistant", "done",
+        tool_calls=[{"name": "detect_single_image", "status": "success", "result": "{}"}],
+    )
+
+    saved = db_session.query(ChatMessage).one()
+    assert saved.tool_calls == [{"name": "detect_single_image", "status": "success", "result": "{}"}]

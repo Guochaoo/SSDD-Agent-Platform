@@ -3,7 +3,6 @@
     <ModulePageHeader
       :title="text.title"
       :description="text.description"
-      :mock="false"
     >
       <el-button :icon="Refresh" :loading="loading" @click="loadHistory">
         {{ text.refresh }}

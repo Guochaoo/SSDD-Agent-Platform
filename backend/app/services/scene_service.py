@@ -66,15 +66,38 @@ class SceneService:
         )
 
     @staticmethod
+    def list_model_versions(db: Session, scene_id: int) -> list[ModelVersion]:
+        """Return every user-visible model version for a scene.
+
+        Detection clients must be able to choose an older active version as well
+        as the current default.  ``deleted`` records are intentionally hidden,
+        while archived records remain visible for asset traceability.
+        """
+        SceneService.get_scene(db, scene_id)
+        return (
+            db.query(ModelVersion)
+            .filter(
+                ModelVersion.scene_id == scene_id,
+                ModelVersion.status != "deleted",
+            )
+            .order_by(ModelVersion.is_default.desc(), ModelVersion.created_at.desc())
+            .all()
+        )
+
+    @staticmethod
     def set_default_model(db: Session, scene_id: int, model_version_id: int) -> ModelVersion:
         """切换某场景的默认模型：先把旧默认取消，再把新的设为默认（同一事务）"""
         model = (
             db.query(ModelVersion)
-            .filter(ModelVersion.id == model_version_id, ModelVersion.scene_id == scene_id)
+            .filter(
+                ModelVersion.id == model_version_id,
+                ModelVersion.scene_id == scene_id,
+                ModelVersion.status == "active",
+            )
             .first()
         )
         if not model:
-            raise HTTPException(status_code=404, detail="模型版本不存在或不属于该场景")
+            raise HTTPException(status_code=404, detail="模型版本不存在、不属于该场景或不可用")
 
         try:
             db.query(ModelVersion).filter(

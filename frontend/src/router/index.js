@@ -40,6 +40,12 @@ const routes = [
         meta: { title: '模型训练', icon: 'Cpu' },
       },
       {
+        path: 'files',
+        name: 'Files',
+        component: () => import('@/views/FileBrowserPage.vue'),
+        meta: { title: '文件查看', icon: 'FolderOpened' },
+      },
+      {
         path: 'history',
         name: 'History',
         component: () => import('@/views/HistoryPage.vue'),

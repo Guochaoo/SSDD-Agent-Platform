@@ -60,7 +60,7 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="Epoch" min-width="96">
+        <el-table-column :label="text.epoch" min-width="96">
           <template #default="{ row }">
             {{ row.current_epoch || 0 }}/{{ row.epochs || 0 }}
           </template>
@@ -118,7 +118,7 @@
             <span>{{ text.model }}: {{ selectedTask.model_name }}</span>
             <span>{{ text.dataset }}: {{ formatDataset(selectedTask) }}</span>
             <span>{{ text.device }}: {{ selectedTask.device }}</span>
-            <span>Epoch：{{ selectedTask.current_epoch || 0 }}/{{ selectedTask.epochs || 0 }}</span>
+            <span>{{ text.epoch }}：{{ selectedTask.current_epoch || 0 }}/{{ selectedTask.epochs || 0 }}</span>
           </div>
         </div>
       </template>
@@ -198,9 +198,9 @@
       <template #header>
         <div class="card-header">
           <div>
-            <span class="card-title">评估报告</span>
+            <span class="card-title">{{ text.evaluationReport }}</span>
             <el-tag size="small">
-              {{ evalReport.split === 'test' ? '测试集' : '验证集' }}
+              {{ evalReport.split === 'test' ? text.testSet : text.validationSet }}
             </el-tag>
           </div>
           <span class="card-caption">模型版本 {{ evalReport.model_version || '-' }}</span>
@@ -221,14 +221,14 @@
         </el-col>
       </el-row>
 
-      <div class="subsection-title">每类 AP 分析</div>
+      <div class="subsection-title">{{ text.perClassAp }}</div>
       <el-table
         :data="perClassData"
         stripe
         :row-class-name="tableRowClassName"
         empty-text="评估报告中暂无分类指标"
       >
-        <el-table-column prop="class_name" label="类别" min-width="180" />
+        <el-table-column prop="class_name" :label="text.className" min-width="180" />
         <el-table-column label="AP@50" min-width="140">
           <template #default="{ row }">
             <span :class="{ 'weak-value': row.ap50 < 0.5 }">
@@ -239,7 +239,7 @@
         <el-table-column label="AP@50-95" min-width="140">
           <template #default="{ row }">{{ formatPercent(row.ap50_95) }}</template>
         </el-table-column>
-        <el-table-column label="评价" min-width="120">
+        <el-table-column :label="text.evaluation" min-width="120">
           <template #default="{ row }">
             <el-tag :type="apLevel(row.ap50).type" size="small">
               {{ apLevel(row.ap50).text }}
@@ -248,25 +248,23 @@
         </el-table-column>
       </el-table>
 
-      <el-alert
-        class="plot-notice"
-        type="info"
-        :closable="false"
-        show-icon
-        title="混淆矩阵、PR 曲线和 F1 曲线由后端评估过程生成；当前指导书接口未返回图片访问地址。"
-      />
+      <el-row v-if="evalReport.visualization" :gutter="16" class="chart-grid evaluation-charts">
+        <el-col :xs="24" :lg="8"><div ref="confusionChartRef" class="chart-panel" /></el-col>
+        <el-col :xs="24" :lg="8"><div ref="prChartRef" class="chart-panel" /></el-col>
+        <el-col :xs="24" :lg="8"><div ref="f1ChartRef" class="chart-panel" /></el-col>
+      </el-row>
     </el-card>
 
     <el-dialog
       v-model="showCreateDialog"
-      title="新建训练任务"
+      :title="bilingual('新建训练任务', 'New training task')"
       width="min(620px, 92vw)"
       :close-on-click-modal="false"
     >
       <el-form :model="trainForm" label-width="110px">
-        <el-form-item label="训练数据集">
+        <el-form-item :label="bilingual('训练数据集', 'Training dataset')">
           <div class="dataset-picker">
-            <el-select v-model="trainForm.dataset_path" class="full-width" placeholder="选择已准备的数据集">
+            <el-select v-model="trainForm.dataset_path" class="full-width" :placeholder="bilingual('选择已准备的数据集', 'Select a prepared dataset')">
               <el-option
                 v-for="dataset in datasets"
                 :key="dataset.path || dataset.name"
@@ -281,13 +279,13 @@
               :auto-upload="false"
               :on-change="handleDatasetUpload"
             >
-              <el-button :loading="uploadingDataset" :icon="UploadFilled">上传 ZIP</el-button>
+              <el-button :loading="uploadingDataset" :icon="UploadFilled">{{ bilingual('上传 ZIP', 'Upload ZIP') }}</el-button>
             </el-upload>
           </div>
-          <span class="form-hint">ZIP 根目录必须包含 data.yaml</span>
+          <span class="form-hint">{{ bilingual('ZIP 根目录必须包含 data.yaml', 'The ZIP root must contain data.yaml') }}</span>
         </el-form-item>
-        <el-form-item label="检测场景">
-          <el-select v-model="trainForm.scene_id" class="full-width" placeholder="选择场景">
+        <el-form-item :label="bilingual('检测场景', 'Detection scene')">
+          <el-select v-model="trainForm.scene_id" class="full-width" :placeholder="bilingual('选择场景', 'Select a scene')">
             <el-option
               v-for="scene in scenes"
               :key="scene.id"
@@ -297,7 +295,7 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="基础模型">
+        <el-form-item :label="bilingual('基础模型', 'Base model')">
           <el-select v-model="trainForm.model_name" class="full-width">
             <el-option label="YOLO11n (Nano，最快)" value="yolo11n" />
             <el-option label="YOLO11s (Small)" value="yolo11s" />
@@ -307,15 +305,15 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="训练轮数">
+        <el-form-item :label="bilingual('训练轮数', 'Epochs')">
           <el-slider v-model="trainForm.epochs" :min="10" :max="500" :step="10" show-input />
         </el-form-item>
 
-        <el-form-item label="批次大小">
+        <el-form-item :label="bilingual('批次大小', 'Batch size')">
           <el-input-number v-model="trainForm.batch_size" :min="1" :max="64" :step="1" />
         </el-form-item>
 
-        <el-form-item label="图像尺寸">
+        <el-form-item :label="bilingual('图像尺寸', 'Image size')">
           <el-select v-model="trainForm.img_size" class="full-width">
             <el-option label="416" :value="416" />
             <el-option label="512" :value="512" />
@@ -324,7 +322,7 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="训练设备">
+        <el-form-item :label="bilingual('训练设备', 'Device')">
           <el-radio-group v-model="trainForm.device">
             <el-radio value="cpu">CPU（本地）</el-radio>
             <el-radio value="0">GPU:0</el-radio>
@@ -332,7 +330,7 @@
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item label="优化器">
+        <el-form-item :label="bilingual('优化器', 'Optimizer')">
           <el-select v-model="trainForm.optimizer" class="full-width">
             <el-option label="SGD（推荐）" value="SGD" />
             <el-option label="Adam" value="Adam" />
@@ -340,7 +338,7 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="初始学习率">
+        <el-form-item :label="bilingual('初始学习率', 'Initial learning rate')">
           <el-input-number
             v-model="trainForm.lr0"
             :min="0.0001"
@@ -352,24 +350,24 @@
       </el-form>
 
       <template #footer>
-        <el-button @click="showCreateDialog = false">取消</el-button>
+        <el-button @click="showCreateDialog = false">{{ bilingual('取消', 'Cancel') }}</el-button>
         <el-button type="primary" :loading="creating" @click="createTask">
-          启动训练
+          {{ bilingual('启动训练', 'Start training') }}
         </el-button>
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="showExportDialog"
-      title="导出模型"
+      :title="bilingual('导出模型', 'Export model')"
       width="min(520px, 92vw)"
       :close-on-click-modal="false"
     >
       <el-form :model="exportForm" label-width="100px">
-        <el-form-item label="版本号">
+        <el-form-item :label="bilingual('版本号', 'Version')">
           <el-input v-model="exportForm.version" placeholder="留空则自动生成，如 v1.0.0" />
         </el-form-item>
-        <el-form-item label="版本描述">
+        <el-form-item :label="bilingual('版本描述', 'Description')">
           <el-input
             v-model="exportForm.description"
             type="textarea"
@@ -377,25 +375,25 @@
             placeholder="描述本次训练的主要变更"
           />
         </el-form-item>
-        <el-form-item label="设为默认">
+        <el-form-item :label="bilingual('设为默认', 'Set as default')">
           <el-switch v-model="exportForm.set_default" />
           <span class="form-hint">设为该场景的默认检测模型</span>
         </el-form-item>
-        <el-form-item label="上传 MinIO">
+        <el-form-item :label="bilingual('上传 MinIO', 'Upload to MinIO')">
           <el-switch v-model="exportForm.upload_minio" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showExportDialog = false">取消</el-button>
+        <el-button @click="showExportDialog = false">{{ bilingual('取消', 'Cancel') }}</el-button>
         <el-button type="primary" :loading="exporting" @click="exportModel">
-          确认导出
+          {{ bilingual('确认导出', 'Confirm export') }}
         </el-button>
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="showPredictDialog"
-      title="测试图验证"
+      :title="bilingual('测试图验证', 'Test image validation')"
       width="min(980px, 94vw)"
       :close-on-click-modal="false"
       @closed="disposePredictChart"
@@ -545,6 +543,20 @@ const text = computed(() => settingsStore.isEnglish ? {
   excellent: 'Excellent',
   good: 'Good',
   improve: 'Needs work',
+  epoch: 'Epoch',
+  boxLoss: 'Box Loss',
+  clsLoss: 'Cls Loss',
+  precision: 'Precision',
+  recall: 'Recall',
+  evaluationReport: 'Evaluation report',
+  validationSet: 'Validation set',
+  testSet: 'Test set',
+  perClassAp: 'Per-class AP analysis',
+  className: 'Class',
+  evaluation: 'Evaluation',
+  confusionMatrix: 'Confusion Matrix',
+  prCurve: 'PR Curve',
+  f1Curve: 'F1 Curve',
   dateLocale: 'en-US',
   fetchTasksFailed: 'Failed to load training tasks',
   fetchDatasetsFailed: 'Failed to load training datasets',
@@ -583,6 +595,20 @@ const text = computed(() => settingsStore.isEnglish ? {
   excellent: '优秀',
   good: '良好',
   improve: '需改进',
+  epoch: '轮次',
+  boxLoss: '定位损失',
+  clsLoss: '分类损失',
+  precision: '精确率',
+  recall: '召回率',
+  evaluationReport: '评估报告',
+  validationSet: '验证集',
+  testSet: '测试集',
+  perClassAp: '各类别 AP 分析',
+  className: '类别',
+  evaluation: '评价',
+  confusionMatrix: '混淆矩阵',
+  prCurve: 'PR 曲线',
+  f1Curve: 'F1 曲线',
   dateLocale: 'zh-CN',
   fetchTasksFailed: '训练任务列表加载失败',
   fetchDatasetsFailed: '训练数据集加载失败',
@@ -602,6 +628,13 @@ let lossChart = null
 let mapChart = null
 let pollTimer = null
 
+const confusionChartRef = ref(null)
+const prChartRef = ref(null)
+const f1ChartRef = ref(null)
+let confusionChart = null
+let prChart = null
+let f1Chart = null
+
 const evalReport = ref(null)
 const validating = ref(false)
 
@@ -611,7 +644,7 @@ const downloading = ref(false)
 const exportForm = ref({
   version: '',
   description: '',
-  set_default: true,
+  set_default: false,
   upload_minio: true,
 })
 
@@ -645,10 +678,10 @@ const metricCards = computed(() => {
   const metric = task.latest_metric
 
   return [
-    { label: 'Epoch', value: `${metric?.epoch ?? task.current_epoch ?? 0}/${task.epochs ?? 0}` },
-    { label: 'Box Loss', value: formatMetric(metric?.box_loss) },
-    { label: 'Cls Loss', value: formatMetric(metric?.cls_loss) },
-    { label: 'Precision', value: formatPercent(metric?.precision) },
+    { label: text.value.epoch, value: `${metric?.epoch ?? task.current_epoch ?? 0}/${task.epochs ?? 0}` },
+    { label: text.value.boxLoss, value: formatMetric(metric?.box_loss) },
+    { label: text.value.clsLoss, value: formatMetric(metric?.cls_loss) },
+    { label: text.value.precision, value: formatPercent(metric?.precision) },
     { label: 'mAP@50', value: formatPercent(metric?.map50) },
     { label: 'mAP@50-95', value: formatPercent(metric?.map50_95) },
   ]
@@ -660,12 +693,12 @@ const evalMetricCards = computed(() => {
 
   return [
     {
-      label: 'Precision',
+      label: text.value.precision,
       value: formatPercent(overall.precision),
       color: overall.precision > 0.7 ? '#67c23a' : '#e6a23c',
     },
     {
-      label: 'Recall',
+      label: text.value.recall,
       value: formatPercent(overall.recall),
       color: overall.recall > 0.7 ? '#67c23a' : '#e6a23c',
     },
@@ -731,6 +764,12 @@ function normalizeProgress(value) {
   const progress = Number(value)
   if (!Number.isFinite(progress)) return 0
   return Math.min(100, Math.max(0, Math.round(progress)))
+}
+
+// Keep the existing component-local translation structure lightweight for
+// form labels that are only used once in this workbench.
+function bilingual(zh, en) {
+  return settingsStore.isEnglish ? en : zh
 }
 
 function formatDataset(task) {
@@ -1039,6 +1078,8 @@ async function validateModel() {
       iou: 0.6,
     })
     evalReport.value = response
+    await nextTick()
+    renderEvaluationCharts(response.visualization)
     ElMessage.success(`评估完成：mAP@50 ${formatPercent(response.overall?.map50)}`)
   } catch (error) {
     console.error('模型评估失败', error)
@@ -1046,6 +1087,40 @@ async function validateModel() {
   } finally {
     validating.value = false
   }
+}
+
+function renderEvaluationCharts(visualization) {
+  confusionChart?.dispose()
+  prChart?.dispose()
+  f1Chart?.dispose()
+  if (!visualization) return
+
+  const matrix = visualization.confusion_matrix || {}
+  const labels = matrix.labels || []
+  const values = (matrix.matrix || []).flatMap((row, y) => row.map((value, x) => [x, y, value]))
+  confusionChart = confusionChartRef.value ? echarts.init(confusionChartRef.value) : null
+  confusionChart?.setOption({
+    title: { text: text.value.confusionMatrix, left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { position: 'top' },
+    grid: { left: 82, right: 20, top: 50, bottom: 80 },
+    xAxis: { type: 'category', data: labels, axisLabel: { rotate: 35 } },
+    yAxis: { type: 'category', data: labels },
+    visualMap: { min: 0, max: Math.max(1, ...values.map((item) => item[2])), calculable: true, orient: 'horizontal', left: 'center', bottom: 0 },
+    series: [{ type: 'heatmap', data: values, label: { show: true }, emphasis: { itemStyle: { shadowBlur: 8 } } }],
+  })
+
+  const renderLine = (chartRef, title, curve, xName, yName) => {
+    const chart = chartRef.value ? echarts.init(chartRef.value) : null
+    chart?.setOption({
+      title: { text: title, left: 'center', textStyle: { fontSize: 14 } }, tooltip: { trigger: 'axis' },
+      grid: { left: 52, right: 24, top: 50, bottom: 46 },
+      xAxis: { type: 'value', name: xName, min: 0, max: 1 }, yAxis: { type: 'value', name: yName, min: 0, max: 1 },
+      series: [{ type: 'line', smooth: true, showSymbol: false, data: (curve?.x || []).map((x, index) => [x, curve.y?.[index]]) }],
+    })
+    return chart
+  }
+  prChart = renderLine(prChartRef, text.value.prCurve, visualization.pr_curve, text.value.recall, text.value.precision)
+  f1Chart = renderLine(f1ChartRef, text.value.f1Curve, visualization.f1_curve, 'Confidence', 'F1')
 }
 
 async function exportModel() {
@@ -1165,6 +1240,9 @@ function resizeCharts() {
   lossChart?.resize()
   mapChart?.resize()
   predictChart?.resize()
+  confusionChart?.resize()
+  prChart?.resize()
+  f1Chart?.resize()
 }
 
 onMounted(() => {
@@ -1178,6 +1256,9 @@ onBeforeUnmount(() => {
   lossChart?.dispose()
   mapChart?.dispose()
   disposePredictChart()
+  confusionChart?.dispose()
+  prChart?.dispose()
+  f1Chart?.dispose()
   window.removeEventListener('resize', resizeCharts)
 })
 </script>

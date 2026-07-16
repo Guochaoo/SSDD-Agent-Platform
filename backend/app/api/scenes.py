@@ -3,7 +3,7 @@
 - GET  /api/scenes            场景列表
 - GET  /api/scenes/{scene_id} 场景详情
 - POST /api/scenes            创建场景（管理员）
-- POST /api/scenes/{scene_id}/default-model  切换该场景的默认模型（管理员）
+- POST /api/scenes/{scene_id}/default-model  切换该场景的默认模型（已登录用户）
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database.session import get_db
 from app.entity.db_models import User
-from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief
+from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief, ModelVersionResponse
 from app.services.scene_service import scene_service
 
 router = APIRouter(prefix="/api/scenes", tags=["检测场景"])
@@ -45,6 +45,16 @@ def get_scene(scene_id: int, db: Session = Depends(get_db)):
     return _scene_to_response(db, scene)
 
 
+@router.get("/{scene_id}/models", response_model=list[ModelVersionResponse])
+def list_scene_models(
+    scene_id: int,
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List every non-deleted model version that can be inspected or selected."""
+    return scene_service.list_model_versions(db, scene_id)
+
+
 @router.post("", response_model=SceneResponse, status_code=201)
 def create_scene(
     payload: SceneCreate,
@@ -70,10 +80,9 @@ def create_scene(
 def set_default_model(
     scene_id: int,
     model_version_id: int,
-    current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """切换某场景的默认模型版本，需要管理员权限"""
-    _require_admin(current_user)
+    """切换某场景的默认模型版本，所有已登录用户均可操作。"""
     model = scene_service.set_default_model(db, scene_id, model_version_id)
     return ModelVersionBrief.model_validate(model)

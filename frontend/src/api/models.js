@@ -1,15 +1,10 @@
-import { mockModels, mockScenes } from "./mockData";
 import request from "@/utils/request";
-
-// Mock data is opt-in. Missing environment configuration must use the real API.
-export const isFrontendBMockMode = import.meta.env.VITE_USE_MOCK === "true";
 
 function unwrap(payload) {
   return payload?.data ?? payload;
 }
 
 export async function getScenesApi() {
-  if (isFrontendBMockMode) return mockScenes;
   const response = unwrap(await request.get("/scenes"));
   return (response?.items ?? response ?? []).map((scene) => ({
     id: String(scene.id),
@@ -20,13 +15,8 @@ export async function getScenesApi() {
 }
 
 export async function getModelsApi(sceneId) {
-  if (isFrontendBMockMode) return mockModels;
-  // The current backend exposes the active default model on the scene detail.
-  // Keep this adapter so a future /models endpoint can be added without changing
-  // page components.
-  const scene = unwrap(await request.get(`/scenes/${sceneId}`));
-  const models = scene?.default_model ? [scene.default_model] : [];
-  return models.map((model) => ({
+  const models = unwrap(await request.get(`/scenes/${sceneId}/models`));
+  return (models ?? []).map((model) => ({
     id: String(model.id),
     version: model.version,
     modelName: model.model_name ?? model.modelName,
@@ -36,5 +26,14 @@ export async function getModelsApi(sceneId) {
     recall: model.recall,
     isDefault: model.is_default ?? model.isDefault ?? false,
     status: model.status ?? "active",
+    modelPath: model.model_path ?? model.modelPath ?? '',
+    fileSize: model.file_size ?? model.fileSize ?? null,
+    createdAt: model.created_at ?? model.createdAt ?? null,
   }));
+}
+
+export function setDefaultModelApi(sceneId, modelVersionId) {
+  return request.post(`/scenes/${sceneId}/default-model`, null, {
+    params: { model_version_id: Number(modelVersionId) },
+  })
 }

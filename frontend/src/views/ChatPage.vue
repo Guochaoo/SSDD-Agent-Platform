@@ -186,7 +186,6 @@ import { useUserStore } from '@/stores/user'
 import { DEFAULT_LLM_MODEL_VALUE, useLlmStore } from '@/stores/llm'
 import {
   getAgentDetectionHistoryApi,
-  searchAgentKnowledgeApi,
   streamAgentChat,
 } from '@/api/agent'
 import { detectBatchApi, detectSingleApi } from '@/api/detection'
@@ -664,10 +663,7 @@ async function checkAgentToolContracts() {
   if (!localStorage.getItem('ssdd_token')) return
 
   try {
-    await Promise.allSettled([
-      getAgentDetectionHistoryApi({ page: 1, pageSize: 1 }),
-      searchAgentKnowledgeApi('钢铁表面缺陷', { limit: 1 }),
-    ])
+    await getAgentDetectionHistoryApi({ page: 1, pageSize: 1 })
   } catch {
     // Contract probes are best-effort and must not block chat.
   }
@@ -695,12 +691,19 @@ checkAgentToolContracts()
 <style lang="scss" scoped>
 .chat-page {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
 
   &.hero {
     justify-content: center;
+  }
+
+  &:not(.hero) {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
   }
 }
 
@@ -946,6 +949,7 @@ checkAgentToolContracts()
 
 /* ── Chat bottom (input area fixed at bottom via flex) ── */
 .chat-bottom {
+  position: relative;
   padding: 12px 16px 16px;
   background: linear-gradient(to top, var(--app-bg) 80%, transparent);
   flex-shrink: 0;

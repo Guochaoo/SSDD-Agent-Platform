@@ -1,10 +1,4 @@
 import request from "@/utils/request";
-import { isFrontendBMockMode } from "./models";
-import {
-  mockGetTrainingDetail,
-  mockGetTrainingTasks,
-  mockStartTraining,
-} from "./mockData";
 
 function unwrap(payload) {
   return payload?.data ?? payload;
@@ -51,13 +45,11 @@ function normalizeMetric(metric) {
 }
 
 export async function getTrainingTasksApi() {
-  if (isFrontendBMockMode) return mockGetTrainingTasks();
   const response = unwrap(await request.get("/training/tasks"));
   return (response?.items ?? response ?? []).map(normalizeTask);
 }
 
 export async function getTrainingDetailApi(taskId) {
-  if (isFrontendBMockMode) return mockGetTrainingDetail(taskId);
   const [status, metrics] = await Promise.all([
     request.get(`/training/status/${taskId}`),
     request.get(`/training/metrics/${taskId}`),
@@ -72,7 +64,6 @@ export async function getTrainingDetailApi(taskId) {
 }
 
 export async function startTrainingApi(payload) {
-  if (isFrontendBMockMode) return mockStartTraining(payload);
   const requestPayload = {
     scene_id: Number(payload.sceneId),
     model_name: payload.modelName,

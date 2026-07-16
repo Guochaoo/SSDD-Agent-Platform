@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.agent.supervisor import supervisor_agent
@@ -151,11 +151,73 @@ def get_chat_session(
                 "role": message.role,
                 "content": message.content,
                 "has_image": bool(message.image_path),
+                "image_url": f"/api/agent/sessions/{session_id}/messages/{message.id}/image" if message.image_path else None,
+                "tool_calls": message.tool_calls or [],
                 "created_at": message.created_at,
             }
             for message in messages
         ],
     }
+
+
+@router.get("/sessions/{session_id}/messages/{message_id}/image")
+def get_chat_message_image(
+    session_id: str,
+    message_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Serve a persisted chat attachment only to the session owner."""
+    message = (
+        db.query(ChatMessage)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+            ChatMessage.id == message_id,
+        )
+        .first()
+    )
+    if not message or not message.image_path:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    image_path = _validate_uploaded_image_path(message.image_path)
+    return FileResponse(image_path)
+
+
+@router.delete("/sessions/{session_id}")
+def delete_chat_session(
+    session_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete one of the current user's persisted chat sessions and messages."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    image_paths = [path for (path,) in db.query(ChatMessage.image_path).filter(
+        ChatMessage.session_id == session.id,
+        ChatMessage.image_path.isnot(None),
+    ).all()]
+    db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete(
+        synchronize_session=False
+    )
+    db.delete(session)
+    db.commit()
+
+    for image_path in image_paths:
+        try:
+            os.unlink(_validate_uploaded_image_path(image_path))
+        except (FileNotFoundError, HTTPException, OSError):
+            pass
+    return {"id": session_id, "message": "会话已删除"}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -256,6 +318,7 @@ async def chat_stream(
 
     async def event_generator():
         full_reply = ""
+        tool_calls = []
         try:
             async for event in supervisor_agent.chat_stream(
                 message=message, image_paths=image_paths or None, model=model, chat_history=history, user_id=user_id
@@ -268,8 +331,13 @@ async def chat_stream(
                 elif event_type == "agent_switch":
                     yield f"data: {json.dumps({'type': 'agent_switch', 'agent': event['agent'], 'label': event['label']}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_call":
+                    tool_calls.append({"name": event["tool"], "status": "running", "input": event.get("input", {})})
                     yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': event['tool'], 'input': event.get('input', {}), 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_result":
+                    for tool_call in reversed(tool_calls):
+                        if tool_call["name"] == event["tool"]:
+                            tool_call.update({"status": "success", "result": event["result"]})
+                            break
                     yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event['tool'], 'result': event['result'], 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
                 elif event_type == "error":
                     yield f"data: {json.dumps({'type': 'error', 'message': event['content']}, ensure_ascii=False)}\n\n"
@@ -277,7 +345,7 @@ async def chat_stream(
             # ── save to history ──
             if session_id and (message or full_reply):
                 _save_message(session_id, user_id, "user", message, image_path=image_path)
-                _save_message(session_id, user_id, "assistant", full_reply)
+                _save_message(session_id, user_id, "assistant", full_reply, tool_calls=tool_calls)
 
             yield f"data: {json.dumps({'type': 'message_end'})}\n\n"
             yield "data: [DONE]\n\n"
@@ -365,7 +433,12 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
 
 
 def _save_message(
-    session_id: str, user_id: int, role: str, content: str, image_path: str | None = None
+    session_id: str,
+    user_id: int,
+    role: str,
+    content: str,
+    image_path: str | None = None,
+    tool_calls: list[dict] | None = None,
 ):
     if not content and not image_path:
         return
@@ -379,7 +452,7 @@ def _save_message(
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)
             db.flush()
-        db.add(ChatMessage(session_id=s.id, role=role, content=content, image_path=image_path))
+        db.add(ChatMessage(session_id=s.id, role=role, content=content, image_path=image_path, tool_calls=tool_calls))
         s.message_count = (s.message_count or 0) + 1
         s.last_message_at = datetime.now()
         if role == "user" and (not s.title or s.title == ""):
