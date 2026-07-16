@@ -29,7 +29,7 @@
         <el-table-column :label="text.createdAt" min-width="180"><template #default="{ row }">{{ formatDate(row.createdAt) }}</template></el-table-column>
         <el-table-column :label="text.actions" width="130">
           <template #default="{ row }">
-            <el-button v-if="!row.isDefault" link type="primary" :disabled="!userStore.isSuperuser" @click="setDefaultModel(row)">{{ text.setDefault }}</el-button>
+            <el-button v-if="!row.isDefault" link type="primary" @click="setDefaultModel(row)">{{ text.setDefault }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -46,10 +46,8 @@ import { getTrainingDatasets } from '@/api/training'
 import { getModelsApi, getScenesApi, setDefaultModelApi } from '@/api/models'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { useSettingsStore } from '@/stores/settings'
-import { useUserStore } from '@/stores/user'
 
 const settingsStore = useSettingsStore()
-const userStore = useUserStore()
 const loading = ref(false)
 const pageError = ref('')
 const datasets = ref([])
