@@ -352,6 +352,8 @@ class ModelVersionResponse(BaseModel):
     scene_id: int
     scene_name: Optional[str] = None
     training_task_id: Optional[int] = None
+    owner_id: Optional[int] = None
+    is_builtin: bool = False
     version: str
     model_name: str
     model_type: str

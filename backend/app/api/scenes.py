@@ -5,7 +5,12 @@
 - POST /api/scenes            创建场景（管理员）
 - POST /api/scenes/{scene_id}/default-model  切换该场景的默认模型（已登录用户）
 """
-from fastapi import APIRouter, Depends, HTTPException
+import shutil
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -48,11 +53,67 @@ def get_scene(scene_id: int, db: Session = Depends(get_db)):
 @router.get("/{scene_id}/models", response_model=list[ModelVersionResponse])
 def list_scene_models(
     scene_id: int,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """List every non-deleted model version that can be inspected or selected."""
-    return scene_service.list_model_versions(db, scene_id)
+    return scene_service.list_model_versions(db, scene_id, current_user.id, current_user.is_superuser)
+
+
+@router.post("/{scene_id}/models/upload", response_model=ModelVersionResponse, status_code=201)
+async def upload_model_version(
+    scene_id: int,
+    file: UploadFile = File(...),
+    version: str = Form(...),
+    model_name: str = Form(...),
+    model_type: str = Form("yolo11n"),
+    description: str | None = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Store a user's uploaded PyTorch model as a user-owned asset."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix != ".pt":
+        raise HTTPException(status_code=400, detail="仅支持上传 .pt 模型文件")
+    target_dir = Path(__file__).resolve().parents[3] / "models" / "users" / str(current_user.id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{uuid4().hex}{suffix}"
+    try:
+        with target.open("wb") as output:
+            shutil.copyfileobj(file.file, output)
+        if target.stat().st_size > 1024 * 1024 * 1024:
+            target.unlink(missing_ok=True)
+            raise HTTPException(status_code=413, detail="模型文件不能超过 1 GB")
+        model = scene_service.create_uploaded_model(
+            db, scene_id, current_user.id, version.strip(), model_name.strip(), model_type.strip(),
+            str(target.relative_to(Path(__file__).resolve().parents[3])), target.stat().st_size, description,
+        )
+        return model
+    except HTTPException:
+        raise
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+
+
+@router.get("/{scene_id}/models/{model_version_id}/download")
+def download_model_version(
+    scene_id: int,
+    model_version_id: int,
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Download a persisted model artifact, preferring the local copy."""
+    model = scene_service.get_model_version(db, scene_id, model_version_id, _current_user.id, _current_user.is_superuser)
+    model_path = Path(model.model_path)
+    if not model_path.is_absolute():
+        model_path = Path(__file__).resolve().parents[3] / model_path
+
+    if model_path.is_file():
+        return FileResponse(path=model_path, media_type="application/octet-stream", filename=model_path.name)
+    if model.minio_url:
+        return RedirectResponse(url=model.minio_url)
+    raise HTTPException(status_code=404, detail="模型文件不存在")
 
 
 @router.post("", response_model=SceneResponse, status_code=201)
@@ -80,9 +141,21 @@ def create_scene(
 def set_default_model(
     scene_id: int,
     model_version_id: int,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """切换某场景的默认模型版本，所有已登录用户均可操作。"""
-    model = scene_service.set_default_model(db, scene_id, model_version_id)
+    model = scene_service.set_default_model(db, scene_id, model_version_id, current_user.id, current_user.is_superuser)
     return ModelVersionBrief.model_validate(model)
+
+
+@router.delete("/{scene_id}/models/{model_version_id}")
+def delete_model_version(
+    scene_id: int,
+    model_version_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Hide a non-default model version while preserving history references."""
+    model = scene_service.delete_model_version(db, scene_id, model_version_id, current_user.id, current_user.is_superuser)
+    return {"id": model.id, "status": model.status}

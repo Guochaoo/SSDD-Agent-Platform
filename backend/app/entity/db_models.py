@@ -49,6 +49,8 @@ class User(Base):
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     detection_tasks = relationship("DetectionTask", back_populates="user")
     training_tasks = relationship("TrainingTask", back_populates="user")
+    model_versions = relationship("ModelVersion", back_populates="owner", foreign_keys="ModelVersion.owner_id")
+    training_datasets = relationship("TrainingDataset", back_populates="owner")
     chat_sessions = relationship("ChatSession", back_populates="user")
     operation_logs = relationship("OperationLog", back_populates="user")
     knowledge_documents = relationship("KnowledgeDocument", back_populates="user")
@@ -300,6 +302,8 @@ class ModelVersion(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     scene_id = Column(Integer, ForeignKey("detection_scenes.id"), nullable=False, index=True, comment="所属场景")
     training_task_id = Column(Integer, ForeignKey("training_tasks.id"), nullable=True, comment="来源训练任务（可为空，支持手动上传）")
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True, comment="用户资产所属者，内置模型为空")
+    is_builtin = Column(Boolean, default=False, nullable=False, comment="是否为随服务部署的只读模型")
 
     version = Column(String(50), nullable=False, comment="版本号，如 v1.0.0")
     model_name = Column(String(100), nullable=False, comment="模型名称")
@@ -327,7 +331,21 @@ class ModelVersion(Base):
     # 关联
     scene = relationship("DetectionScene", back_populates="model_versions")
     training_task = relationship("TrainingTask", back_populates="model_versions")
+    owner = relationship("User", back_populates="model_versions", foreign_keys=[owner_id])
     detection_tasks = relationship("DetectionTask", back_populates="model_version")
+
+
+class TrainingDataset(Base):
+    """User-uploaded dataset metadata; files remain under DATASET_BASE_DIR."""
+    __tablename__ = "training_datasets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    path = Column(String(500), unique=True, nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    is_builtin = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    owner = relationship("User", back_populates="training_datasets")
 
 
 # ══════════════════════════════════════════════════════════════

@@ -36,7 +36,6 @@ onUnmounted(() => {
   width: 100%;
   height: auto;
   display: flex;
-  overflow: hidden;
 }
 
 .layout-content {

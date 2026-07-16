@@ -145,11 +145,16 @@ def seed_detection_scenes(db, admin_user_id: int | None) -> None:
             model_path=model_path,
             file_size=absolute_model_path.stat().st_size if absolute_model_path.is_file() else None,
             is_default=True,
+            is_builtin=True,
             description="钢铁表面缺陷检测首个部署权重",
         )
         db.add(model)
         db.commit()
         print("[seed] 注册默认模型：ssdd_yolo11n_v1（v1.0.0）")
+    elif not model.is_builtin:
+        model.is_builtin = True
+        model.owner_id = None
+        db.commit()
 
 
 def run_seed() -> None:
