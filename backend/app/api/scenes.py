@@ -5,7 +5,6 @@
 - POST /api/scenes            创建场景（管理员）
 - POST /api/scenes/{scene_id}/default-model  切换该场景的默认模型（已登录用户）
 """
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,6 +19,7 @@ from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief, Mo
 from app.services.scene_service import scene_service
 
 router = APIRouter(prefix="/api/scenes", tags=["检测场景"])
+MAX_MODEL_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 
 def _require_admin(current_user: User):
@@ -79,17 +79,20 @@ async def upload_model_version(
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{uuid4().hex}{suffix}"
     try:
+        size = 0
         with target.open("wb") as output:
-            shutil.copyfileobj(file.file, output)
-        if target.stat().st_size > 1024 * 1024 * 1024:
-            target.unlink(missing_ok=True)
-            raise HTTPException(status_code=413, detail="模型文件不能超过 1 GB")
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_MODEL_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="model file exceeds 1 GB")
+                output.write(chunk)
         model = scene_service.create_uploaded_model(
             db, scene_id, current_user.id, version.strip(), model_name.strip(), model_type.strip(),
-            str(target.relative_to(Path(__file__).resolve().parents[3])), target.stat().st_size, description,
+            str(target.relative_to(Path(__file__).resolve().parents[3])), size, description,
         )
         return model
     except HTTPException:
+        target.unlink(missing_ok=True)
         raise
     except Exception:
         target.unlink(missing_ok=True)
