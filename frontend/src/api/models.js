@@ -36,3 +36,9 @@ export async function getModelsApi(sceneId) {
     createdAt: model.created_at ?? model.createdAt ?? null,
   }));
 }
+
+export function setDefaultModelApi(sceneId, modelVersionId) {
+  return request.post(`/scenes/${sceneId}/default-model`, null, {
+    params: { model_version_id: Number(modelVersionId) },
+  })
+}

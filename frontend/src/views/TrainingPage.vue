@@ -644,7 +644,7 @@ const downloading = ref(false)
 const exportForm = ref({
   version: '',
   description: '',
-  set_default: true,
+  set_default: false,
   upload_minio: true,
 })
 

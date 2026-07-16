@@ -27,6 +27,11 @@
         <el-table-column :label="text.map50" width="110"><template #default="{ row }">{{ formatPercent(row.map50) }}</template></el-table-column>
         <el-table-column :label="text.status" width="130"><template #default="{ row }"><el-tag :type="row.isDefault ? 'success' : 'info'">{{ row.isDefault ? text.default : row.status }}</el-tag></template></el-table-column>
         <el-table-column :label="text.createdAt" min-width="180"><template #default="{ row }">{{ formatDate(row.createdAt) }}</template></el-table-column>
+        <el-table-column :label="text.actions" width="130">
+          <template #default="{ row }">
+            <el-button v-if="!row.isDefault" link type="primary" :disabled="!userStore.isSuperuser" @click="setDefaultModel(row)">{{ text.setDefault }}</el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <el-empty v-if="!loading && !models.length" :description="text.noModels" />
     </el-card>
@@ -38,11 +43,13 @@ import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
 import { getTrainingDatasets } from '@/api/training'
-import { getModelsApi, getScenesApi } from '@/api/models'
+import { getModelsApi, getScenesApi, setDefaultModelApi } from '@/api/models'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { useSettingsStore } from '@/stores/settings'
+import { useUserStore } from '@/stores/user'
 
 const settingsStore = useSettingsStore()
+const userStore = useUserStore()
 const loading = ref(false)
 const pageError = ref('')
 const datasets = ref([])
@@ -51,12 +58,12 @@ const text = computed(() => settingsStore.isEnglish ? {
   title: 'Files', description: 'Inspect persisted training datasets and all user-visible model versions.', refresh: 'Refresh',
   datasets: 'Datasets', models: 'Model versions', name: 'Name', path: 'Path', status: 'Status', ready: 'Ready', incomplete: 'Incomplete',
   noDatasets: 'No training datasets are available', noModels: 'No model versions are available', scene: 'Scene', version: 'Version', model: 'Model',
-  map50: 'mAP@50', default: 'Default', createdAt: 'Created at', loadFailed: 'Failed to load files',
+  map50: 'mAP@50', default: 'Default', createdAt: 'Created at', actions: 'Actions', setDefault: 'Set default', loadFailed: 'Failed to load files',
 } : {
   title: '文件查看', description: '查看已持久化的训练数据集和当前用户可见的全部模型版本。', refresh: '刷新',
   datasets: '数据集', models: '模型版本', name: '名称', path: '路径', status: '状态', ready: '可用', incomplete: '未完成',
   noDatasets: '暂无训练数据集', noModels: '暂无模型版本', scene: '场景', version: '版本', model: '模型',
-  map50: 'mAP@50', default: '默认模型', createdAt: '创建时间', loadFailed: '文件列表加载失败',
+  map50: 'mAP@50', default: '默认模型', createdAt: '创建时间', actions: '操作', setDefault: '设为默认', loadFailed: '文件列表加载失败',
 })
 
 function formatPercent(value) {
@@ -73,12 +80,20 @@ async function loadAssets() {
   try {
     const [datasetResponse, scenes] = await Promise.all([getTrainingDatasets(), getScenesApi()])
     datasets.value = datasetResponse?.items ?? datasetResponse ?? []
-    const groups = await Promise.all(scenes.map(async (scene) => (await getModelsApi(scene.id)).map((model) => ({ ...model, sceneName: scene.displayName || scene.name }))))
+    const groups = await Promise.all(scenes.map(async (scene) => (await getModelsApi(scene.id)).map((model) => ({ ...model, sceneId: scene.id, sceneName: scene.displayName || scene.name }))))
     models.value = groups.flat()
   } catch (error) {
     pageError.value = getApiErrorMessage(error, text.value.loadFailed)
   } finally {
     loading.value = false
+  }
+}
+async function setDefaultModel(model) {
+  try {
+    await setDefaultModelApi(model.sceneId, model.id)
+    await loadAssets()
+  } catch (error) {
+    pageError.value = getApiErrorMessage(error, text.value.loadFailed)
   }
 }
 onMounted(loadAssets)

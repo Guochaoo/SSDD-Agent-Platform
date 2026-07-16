@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const request = vi.hoisted(() => ({ get: vi.fn() }))
+const request = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('@/utils/request', () => ({ default: request }))
 
-import { getModelsApi } from '@/api/models'
+import { getModelsApi, setDefaultModelApi } from '@/api/models'
 
 describe('model API', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -18,5 +18,13 @@ describe('model API', () => {
 
     expect(request.get).toHaveBeenCalledWith('/scenes/7/models')
     expect(models.map((model) => model.version)).toEqual(['v3.0.0', 'v1.0.0'])
+  })
+
+  it('uses the existing scene default-model endpoint for an explicit selection', async () => {
+    await setDefaultModelApi(7, 2)
+
+    expect(request.post).toHaveBeenCalledWith('/scenes/7/default-model', null, {
+      params: { model_version_id: 2 },
+    })
   })
 })
