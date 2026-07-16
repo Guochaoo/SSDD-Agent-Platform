@@ -219,7 +219,7 @@ export const useAgentStore = defineStore('agent', {
         id: String(message.id),
         role: message.role,
         content: message.content || '',
-        imagePreviewUrl: message.image_url || '',
+        imagePreviewUrls: message.image_urls || (message.image_url ? [message.image_url] : []),
         toolCalls: message.tool_calls || [],
         createdAt: message.created_at,
       }))

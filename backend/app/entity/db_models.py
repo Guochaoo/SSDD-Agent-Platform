@@ -381,6 +381,7 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False, comment="消息角色：user/assistant/tool/system")
     content = Column(Text, nullable=False, comment="消息内容")
     image_path = Column(String(500), nullable=True, comment="该消息关联的服务端图片路径")
+    image_paths = Column(JSON, nullable=True, comment="该消息关联的服务端图片路径列表")
 
     # 智能体路由信息
     agent_used = Column(String(50), nullable=True, comment="处理的 Agent：supervisor/detection/analysis/qa")

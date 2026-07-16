@@ -36,6 +36,7 @@ onUnmounted(() => {
   width: 100%;
   height: auto;
   display: flex;
+  align-items: flex-start;
 }
 
 .layout-content {
