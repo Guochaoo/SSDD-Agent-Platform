@@ -242,9 +242,10 @@ class DetectionAgent:
         llm = _make_llm(model)
         return _make_executor(llm)
 
-    async def chat(self, message: str, image_path: str = None, model: str = None, chat_history: list[dict] | None = None) -> dict:
-        if image_path:
-            message = f"{message}\n[附件图片路径: {image_path}]"
+    async def chat(self, message: str, image_paths: list[str] = None, model: str = None, chat_history: list[dict] | None = None) -> dict:
+        if image_paths:
+            paths_text = "\n".join(f"[附件图片路径: {p}]" for p in image_paths)
+            message = f"{message}\n{paths_text}"
         try:
             executor = self._get_executor(model)
             result = await executor.ainvoke({"input": message, "chat_history": chat_history or []})
@@ -256,9 +257,10 @@ class DetectionAgent:
             logger.exception("Agent 执行异常")
             return {"output": f"处理出错：{exc}", "intermediate_steps": []}
 
-    async def chat_stream(self, message: str, image_path: str = None, model: str = None, chat_history: list[dict] | None = None) -> AsyncGenerator:
-        if image_path:
-            message = f"{message}\n[附件图片路径: {image_path}]"
+    async def chat_stream(self, message: str, image_paths: list[str] = None, model: str = None, chat_history: list[dict] | None = None) -> AsyncGenerator:
+        if image_paths:
+            paths_text = "\n".join(f"[附件图片路径: {p}]" for p in image_paths)
+            message = f"{message}\n{paths_text}"
 
         executor = self._get_executor(model)
         try:

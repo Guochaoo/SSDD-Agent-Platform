@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.agent.detection_agent import detection_agent
+from app.agent.supervisor import supervisor_agent
 from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.core.logger import get_logger
@@ -201,6 +201,7 @@ async def chat_stream(
     content_type = request.headers.get("content-type", "")
 
     message = ""
+    image_paths = []
     image_path = None
     model = None
     session_id = None
@@ -216,33 +217,37 @@ async def chat_stream(
         raw_session = form.get("session_id")
         if raw_session and isinstance(raw_session, str) and raw_session.strip():
             session_id = raw_session.strip()
-        image_file = form.get("image")
-        if image_file is not None and hasattr(image_file, "filename") and image_file.filename:
-            if image_file.content_type not in ALLOWED_IMAGE_TYPES and image_file.content_type:
-                raise HTTPException(status_code=415, detail="仅支持 JPG、PNG、BMP、TIFF、WebP 图片")
-            content = await image_file.read(MAX_IMAGE_BYTES + 1)
-            if len(content) > MAX_IMAGE_BYTES:
-                raise HTTPException(status_code=413, detail="图片大小不能超过 10MB")
-            suffix = Path(image_file.filename).suffix.lower() or ".jpg"
-            filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
-            filepath = os.path.join(UPLOAD_DIR, filename)
-            with open(filepath, "wb") as f:
-                f.write(content)
-            image_path = filepath
+        image_paths = []
+        image_files = form.getlist("image")
+        for image_file in image_files:
+            if image_file is not None and hasattr(image_file, "filename") and image_file.filename:
+                if image_file.content_type not in ALLOWED_IMAGE_TYPES and image_file.content_type:
+                    raise HTTPException(status_code=415, detail="仅支持 JPG、PNG、BMP、TIFF、WebP 图片")
+                content = await image_file.read(MAX_IMAGE_BYTES + 1)
+                if len(content) > MAX_IMAGE_BYTES:
+                    raise HTTPException(status_code=413, detail="图片大小不能超过 10MB")
+                suffix = Path(image_file.filename).suffix.lower() or ".jpg"
+                filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
+                filepath = os.path.join(UPLOAD_DIR, filename)
+                with open(filepath, "wb") as f:
+                    f.write(content)
+                image_paths.append(filepath)
+        if image_paths:
+            image_path = image_paths[0]
     else:
         body = await request.json()
         message = (body.get("message") or "").strip()
         raw_session = body.get("session_id")
         if raw_session and isinstance(raw_session, str) and raw_session.strip():
             session_id = raw_session.strip()
-        image_path = body.get("image_path")
-        if image_path:
-            image_path = _validate_uploaded_image_path(image_path)
+        raw_image_path = body.get("image_path")
+        if raw_image_path:
+            image_paths = [_validate_uploaded_image_path(raw_image_path)]
 
-    if not message and not image_path:
+    if not message and not image_paths:
         raise HTTPException(status_code=422, detail="消息不能为空")
 
-    logger.info("Agent chat: message=%s image=%s model=%s session=%s", message[:80], "有" if image_path else "无", model or "default", session_id or "new")
+    logger.info("Agent chat: message=%s images=%d model=%s session=%s", message[:80], len(image_paths), model or "default", session_id or "new")
 
     user_id = _current_user.id
 
@@ -252,18 +257,20 @@ async def chat_stream(
     async def event_generator():
         full_reply = ""
         try:
-            async for event in detection_agent.chat_stream(
-                message=message, image_path=image_path, model=model, chat_history=history
+            async for event in supervisor_agent.chat_stream(
+                message=message, image_paths=image_paths or None, model=model, chat_history=history, user_id=user_id
             ):
                 if event.get("type") == "text_chunk":
                     full_reply += event.get("content", "")
                 event_type = event.get("type", "")
                 if event_type == "text_chunk":
                     yield f"data: {json.dumps({'type': 'text_delta', 'content': event['content']}, ensure_ascii=False)}\n\n"
+                elif event_type == "agent_switch":
+                    yield f"data: {json.dumps({'type': 'agent_switch', 'agent': event['agent'], 'label': event['label']}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_call":
-                    yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': event['tool'], 'input': event.get('input', {})}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': event['tool'], 'input': event.get('input', {}), 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_result":
-                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event['tool'], 'result': event['result']}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event['tool'], 'result': event['result'], 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
                 elif event_type == "error":
                     yield f"data: {json.dumps({'type': 'error', 'message': event['content']}, ensure_ascii=False)}\n\n"
 

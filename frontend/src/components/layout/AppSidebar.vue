@@ -243,7 +243,7 @@ function restoreSettingsFocus() {
 }
 
 .brand-logo {
-  width: 23px; height: 23px;
+  width: 26px; height: 26px;
   flex-shrink: 0;
   transition: opacity 0.15s;
 }

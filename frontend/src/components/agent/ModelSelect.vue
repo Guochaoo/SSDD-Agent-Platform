@@ -79,17 +79,18 @@ const currentLabel = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
+  height: 36px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 18px;
   background: transparent;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
-    background: var(--app-hover);
+    background: rgba(0,0,0,0.06);
     color: var(--app-text);
   }
 }

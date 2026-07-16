@@ -15,22 +15,25 @@
         <!-- Prompt card (hero) -->
         <div class="prompt-area">
           <div :class="['prompt-card', { dragover: isDragover }]">
-            <textarea
-              v-model="heroInput"
-              class="prompt-textarea"
-              :placeholder="chatText.inputPlaceholder"
-              rows="1"
-              :disabled="agentStore.isStreaming"
-              @keydown.enter.exact.prevent="handleHeroSend"
-              @input="autoResize"
-              ref="heroTextareaRef"
-            />
-
-            <div v-if="agentStore.imagePreviewUrl" class="inline-preview">
-              <img :src="agentStore.imagePreviewUrl" alt="preview" />
-              <button class="remove-preview" @click="agentStore.clearImage()">
-                <el-icon :size="12"><Close /></el-icon>
-              </button>
+            <div class="prompt-primary">
+              <div v-if="agentStore.imagePreviewUrls.length" class="inline-previews">
+                <div v-for="(url, i) in agentStore.imagePreviewUrls" :key="url" class="inline-preview">
+                  <img :src="url" alt="preview" />
+                  <button class="remove-preview" @click="agentStore.removeSelectedImage(i)">
+                    <el-icon :size="12"><Close /></el-icon>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                v-model="heroInput"
+                class="prompt-textarea"
+                :placeholder="chatText.inputPlaceholder"
+                rows="1"
+                :disabled="agentStore.isStreaming"
+                @keydown.enter.exact.prevent="handleHeroSend"
+                @input="autoResize"
+                ref="heroTextareaRef"
+              />
             </div>
 
             <div class="card-footer">
@@ -43,6 +46,7 @@
                   ref="fileInputRef"
                   type="file"
                   accept="image/png,image/jpeg"
+                  multiple
                   hidden
                   @change="onFileChange"
                 />
@@ -54,7 +58,7 @@
                 :title="agentStore.isStreaming ? chatText.stop : chatText.send"
                 @click="handleHeroSend"
               >
-                <el-icon :size="16">
+                <el-icon :size="28">
                   <ArrowUpStroke :size="16" v-if="!agentStore.isStreaming" />
                   <CloseBold v-else />
                 </el-icon>
@@ -112,23 +116,26 @@
         />
 
         <div :class="['prompt-card', { dragover: isDragover }]">
-          <div v-if="agentStore.imagePreviewUrl" class="inline-preview">
-            <img :src="agentStore.imagePreviewUrl" alt="preview" />
-            <button class="remove-preview" @click="agentStore.clearImage()">
-              <el-icon :size="12"><Close /></el-icon>
-            </button>
+          <div class="prompt-primary">
+            <div v-if="agentStore.imagePreviewUrls.length" class="inline-previews">
+              <div v-for="(url, i) in agentStore.imagePreviewUrls" :key="url" class="inline-preview">
+                <img :src="url" alt="preview" />
+                <button class="remove-preview" @click="agentStore.removeSelectedImage(i)">
+                  <el-icon :size="12"><Close /></el-icon>
+                </button>
+              </div>
+            </div>
+            <textarea
+              v-model="chatInput"
+              class="prompt-textarea"
+              :placeholder="chatText.inputPlaceholder"
+              rows="1"
+              :disabled="agentStore.isStreaming"
+              @keydown.enter.exact.prevent="handleChatSend"
+              @input="autoResizeChat"
+              ref="chatTextareaRef"
+            />
           </div>
-
-          <textarea
-            v-model="chatInput"
-            class="prompt-textarea"
-            :placeholder="chatText.inputPlaceholder"
-            rows="1"
-            :disabled="agentStore.isStreaming"
-            @keydown.enter.exact.prevent="handleChatSend"
-            @input="autoResizeChat"
-            ref="chatTextareaRef"
-          />
 
           <div class="card-footer">
             <div class="footer-left">
@@ -140,6 +147,7 @@
                 ref="fileInputRef"
                 type="file"
                 accept="image/png,image/jpeg"
+                multiple
                 hidden
                 @change="onFileChange"
               />
@@ -150,8 +158,8 @@
               :disabled="!canSendChat"
               @click="handleChatSend"
             >
-              <el-icon :size="16">
-                <ArrowUpStroke :size="16" v-if="!agentStore.isStreaming" />
+              <el-icon :size="24">
+                <ArrowUpStroke :width="16" v-if="!agentStore.isStreaming" />
                 <CloseBold v-else />
               </el-icon>
             </button>
@@ -282,11 +290,11 @@ const chatText = computed(() => settingsStore.isEnglish ? {
 })
 
 const canSend = computed(() => {
-  return agentStore.isStreaming || heroInput.value.trim() || agentStore.selectedImage
+  return agentStore.isStreaming || heroInput.value.trim() || agentStore.selectedImages.length
 })
 
 const canSendChat = computed(() => {
-  return agentStore.isStreaming || chatInput.value.trim() || agentStore.selectedImage
+  return agentStore.isStreaming || chatInput.value.trim() || agentStore.selectedImages.length
 })
 
 const quickChips = computed(() => chatText.value.chips.map((label) => ({ label })))
@@ -335,16 +343,16 @@ function onDrop(e) {
 function triggerFileInput() { fileInputRef.value?.click() }
 
 function onFileChange(e) {
-  const file = e.target?.files?.[0]
+  const files = Array.from(e.target?.files || [])
   e.target.value = ''
-  if (file) handleSelectedFile(file)
+  files.forEach(handleSelectedFile)
 }
 
 function handleSelectedFile(file) {
   const allowed = ['image/jpeg', 'image/png']
   if (!allowed.includes(file.type)) { ElMessage.error(chatText.value.onlyImages); return }
   if (file.size > 10 * 1024 * 1024) { ElMessage.error(chatText.value.imageTooLarge); return }
-  agentStore.setSelectedImage(file)
+  agentStore.addSelectedImages([file])
 }
 
 function autoResize() {
@@ -367,7 +375,7 @@ function handleHeroSend() {
     return
   }
   const text = heroInput.value.trim()
-  if (!text && !agentStore.selectedImage) return
+  if (!text && !agentStore.selectedImages.length) return
   heroInput.value = ''
   handleSend(text)
 }
@@ -378,12 +386,15 @@ function handleChatSend() {
     return
   }
   const text = chatInput.value.trim()
-  if (!text && !agentStore.selectedImage) return
+  if (!text && !agentStore.selectedImages.length) return
   chatInput.value = ''
   handleSend(text)
 }
 
-function handleChipClick(text) { handleSend(text) }
+function handleChipClick(text) {
+  heroInput.value = text
+  autoResize()
+}
 
 function chooseFiles({ accept, multiple }) {
   return new Promise((resolve) => {
@@ -440,7 +451,7 @@ async function runSingleDetect(file, options) {
   agentStore.addMessage({
     role: 'user',
     content: settingsStore.isEnglish ? `[Quick single detection] ${file.name}` : `[快捷单图检测] ${file.name}`,
-    imagePreviewUrl: previewUrl,
+    imagePreviewUrls: [previewUrl],
   })
   agentStore.addMessage({
     role: 'assistant',
@@ -491,7 +502,13 @@ async function runBatchDetect(files, options) {
   }
 }
 
+let _currentAgentLabel = ''
+
 function handleAgentEvent(event) {
+  if (event.type === 'agent_switch') {
+    _currentAgentLabel = event.label || ''
+    return
+  }
   if (event.type === 'text_delta' || event.type === 'text_chunk') {
     const content = event.content || ''
     const lastMsg = agentStore.messages[agentStore.messages.length - 1]
@@ -504,6 +521,7 @@ function handleAgentEvent(event) {
       name: event.tool_name,
       status: 'running',
       input: event.input,
+      agentLabel: _currentAgentLabel || event.agent || '',
     })
   }
   if (event.type === 'tool_result') {
@@ -512,6 +530,7 @@ function handleAgentEvent(event) {
       name: event.tool_name,
       status: 'success',
       result: event.result,
+      agentLabel: _currentAgentLabel || event.agent || '',
     })
     attachToolResultCard(event.result)
   }
@@ -521,6 +540,7 @@ function handleAgentEvent(event) {
     const lastMsg = agentStore.messages[agentStore.messages.length - 1]
     if (lastMsg?.role === 'assistant') lastMsg.status = 'done'
     saveCurrentSession()
+    _currentAgentLabel = ''
   }
   if (event.type === 'error') {
     agentStore.errorMessage = event.message || chatText.value.agentFailed
@@ -528,6 +548,7 @@ function handleAgentEvent(event) {
     agentStore.setConnectionStatus('error')
     agentStore.markLastAssistantError(agentStore.errorMessage)
     ElMessage.error(agentStore.errorMessage)
+    _currentAgentLabel = ''
   }
 }
 
@@ -559,7 +580,7 @@ function attachToolResultCard(rawResult) {
       bboxPercent: null,
     })),
   }
-  assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrl || ''
+  assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || ''
   assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)
   saveCurrentSession()
 }
@@ -581,7 +602,7 @@ function doSend(text) {
   if (model.value && model.value !== DEFAULT_LLM_MODEL_VALUE) {
     formData.append('model', model.value)
   }
-  if (agentStore.selectedImage) { formData.append('image', agentStore.selectedImage) }
+  agentStore.selectedImages.forEach(file => formData.append('image', file))
 
   agentStore.abortController = streamAgentChat(formData, {
     onMessage: handleAgentEvent,
@@ -594,7 +615,7 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('idle')
       agentStore.abortController = null
-      agentStore.clearImage()
+      agentStore.clearImages()
       saveCurrentSession()
     },
     onError: (error) => {
@@ -608,10 +629,9 @@ function doSend(text) {
 }
 
 function handleSend(text) {
-  if (!text.trim() && !agentStore.selectedImage) return
-  const imgUrl = agentStore.selectedImage ? URL.createObjectURL(agentStore.selectedImage) : ''
-  agentStore.addMessage({ role: 'user', content: text, imagePreviewUrl: imgUrl })
-
+  if (!text.trim() && !agentStore.selectedImages.length) return
+  const imgUrls = agentStore.selectedImages.map(f => URL.createObjectURL(f))
+  agentStore.addMessage({ role: 'user', content: text, imagePreviewUrls: imgUrls })
   doSend(text)
 }
 
@@ -635,7 +655,7 @@ async function runSingleDetectInChat(file, previewUrl) {
     agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || chatText.value.detectFailed })
     ElMessage.error(error?.response?.data?.detail || chatText.value.detectFailed)
   } finally {
-    agentStore.clearImage()
+    agentStore.clearImages()
     saveCurrentSession()
   }
 }
@@ -659,7 +679,7 @@ function handleRegenerate(message) {
   const userMsg = agentStore.messages[idx - 1]
   if (userMsg?.role !== 'user') return
   agentStore.messages.splice(idx - 1, 2)
-  agentStore.addMessage({ role: 'user', content: userMsg.content || '', imagePreviewUrl: userMsg.imagePreviewUrl })
+  agentStore.addMessage({ role: 'user', content: userMsg.content || '', imagePreviewUrls: userMsg.imagePreviewUrls || [] })
   doSend(userMsg.content || '')
 }
 
@@ -687,6 +707,7 @@ checkAgentToolContracts()
 .chat-main {
   min-height: 0;
   flex: 1;
+  overflow-y: auto;
 }
 
 /* ── Hero ── */
@@ -716,23 +737,44 @@ checkAgentToolContracts()
 
 /* ── Unified prompt card ── */
 .prompt-card {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "primary"
+    "bottom";
   background: var(--app-surface);
-  border: 1px solid var(--app-border);
-  border-radius: 16px;
-  padding: 8px 10px 4px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  border: 0;
+  border-radius: 28px;
+  padding: 9px 8px;
+  min-height: 102px;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.04),
+    0 2px 8px rgba(0,0,0,0.04),
+    0 4px 80px 8px rgba(0,0,0,0.024);
+  transition: box-shadow 0.2s;
 
   &:focus-within {
-    border-color: #c4c4ca;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,0.08),
+      0 2px 12px rgba(0,0,0,0.06),
+      0 4px 80px 8px rgba(0,0,0,0.032);
   }
 
   &.dragover {
-    border-color: #8F8AB0;
-    border-style: dashed;
+    box-shadow:
+      0 0 0 1px #8F8AB0,
+      0 2px 8px rgba(143,138,176,0.12);
     background: var(--app-subtle);
   }
+}
+
+/* ── Primary area (previews + textarea) ── */
+.prompt-primary {
+  grid-area: primary;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 9px 10px 0;
 }
 
 .prompt-textarea {
@@ -740,86 +782,33 @@ checkAgentToolContracts()
   border: 0;
   outline: 0;
   resize: none;
-  font-size: 15px;
-  line-height: 1.55;
+  font-size: 16px;
+  line-height: 26px;
   color: var(--app-text);
   background: transparent;
-  padding: 6px 4px;
+  padding: 0 0 16px;
   font-family: inherit;
-  min-height: 28px;
+  min-height: 52px;
   max-height: 160px;
+  flex: 1;
 
   &::placeholder { color: #a3a3a3; }
   &:disabled { opacity: 0.5; }
 }
 
-/* ── Card footer ── */
-.card-footer {
+/* ── Inline image previews (inside primary area) ── */
+.inline-previews {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--app-border);
-  margin-top: 4px;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
 }
 
-.footer-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-/* ── Buttons ── */
-.footer-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px; height: 20px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #737373;
-  cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover { background: var(--app-hover); color: var(--app-text); }
-}
-
-.send-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px; height: 28px;
-  border: 0;
-  border-radius: 8px;
-  background: #000000;
-  color: #ffffff;
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
-
-  &:hover:not(:disabled) { background: #262626; }
-  &:disabled { opacity: 0.3; cursor: not-allowed; }
-}
-
-:root[data-theme='dark'] .send-btn {
-  background: #3f3f46;
-  color: #f4f4f5;
-
-  &:hover:not(:disabled) {
-    background: #52525b;
-  }
-}
-
-/* ── Inline image preview ── */
 .inline-preview {
   position: relative;
-  display: inline-block;
-  margin: 4px 4px 0;
 
   img {
-    width: 64px; height: 48px;
+    width: 48px; height: 48px;
     border-radius: 8px;
     object-fit: cover;
     border: 1px solid var(--app-border);
@@ -840,6 +829,64 @@ checkAgentToolContracts()
     padding: 0;
 
     &:hover { background: #171717; }
+  }
+}
+
+/* ── Card footer ── */
+.card-footer {
+  grid-area: bottom;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 36px;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Buttons ── */
+.footer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #737373;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover { background: rgba(0,0,0,0.06); color: var(--app-text); }
+}
+
+.send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: #000000;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+
+  &:hover:not(:disabled) { background: #262626; }
+  &:disabled { opacity: 0.3; cursor: not-allowed; }
+}
+
+:root[data-theme='dark'] .send-btn {
+  background: #3f3f46;
+  color: #f4f4f5;
+
+  &:hover:not(:disabled) {
+    background: #52525b;
   }
 }
 
@@ -897,13 +944,11 @@ checkAgentToolContracts()
   }
 }
 
-/* ── Chat bottom (sticky input area) ── */
+/* ── Chat bottom (input area fixed at bottom via flex) ── */
 .chat-bottom {
-  position: sticky;
-  bottom: 0;
   padding: 12px 16px 16px;
   background: linear-gradient(to top, var(--app-bg) 80%, transparent);
-  z-index: 10;
+  flex-shrink: 0;
 
   .prompt-card {
     max-width: 720px;

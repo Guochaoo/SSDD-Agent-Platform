@@ -14,7 +14,7 @@ function loadSavedSessions() {
 
 function serializeMessage(message) {
   const {
-    imagePreviewUrl,
+    imagePreviewUrls,
     detectionPreviewUrl,
     ...serializable
   } = message
@@ -28,8 +28,8 @@ export const useAgentStore = defineStore('agent', {
     sessions: loadSavedSessions(),
     isStreaming: false,
     abortController: null,
-    selectedImage: null,
-    imagePreviewUrl: '',
+    selectedImages: [],
+    imagePreviewUrls: [],
     currentToolCall: null,
     errorMessage: '',
     connectionStatus: 'idle',
@@ -119,16 +119,23 @@ export const useAgentStore = defineStore('agent', {
       this.saveSession()
     },
 
-    setSelectedImage(file) {
-      this.clearImage()
-      this.selectedImage = file
-      this.imagePreviewUrl = URL.createObjectURL(file)
+    addSelectedImages(files) {
+      files.forEach(file => {
+        this.selectedImages.push(file)
+        this.imagePreviewUrls.push(URL.createObjectURL(file))
+      })
     },
 
-    clearImage() {
-      if (this.imagePreviewUrl) URL.revokeObjectURL(this.imagePreviewUrl)
-      this.selectedImage = null
-      this.imagePreviewUrl = ''
+    removeSelectedImage(index) {
+      if (this.imagePreviewUrls[index]) URL.revokeObjectURL(this.imagePreviewUrls[index])
+      this.selectedImages.splice(index, 1)
+      this.imagePreviewUrls.splice(index, 1)
+    },
+
+    clearImages() {
+      this.imagePreviewUrls.forEach(url => URL.revokeObjectURL(url))
+      this.selectedImages = []
+      this.imagePreviewUrls = []
     },
 
     stopStreaming() {
@@ -151,10 +158,8 @@ export const useAgentStore = defineStore('agent', {
       const assistantMsg = this.messages.pop()
       const userMsg = this.messages.pop()
 
-      // 清理 image URL
-      if (userMsg?.imagePreviewUrl) {
-        URL.revokeObjectURL(userMsg.imagePreviewUrl)
-      }
+      // 清理 image URLs
+      (userMsg?.imagePreviewUrls || []).forEach(url => URL.revokeObjectURL(url))
       if (assistantMsg?.detectionPreviewUrl) {
         URL.revokeObjectURL(assistantMsg.detectionPreviewUrl)
       }
@@ -166,7 +171,7 @@ export const useAgentStore = defineStore('agent', {
     newChat() {
       this.stopStreaming()
       this.messages.forEach((message) => {
-        if (message.imagePreviewUrl) URL.revokeObjectURL(message.imagePreviewUrl)
+        (message.imagePreviewUrls || []).forEach(url => URL.revokeObjectURL(url))
         if (message.videoUrl) URL.revokeObjectURL(message.videoUrl)
         if (message.detectionPreviewUrl) URL.revokeObjectURL(message.detectionPreviewUrl)
       })
@@ -177,7 +182,7 @@ export const useAgentStore = defineStore('agent', {
       this.errorMessage = ''
       this.connectionStatus = 'idle'
       this.reconnectCount = 0
-      this.clearImage()
+      this.clearImages()
     },
 
     saveSession() {
@@ -218,7 +223,7 @@ export const useAgentStore = defineStore('agent', {
       }))
       this.currentToolCall = null
       this.errorMessage = ''
-      this.clearImage()
+      this.clearImages()
     },
 
     deleteSession(id) {
