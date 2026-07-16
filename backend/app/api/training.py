@@ -17,12 +17,13 @@
 import base64
 import io
 import os
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
 
 import cv2
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -30,7 +31,7 @@ from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import get_db
-from app.entity.db_models import TrainingTask
+from app.entity.db_models import TrainingDataset, TrainingTask, User
 from app.entity.schemas import (
     ModelExportRequest,
     ModelValidateRequest,
@@ -66,31 +67,101 @@ def _dataset_image_count(dataset_path: Path) -> int:
     )
 
 
+def _get_dataset_record(db: Session, dataset_path: str, current_user: User) -> TrainingDataset | None:
+    record = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_path).first()
+    if record and not (record.is_builtin or record.owner_id == current_user.id or current_user.is_superuser):
+        raise HTTPException(status_code=403, detail="无权访问该数据集")
+    return record
+
+
 @router.get("/datasets")
-async def list_datasets(current_user=Depends(get_current_user)):
+async def list_datasets(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     root = _dataset_root()
     root.mkdir(parents=True, exist_ok=True)
     datasets = []
+    records = {record.path: record for record in db.query(TrainingDataset).all()}
     for directory in sorted(item for item in root.iterdir() if item.is_dir()):
+        record = records.get(directory.name)
+        if record and not (record.is_builtin or record.owner_id == current_user.id or current_user.is_superuser):
+            continue
         datasets.append({
             "name": directory.name,
             "path": directory.name,
             "ready": (directory / "data.yaml").is_file(),
+            "owner_id": record.owner_id if record else None,
+            "is_builtin": record.is_builtin if record else True,
         })
     if (root / "data.yaml").is_file():
-        datasets.insert(0, {"name": root.name, "path": ".", "ready": True})
+        datasets.insert(0, {"name": root.name, "path": ".", "ready": True, "owner_id": None, "is_builtin": True})
     return {"items": datasets}
+
+
+@router.get("/datasets/{dataset_path}/download")
+async def download_dataset(
+    dataset_path: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a temporary ZIP download for one dataset directory."""
+    root = _dataset_root()
+    dataset = _safe_dataset_path(dataset_path)
+    if not dataset.is_dir():
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    _get_dataset_record(db, dataset_path, current_user)
+
+    archive_dir = Path(tempfile.mkdtemp(prefix="dataset-download-"))
+    archive_path = Path(shutil.make_archive(str(archive_dir / dataset.name), "zip", dataset))
+    background_tasks.add_task(shutil.rmtree, archive_dir, ignore_errors=True)
+    return FileResponse(path=archive_path, media_type="application/zip", filename=f"{dataset.name}.zip", background=background_tasks)
+
+
+@router.delete("/datasets/{dataset_path}")
+async def delete_dataset(
+    dataset_path: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete an unused dataset directory without allowing root deletion."""
+    root = _dataset_root()
+    dataset = _safe_dataset_path(dataset_path)
+    if dataset == root:
+        raise HTTPException(status_code=400, detail="不能删除数据集根目录")
+    if not dataset.is_dir():
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    record = _get_dataset_record(db, dataset_path, current_user)
+    if record is None or record.is_builtin:
+        raise HTTPException(status_code=403, detail="内置数据集不可删除")
+    if record.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="无权删除该数据集")
+
+    active_paths = {
+        Path(task.dataset_path).resolve()
+        for task in db.query(TrainingTask).filter(TrainingTask.status.in_(("pending", "running"))).all()
+        if task.dataset_path
+    }
+    if dataset in active_paths:
+        raise HTTPException(status_code=400, detail="该数据集正在被训练任务使用，暂不能删除")
+
+    shutil.rmtree(dataset)
+    db.delete(record)
+    db.commit()
+    return {"path": dataset_path, "deleted": True}
 
 
 @router.post("/datasets/upload")
 async def upload_dataset(
     file: UploadFile = File(...),
-    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="数据集必须是 ZIP 文件")
     dataset_name = Path(file.filename).stem.replace(" ", "_")
     target = _safe_dataset_path(dataset_name)
+    existing = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_name).first()
+    if existing or target.exists():
+        raise HTTPException(status_code=409, detail="同名数据集已存在")
     target.mkdir(parents=True, exist_ok=True)
     archive = await file.read()
     if len(archive) > 500 * 1024 * 1024:
@@ -105,8 +176,12 @@ async def upload_dataset(
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="数据集压缩包无法解析")
     if not (target / "data.yaml").is_file():
+        shutil.rmtree(target, ignore_errors=True)
         raise HTTPException(status_code=400, detail="数据集压缩包根目录必须包含 data.yaml")
-    return {"name": target.name, "path": target.name, "ready": True}
+    record = TrainingDataset(path=dataset_name, owner_id=current_user.id, is_builtin=False)
+    db.add(record)
+    db.commit()
+    return {"name": target.name, "path": target.name, "ready": True, "owner_id": current_user.id, "is_builtin": False}
 
 
 def _check_task_access(db: Session, task_id: int, current_user):
@@ -162,6 +237,7 @@ async def start_training(
     requested_dataset = request.dataset_path
     dataset_path = os.path.join(project_root, settings.DATASET_BASE_DIR)
     if requested_dataset:
+        _get_dataset_record(db, requested_dataset, current_user)
         dataset_path = str(_safe_dataset_path(requested_dataset))
     config["dataset_path"] = dataset_path
     config["dataset_size"] = _dataset_image_count(Path(dataset_path))

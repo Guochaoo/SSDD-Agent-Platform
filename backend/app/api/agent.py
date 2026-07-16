@@ -152,8 +152,8 @@ def get_chat_session(
                 "id": message.id,
                 "role": message.role,
                 "content": message.content,
-                "has_image": bool(message.image_path),
-                "image_url": f"/api/agent/sessions/{session_id}/messages/{message.id}/image" if message.image_path else None,
+                "has_image": bool(message.image_paths or message.image_path),
+                "image_urls": [f"/api/agent/sessions/{session_id}/messages/{message.id}/image?index={index}" for index, _ in enumerate(message.image_paths or ([message.image_path] if message.image_path else []))],
                 "tool_calls": message.tool_calls or [],
                 "created_at": message.created_at,
             }
@@ -166,6 +166,7 @@ def get_chat_session(
 def get_chat_message_image(
     session_id: str,
     message_id: int,
+    index: int = 0,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -180,9 +181,10 @@ def get_chat_message_image(
         )
         .first()
     )
-    if not message or not message.image_path:
+    image_paths = message.image_paths or ([message.image_path] if message and message.image_path else [])
+    if not message or index < 0 or index >= len(image_paths):
         raise HTTPException(status_code=404, detail="图片不存在")
-    image_path = _validate_uploaded_image_path(message.image_path)
+    image_path = _validate_uploaded_image_path(image_paths[index])
     return FileResponse(image_path)
 
 
@@ -204,10 +206,9 @@ def delete_chat_session(
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    image_paths = [path for (path,) in db.query(ChatMessage.image_path).filter(
-        ChatMessage.session_id == session.id,
-        ChatMessage.image_path.isnot(None),
-    ).all()]
+    image_paths = []
+    for message in db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all():
+        image_paths.extend(message.image_paths or ([message.image_path] if message.image_path else []))
     db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete(
         synchronize_session=False
     )
@@ -358,7 +359,7 @@ async def chat_stream(
 
             # ── save to history ──
             if session_id and (message or full_reply):
-                _save_message(session_id, user_id, "user", message, image_path=image_path)
+                _save_message(session_id, user_id, "user", message, image_paths=image_paths, image_path=image_path)
                 _save_message(session_id, user_id, "assistant", full_reply, tool_calls=tool_calls)
 
             yield f"data: {json.dumps({'type': 'message_end'})}\n\n"
@@ -433,13 +434,15 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
         for m in messages:
             if m.role in ("user", "assistant"):
                 content = m.content or ""
-                if m.role == "user" and m.image_path:
-                    try:
-                        image_path = _validate_uploaded_image_path(m.image_path)
-                    except HTTPException:
-                        image_path = None
-                    if image_path:
-                        content = f"{content}\n[附件图片路径: {image_path}]"
+                if m.role == "user":
+                    valid_paths = []
+                    for image_path in m.image_paths or ([m.image_path] if m.image_path else []):
+                        try:
+                            valid_paths.append(_validate_uploaded_image_path(image_path))
+                        except HTTPException:
+                            pass
+                    if valid_paths:
+                        content = f"{content}\n" + "\n".join(f"[附件图片路径: {path}]" for path in valid_paths)
                 history.append({"role": m.role, "content": content})
         return history
     finally:
@@ -451,10 +454,12 @@ def _save_message(
     user_id: int,
     role: str,
     content: str,
+    image_paths: list[str] | None = None,
     image_path: str | None = None,
     tool_calls: list[dict] | None = None,
 ):
-    if not content and not image_path:
+    image_paths = image_paths or ([image_path] if image_path else None)
+    if not content and not image_paths:
         return
     db = SessionLocal()
     try:
@@ -466,7 +471,7 @@ def _save_message(
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)
             db.flush()
-        db.add(ChatMessage(session_id=s.id, role=role, content=content, image_path=image_path, tool_calls=tool_calls))
+        db.add(ChatMessage(session_id=s.id, role=role, content=content, image_path=(image_paths or [None])[0], image_paths=image_paths, tool_calls=tool_calls))
         s.message_count = (s.message_count or 0) + 1
         s.last_message_at = datetime.now()
         if role == "user" and (not s.title or s.title == ""):

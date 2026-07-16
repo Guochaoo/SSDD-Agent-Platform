@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { deleteAgentSession, getAgentSession, listAgentSessions } from '@/api/agent'
+import { deleteAgentSession, getAgentMessageImage, getAgentSession, listAgentSessions } from '@/api/agent'
 
 const SESSION_KEY = 'ssdd_agent_session'
 const SESSIONS_KEY = 'ssdd_agent_sessions'
@@ -215,14 +215,23 @@ export const useAgentStore = defineStore('agent', {
       this.currentSessionId = session.id
       session.title = remote.title
       session.messages = remote.messages || []
-      this.messages = session.messages.map((message) => ({
+      this.messages = await Promise.all(session.messages.map(async (message) => ({
         id: String(message.id),
         role: message.role,
         content: message.content || '',
-        imagePreviewUrl: message.image_url || '',
+        imagePreviewUrls: (await Promise.all(
+          (message.image_urls || (message.image_url ? [message.image_url] : [])).map(async (_, index) => {
+            try {
+              const blob = await getAgentMessageImage(session.id, message.id, index)
+              return URL.createObjectURL(blob)
+            } catch {
+              return ''
+            }
+          }),
+        )).filter(Boolean),
         toolCalls: message.tool_calls || [],
         createdAt: message.created_at,
-      }))
+      })))
       this.currentToolCall = null
       this.errorMessage = ''
       this.clearImages()

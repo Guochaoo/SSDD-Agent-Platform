@@ -809,6 +809,7 @@ class TrainingService:
                 model_version = ModelVersion(
                     scene_id=task.scene_id,
                     training_task_id=task_id,
+                    owner_id=task.user_id,
                     version=version,
                     model_name=f"{task.model_name}_{scene.name}_{version}" if scene else f"{task.model_name}_{version}",
                     model_type=task.model_name,
@@ -991,6 +992,7 @@ class TrainingService:
             model_version = ModelVersion(
                 scene_id=task.scene_id,
                 training_task_id=task_id,
+                owner_id=task.user_id,
                 version=version,
                 model_name=f"{task.model_name}_{scene.name}_{version}",
                 model_type=task.model_name,

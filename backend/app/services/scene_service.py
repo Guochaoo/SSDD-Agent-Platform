@@ -4,6 +4,7 @@
 对应任务文档步骤 11 的场景部分。
 """
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.entity.db_models import DetectionScene, ModelVersion
@@ -66,7 +67,9 @@ class SceneService:
         )
 
     @staticmethod
-    def list_model_versions(db: Session, scene_id: int) -> list[ModelVersion]:
+    def list_model_versions(
+        db: Session, scene_id: int, user_id: int | None = None, is_superuser: bool = False
+    ) -> list[ModelVersion]:
         """Return every user-visible model version for a scene.
 
         Detection clients must be able to choose an older active version as well
@@ -74,28 +77,27 @@ class SceneService:
         while archived records remain visible for asset traceability.
         """
         SceneService.get_scene(db, scene_id)
-        return (
-            db.query(ModelVersion)
-            .filter(
-                ModelVersion.scene_id == scene_id,
-                ModelVersion.status != "deleted",
-            )
-            .order_by(ModelVersion.is_default.desc(), ModelVersion.created_at.desc())
-            .all()
+        query = db.query(ModelVersion).filter(
+            ModelVersion.scene_id == scene_id,
+            ModelVersion.status != "deleted",
         )
+        if user_id is not None and not is_superuser:
+            query = query.filter(or_(ModelVersion.is_builtin.is_(True), ModelVersion.owner_id == user_id))
+        return query.order_by(ModelVersion.is_default.desc(), ModelVersion.created_at.desc()).all()
 
     @staticmethod
-    def set_default_model(db: Session, scene_id: int, model_version_id: int) -> ModelVersion:
+    def set_default_model(
+        db: Session, scene_id: int, model_version_id: int, user_id: int | None = None, is_superuser: bool = False
+    ) -> ModelVersion:
         """切换某场景的默认模型：先把旧默认取消，再把新的设为默认（同一事务）"""
-        model = (
-            db.query(ModelVersion)
-            .filter(
-                ModelVersion.id == model_version_id,
-                ModelVersion.scene_id == scene_id,
-                ModelVersion.status == "active",
-            )
-            .first()
+        query = db.query(ModelVersion).filter(
+            ModelVersion.id == model_version_id,
+            ModelVersion.scene_id == scene_id,
+            ModelVersion.status == "active",
         )
+        if user_id is not None and not is_superuser:
+            query = query.filter(or_(ModelVersion.is_builtin.is_(True), ModelVersion.owner_id == user_id))
+        model = query.first()
         if not model:
             raise HTTPException(status_code=404, detail="模型版本不存在、不属于该场景或不可用")
 
@@ -104,6 +106,71 @@ class SceneService:
                 ModelVersion.scene_id == scene_id, ModelVersion.is_default.is_(True)
             ).update({ModelVersion.is_default: False}, synchronize_session=False)
             model.is_default = True
+            db.commit()
+            db.refresh(model)
+            return model
+        except Exception:
+            db.rollback()
+            raise
+
+    @staticmethod
+    def get_model_version(
+        db: Session, scene_id: int, model_version_id: int, user_id: int | None = None, is_superuser: bool = False
+    ) -> ModelVersion:
+        """Return one non-deleted model version belonging to a scene."""
+        query = db.query(ModelVersion).filter(
+            ModelVersion.id == model_version_id,
+            ModelVersion.scene_id == scene_id,
+            ModelVersion.status != "deleted",
+        )
+        if user_id is not None and not is_superuser:
+            query = query.filter(or_(ModelVersion.is_builtin.is_(True), ModelVersion.owner_id == user_id))
+        model = query.first()
+        if not model:
+            raise HTTPException(status_code=404, detail="模型版本不存在或不属于该场景")
+        return model
+
+    @staticmethod
+    def create_uploaded_model(
+        db: Session, scene_id: int, owner_id: int, version: str, model_name: str,
+        model_type: str, model_path: str, file_size: int, description: str | None = None,
+    ) -> ModelVersion:
+        SceneService.get_scene(db, scene_id)
+        model = ModelVersion(
+            scene_id=scene_id,
+            owner_id=owner_id,
+            version=version,
+            model_name=model_name,
+            model_type=model_type,
+            model_path=model_path,
+            file_size=file_size,
+            description=description,
+            is_builtin=False,
+        )
+        try:
+            db.add(model)
+            db.commit()
+            db.refresh(model)
+            return model
+        except Exception:
+            db.rollback()
+            raise
+
+    @staticmethod
+    def delete_model_version(
+        db: Session, scene_id: int, model_version_id: int, user_id: int, is_superuser: bool = False
+    ) -> ModelVersion:
+        """Soft-delete a model without breaking detection-history references."""
+        model = SceneService.get_model_version(db, scene_id, model_version_id, user_id, is_superuser)
+        if model.is_builtin:
+            raise HTTPException(status_code=403, detail="内置模型不可删除")
+        if model.owner_id != user_id and not is_superuser:
+            raise HTTPException(status_code=403, detail="无权删除该模型")
+        if model.is_default:
+            raise HTTPException(status_code=400, detail="请先将其他模型设为默认模型")
+        try:
+            model.status = "deleted"
+            model.is_default = False
             db.commit()
             db.refresh(model)
             return model

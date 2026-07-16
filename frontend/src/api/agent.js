@@ -41,6 +41,13 @@ export function getAgentSession(sessionId) {
   return request.get(`/agent/sessions/${encodeURIComponent(sessionId)}`)
 }
 
+export function getAgentMessageImage(sessionId, messageId, index = 0) {
+  return request.get(`/agent/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/image`, {
+    params: { index },
+    responseType: 'blob',
+  })
+}
+
 export function deleteAgentSession(sessionId) {
   return request.delete(`/agent/sessions/${encodeURIComponent(sessionId)}`)
 }

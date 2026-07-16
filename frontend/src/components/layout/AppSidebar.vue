@@ -222,7 +222,8 @@ function restoreSettingsFocus() {
 
 <style lang="scss" scoped>
 .app-sidebar {
-  position: relative;
+  position: sticky;
+  top: 0;
   width: $sidebar-width;
   height: 100vh;
   background: var(--app-sidebar-bg);

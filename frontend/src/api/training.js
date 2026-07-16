@@ -97,6 +97,14 @@ export function getTrainingDatasets() {
   return request.get('/training/datasets')
 }
 
+export function downloadTrainingDataset(datasetPath) {
+  return request.get(`/training/datasets/${encodeURIComponent(datasetPath)}/download`, { responseType: 'blob', timeout: 120000 })
+}
+
+export function deleteTrainingDataset(datasetPath) {
+  return request.delete(`/training/datasets/${encodeURIComponent(datasetPath)}`)
+}
+
 export function uploadTrainingDataset(file) {
   const formData = new FormData()
   formData.append('file', file)
