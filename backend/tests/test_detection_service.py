@@ -230,8 +230,8 @@ def test_video_detection_samples_frames_and_persists_results(db_session, tmp_pat
     assert result["processed_frames"] == 3
     assert result["model"]["name"] == "ssdd_yolo11n_v1"
     assert result["model"]["path"] == str(weights)
-    assert result["total_objects"] == 3
-    assert result["class_counts"] == {"scratches": 3}
+    assert result["total_objects"] == 1
+    assert result["class_counts"] == {"scratches": 1}
     assert result["video_resolution"] == {"width": 32, "height": 24}
     assert result["annotated_video_url"].endswith("annotated_video.mp4")
     assert len(result["key_frames"]) == 3
@@ -239,7 +239,78 @@ def test_video_detection_samples_frames_and_persists_results(db_session, tmp_pat
     db_session.expire_all()
     completed = db_session.query(DetectionTask).filter_by(id=task.id).one()
     assert completed.status == "completed"
-    assert len(completed.results) == 3
+    assert len(completed.results) == 1
+
+
+def test_video_tracks_match_each_detection_only_once():
+    service = DetectionService()
+    tracks = []
+    active_tracks = []
+    first_frame = [
+        {"class_id": 1, "class_name": "scratches", "class_name_cn": "划痕", "confidence": 0.8,
+         "bbox": [0.0, 0.0, 10.0, 10.0]},
+        {"class_id": 1, "class_name": "scratches", "class_name_cn": "划痕", "confidence": 0.7,
+         "bbox": [20.0, 0.0, 30.0, 10.0]},
+    ]
+    second_frame = [
+        {"class_id": 1, "class_name": "scratches", "class_name_cn": "划痕", "confidence": 0.9,
+         "bbox": [1.0, 0.0, 11.0, 10.0]},
+        {"class_id": 1, "class_name": "scratches", "class_name_cn": "划痕", "confidence": 0.75,
+         "bbox": [21.0, 0.0, 31.0, 10.0]},
+    ]
+
+    service._update_video_tracks(tracks, active_tracks, first_frame, 0, 5.0, 32, 24)
+    service._update_video_tracks(tracks, active_tracks, second_frame, 5, 6.0, 32, 24)
+
+    assert len(tracks) == 2
+    assert [track["result"]["confidence"] for track in tracks] == [0.9, 0.75]
+    assert tracks[0]["result"]["image_path"] == "frame_5.jpg"
+
+
+def test_video_tracks_keep_different_classes_and_positions_separate():
+    service = DetectionService()
+    tracks = []
+    active_tracks = []
+    service._update_video_tracks(
+        tracks,
+        active_tracks,
+        [{"class_id": 1, "class_name": "scratches", "class_name_cn": "划痕", "confidence": 0.8,
+          "bbox": [0.0, 0.0, 10.0, 10.0]}],
+        0, 5.0, 100, 100,
+    )
+    service._update_video_tracks(
+        tracks,
+        active_tracks,
+        [
+            {"class_id": 0, "class_name": "crazing", "class_name_cn": "裂纹", "confidence": 0.9,
+             "bbox": [0.0, 0.0, 10.0, 10.0]},
+            {"class_id": 1, "class_name": "scratches", "class_name_cn": "划痕", "confidence": 0.9,
+             "bbox": [50.0, 50.0, 60.0, 60.0]},
+        ],
+        5, 6.0, 100, 100,
+    )
+
+    assert len(tracks) == 3
+
+
+def test_video_tracks_reset_after_scene_cut():
+    service = DetectionService()
+    tracks = []
+    active_tracks = []
+    detection = {
+        "class_id": 1,
+        "class_name": "scratches",
+        "class_name_cn": "划痕",
+        "confidence": 0.8,
+        "bbox": [0.0, 0.0, 10.0, 10.0],
+    }
+
+    service._update_video_tracks(tracks, active_tracks, [detection], 0, 5.0, 32, 24)
+    service._update_video_tracks(
+        tracks, active_tracks, [detection], 5, 5.0, 32, 24, reset=True
+    )
+
+    assert len(tracks) == 2
 
 
 def test_camera_frame_returns_annotated_image(tmp_path, monkeypatch):

@@ -33,6 +33,9 @@ from app.storage.minio_client import MinIOClient
 
 logger = get_logger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+VIDEO_TRACK_IOU_THRESHOLD = 0.5
+VIDEO_TRACK_MAX_MISSED_FRAMES = 2
+VIDEO_TRACK_SCENE_CHANGE_THRESHOLD = 40
 
 
 class DetectionService:
@@ -450,6 +453,87 @@ class DetectionService:
             )
         return annotated
 
+    @staticmethod
+    def _bbox_iou(left, right):
+        intersection_width = max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+        intersection_height = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
+        intersection = intersection_width * intersection_height
+        left_area = max(0.0, left[2] - left[0]) * max(0.0, left[3] - left[1])
+        right_area = max(0.0, right[2] - right[0]) * max(0.0, right[3] - right[1])
+        union = left_area + right_area - intersection
+        return intersection / union if union > 0 else 0.0
+
+    @classmethod
+    def _update_video_tracks(
+        cls,
+        tracks,
+        active_tracks,
+        detections,
+        frame_index,
+        inference_time,
+        width,
+        height,
+        reset=False,
+    ):
+        if reset:
+            active_tracks.clear()
+
+        candidates = []
+        for track_index, track in enumerate(active_tracks):
+            for detection_index, detection in enumerate(detections):
+                if track["class_id"] != detection["class_id"]:
+                    continue
+                overlap = cls._bbox_iou(track["bbox"], detection["bbox"])
+                if overlap >= VIDEO_TRACK_IOU_THRESHOLD:
+                    candidates.append((overlap, track_index, detection_index))
+
+        matched_tracks = set()
+        matched_detections = set()
+        for _overlap, track_index, detection_index in sorted(candidates, reverse=True):
+            if track_index in matched_tracks or detection_index in matched_detections:
+                continue
+            track = active_tracks[track_index]
+            detection = detections[detection_index]
+            track["bbox"] = detection["bbox"]
+            track["missed_frames"] = 0
+            if detection["confidence"] > track["result"]["confidence"]:
+                track["result"] = {
+                    "image_path": f"frame_{frame_index}.jpg",
+                    **detection,
+                    "inference_time": inference_time,
+                    "image_width": width,
+                    "image_height": height,
+                }
+            matched_tracks.add(track_index)
+            matched_detections.add(detection_index)
+
+        for track_index, track in enumerate(active_tracks):
+            if track_index not in matched_tracks:
+                track["missed_frames"] += 1
+        active_tracks[:] = [
+            track
+            for track in active_tracks
+            if track["missed_frames"] <= VIDEO_TRACK_MAX_MISSED_FRAMES
+        ]
+
+        for detection_index, detection in enumerate(detections):
+            if detection_index in matched_detections:
+                continue
+            track = {
+                "class_id": detection["class_id"],
+                "bbox": detection["bbox"],
+                "missed_frames": 0,
+                "result": {
+                    "image_path": f"frame_{frame_index}.jpg",
+                    **detection,
+                    "inference_time": inference_time,
+                    "image_width": width,
+                    "image_height": height,
+                },
+            }
+            tracks.append(track)
+            active_tracks.append(track)
+
     def detect_video(
         self,
         video_path,
@@ -503,9 +587,8 @@ class DetectionService:
                 raise RuntimeError("无法创建标注视频")
 
             key_frames = []
-            db_results = []
-            class_counts = {}
-            total_objects = 0
+            tracks = []
+            active_tracks = []
             total_inference_time = 0.0
             processed_frames = 0
             frame_index = 0
@@ -517,7 +600,9 @@ class DetectionService:
                 if not ok:
                     break
                 gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (100, 100))
-                scene_changed = previous_gray is None or cv2.absdiff(previous_gray, gray).mean() > 10
+                has_previous_frame = previous_gray is not None
+                frame_difference = cv2.absdiff(previous_gray, gray).mean() if has_previous_frame else 0
+                scene_changed = not has_previous_frame or frame_difference > 10
                 previous_gray = gray
                 should_sample = frame_index % effective_interval == 0 or scene_changed
 
@@ -532,18 +617,11 @@ class DetectionService:
                     last_detections = detections
                     processed_frames += 1
                     total_inference_time += inference_time
-                    total_objects += len(detections)
-                    for detection in detections:
-                        class_counts[detection["class_name"]] = class_counts.get(detection["class_name"], 0) + 1
-                        db_results.append(
-                            {
-                                "image_path": f"frame_{frame_index}.jpg",
-                                **detection,
-                                "inference_time": inference_time,
-                                "image_width": width,
-                                "image_height": height,
-                            }
-                        )
+                    self._update_video_tracks(
+                        tracks, active_tracks, detections, frame_index, inference_time,
+                        width, height,
+                        reset=frame_difference > VIDEO_TRACK_SCENE_CHANGE_THRESHOLD,
+                    )
                     annotated = self._draw_detections(frame, detections)
                     encoded_frame = None
                     if len(key_frames) < 6:
@@ -575,6 +653,12 @@ class DetectionService:
             writer = None
             if frame_index == 0:
                 raise RuntimeError("视频中没有可读取的帧")
+
+            db_results = [track["result"] for track in tracks]
+            class_counts = {}
+            for result in db_results:
+                class_counts[result["class_name"]] = class_counts.get(result["class_name"], 0) + 1
+            total_objects = len(db_results)
 
             h264_path = output_path.replace(".mp4", "_h264.mp4")
             ffmpeg = shutil.which("ffmpeg")
