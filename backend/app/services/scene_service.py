@@ -89,11 +89,15 @@ class SceneService:
         """切换某场景的默认模型：先把旧默认取消，再把新的设为默认（同一事务）"""
         model = (
             db.query(ModelVersion)
-            .filter(ModelVersion.id == model_version_id, ModelVersion.scene_id == scene_id)
+            .filter(
+                ModelVersion.id == model_version_id,
+                ModelVersion.scene_id == scene_id,
+                ModelVersion.status == "active",
+            )
             .first()
         )
         if not model:
-            raise HTTPException(status_code=404, detail="模型版本不存在或不属于该场景")
+            raise HTTPException(status_code=404, detail="模型版本不存在、不属于该场景或不可用")
 
         try:
             db.query(ModelVersion).filter(
