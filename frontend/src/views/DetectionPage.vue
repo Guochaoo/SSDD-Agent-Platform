@@ -3,7 +3,6 @@
     <ModulePageHeader
       :title="text.title"
       :description="text.description"
-      :mock="isFrontendBMockMode"
     >
       <el-button :icon="Refresh" @click="resetCurrentMode">{{ text.resetMode }}</el-button>
     </ModulePageHeader>
@@ -393,7 +392,7 @@ import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useSettingsStore } from '@/stores/settings'
 import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getDetectionModelStatus, getVideoStatusApi } from "@/api/detection";
-import { getModelsApi, getScenesApi, isFrontendBMockMode } from "@/api/models";
+import { getModelsApi, getScenesApi } from "@/api/models";
 import { createCameraWs } from "@/utils/cameraWs";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";

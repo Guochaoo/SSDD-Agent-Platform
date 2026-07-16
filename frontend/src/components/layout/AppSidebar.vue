@@ -92,7 +92,7 @@ import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import { Setting, SwitchButton } from '@element-plus/icons-vue'
-import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft } from '@boxicons/vue'
+import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder } from '@boxicons/vue'
 import { ElMessageBox } from 'element-plus'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 
@@ -132,6 +132,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   chat: 'Chat',
   detection: 'Detection',
   training: 'Training',
+  files: 'Files',
   history: 'History',
   dashboard: 'Dashboard',
   chatHistory: 'Chats',
@@ -150,6 +151,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   chat: '智能对话',
   detection: '检测工作台',
   training: '模型训练',
+  files: '文件查看',
   history: '历史记录',
   dashboard: '数据看板',
   chatHistory: '会话历史',
@@ -168,6 +170,7 @@ const menuItems = computed(() => [
   { path: '/chat', title: text.value.chat, icon: MessageCircleDetail },
   { path: '/detection', title: text.value.detection, icon: Capture },
   { path: '/training', title: text.value.training, icon: Computer },
+  { path: '/files', title: text.value.files, icon: Folder },
   { path: '/history', title: text.value.history, icon: History },
   { path: '/dashboard', title: text.value.dashboard, icon: ChartTrend },
 ])
@@ -184,8 +187,12 @@ function handleSwitchSession(id) {
   if (route.path !== '/chat') router.push('/chat')
 }
 
-function handleDeleteSession(id) {
-  agentStore.deleteSession(id)
+async function handleDeleteSession(id) {
+  try {
+    await agentStore.deleteSession(id)
+  } catch {
+    agentStore.fetchSessions().catch(() => {})
+  }
 }
 
 function handleCommand(command) {

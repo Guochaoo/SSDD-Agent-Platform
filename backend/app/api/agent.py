@@ -158,6 +158,42 @@ def get_chat_session(
     }
 
 
+@router.delete("/sessions/{session_id}")
+def delete_chat_session(
+    session_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete one of the current user's persisted chat sessions and messages."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    image_paths = [path for (path,) in db.query(ChatMessage.image_path).filter(
+        ChatMessage.session_id == session.id,
+        ChatMessage.image_path.isnot(None),
+    ).all()]
+    db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete(
+        synchronize_session=False
+    )
+    db.delete(session)
+    db.commit()
+
+    for image_path in image_paths:
+        try:
+            os.unlink(_validate_uploaded_image_path(image_path))
+        except (FileNotFoundError, HTTPException, OSError):
+            pass
+    return {"id": session_id, "message": "会话已删除"}
+
+
 # ══════════════════════════════════════════════════════════════
 # Image upload
 # ══════════════════════════════════════════════════════════════

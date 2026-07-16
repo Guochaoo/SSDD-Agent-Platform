@@ -741,12 +741,46 @@ class TrainingService:
                         "ap50_95": round(float(ap50_95), 4),
                     }
 
+            # Keep visualisation data as JSON rather than forcing clients to
+            # consume server-generated PNG files.  The UI renders the curves
+            # with its existing ECharts dependency, so this stays inspectable
+            # and works for both local and remote storage.
+            def average_curve(curve):
+                x_values, y_values = curve[0], curve[1]
+                if not len(x_values) or not getattr(y_values, "size", len(y_values)):
+                    return {"x": [], "y": []}
+                y_mean = y_values.mean(axis=0) if getattr(y_values, "ndim", 1) > 1 else y_values
+                # 100 points is ample for a smooth chart and avoids returning
+                # four 1000-point arrays for each validation request.
+                step = max(1, len(x_values) // 100)
+                return {
+                    "x": [round(float(value), 4) for value in x_values[::step]],
+                    "y": [round(float(value), 4) for value in y_mean[::step]],
+                }
+
+            curve_results = results.curves_results
+            pr_curve = {
+                "x": [round(float(value), 4) for value in curve_results[2][1].mean(axis=0)[::10]],
+                "y": [round(float(value), 4) for value in curve_results[3][1].mean(axis=0)[::10]],
+            }
+            visualization = {
+                "confusion_matrix": {
+                    "labels": [model.names.get(i, f"class_{i}") for i in range(len(model.names))] + ["background"],
+                    "matrix": results.confusion_matrix.matrix.tolist(),
+                },
+                # Precision/recall share the same confidence samples. Pairing
+                # them produces the aggregate PR curve for the frontend.
+                "pr_curve": pr_curve,
+                "f1_curve": average_curve(curve_results[1]),
+            }
+
             report = {
                 "task_id": task_id,
                 "task_uuid": task.task_uuid,
                 "split": split,
                 "overall": overall,
                 "per_class": per_class,
+                "visualization": visualization,
             }
 
             # 更新或创建 ModelVersion 记录

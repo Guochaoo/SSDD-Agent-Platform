@@ -3,7 +3,6 @@
     <ModulePageHeader
       :title="text.title"
       :description="text.description"
-      :mock="isFrontendBMockMode"
     >
       <span class="updated-at">{{ text.updatedAt }} {{ dashboard.updatedAt || "—" }}</span>
       <el-button :icon="Refresh" :loading="loading" @click="loadDashboard">{{ text.refresh }}</el-button>
@@ -55,7 +54,6 @@
 import { DocumentChecked, Filter, Odometer, Picture, Refresh, WarningFilled } from "@element-plus/icons-vue";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useSettingsStore } from '@/stores/settings'
-import { isFrontendBMockMode } from "@/api/models";
 import { getDashboardApi } from "@/api/statistics";
 import EChartPanel from "@/components/charts/EChartPanel.vue";
 import StatCard from "@/components/charts/StatCard.vue";

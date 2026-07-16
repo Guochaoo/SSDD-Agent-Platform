@@ -23,13 +23,15 @@ onMounted(() => {
 <style lang="scss" scoped>
 .main-layout {
   width: 100%;
-  height: 100%;
+  height: 100dvh;
   display: flex;
+  overflow: hidden;
 }
 
 .layout-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   background: var(--app-bg);
   overflow: hidden;
   padding: clamp(16px, 2vw, 28px);

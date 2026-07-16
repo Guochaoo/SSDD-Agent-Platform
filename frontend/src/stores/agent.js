@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { getAgentSession, listAgentSessions } from '@/api/agent'
+import { deleteAgentSession, getAgentSession, listAgentSessions } from '@/api/agent'
 
 const SESSION_KEY = 'ssdd_agent_session'
 const SESSIONS_KEY = 'ssdd_agent_sessions'
@@ -226,7 +226,8 @@ export const useAgentStore = defineStore('agent', {
       this.clearImages()
     },
 
-    deleteSession(id) {
+    async deleteSession(id) {
+      await deleteAgentSession(id)
       this.sessions = this.sessions.filter(s => s.id !== id)
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions))
       if (this.currentSessionId === id) {

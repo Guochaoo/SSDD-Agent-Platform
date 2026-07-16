@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database.session import get_db
 from app.entity.db_models import User
-from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief
+from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief, ModelVersionResponse
 from app.services.scene_service import scene_service
 
 router = APIRouter(prefix="/api/scenes", tags=["检测场景"])
@@ -43,6 +43,16 @@ def list_scenes(
 def get_scene(scene_id: int, db: Session = Depends(get_db)):
     scene = scene_service.get_scene(db, scene_id)
     return _scene_to_response(db, scene)
+
+
+@router.get("/{scene_id}/models", response_model=list[ModelVersionResponse])
+def list_scene_models(
+    scene_id: int,
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List every non-deleted model version that can be inspected or selected."""
+    return scene_service.list_model_versions(db, scene_id)
 
 
 @router.post("", response_model=SceneResponse, status_code=201)
