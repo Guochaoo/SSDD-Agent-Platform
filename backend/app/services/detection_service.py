@@ -36,8 +36,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 VIDEO_TRACK_IOU_THRESHOLD = 0.5
 VIDEO_TRACK_MAX_MISSED_FRAMES = 2
 VIDEO_TRACK_SCENE_CHANGE_THRESHOLD = 40
+AGENT_ARTIFACT_TTL_SECONDS = 24 * 60 * 60
 
 
+def _cleanup_agent_artifacts(artifact_dir: Path) -> None:
+    cutoff = time.time() - AGENT_ARTIFACT_TTL_SECONDS
+    for artifact_path in artifact_dir.glob("annotated_*.jpg"):
+        try:
+            if artifact_path.stat().st_mtime < cutoff:
+                artifact_path.unlink()
+        except OSError:
+            logger.debug("Unable to remove stale agent artifact: %s", artifact_path)
 class DetectionService:
     """编排模型加载、推理、对象存储和历史落库。"""
 
@@ -823,6 +832,7 @@ class DetectionService:
         inference_time = round(float(result.speed.get("inference", 0)), 2)
         artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
         artifact_dir.mkdir(parents=True, exist_ok=True)
+        _cleanup_agent_artifacts(artifact_dir)
         artifact_name = f"annotated_{uuid4().hex}.jpg"
         (artifact_dir / artifact_name).write_bytes(self._encode_annotated_image(result))
         logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
