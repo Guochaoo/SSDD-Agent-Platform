@@ -9,6 +9,9 @@
     <button class="quick-detect-btn muted" :disabled="disabled" @click="$emit('zip')">
       {{ labels.zip }}
     </button>
+    <button class="quick-detect-btn muted" :disabled="disabled" @click="$emit('video')">
+      {{ labels.video }}
+    </button>
   </div>
 </template>
 
@@ -24,11 +27,12 @@ defineProps({
       single: '单图检测',
       batch: '批量图片检测',
       zip: 'ZIP 检测',
+      video: '视频检测',
     }),
   },
 })
 
-defineEmits(['single', 'batch', 'zip'])
+defineEmits(['single', 'batch', 'zip', 'video'])
 </script>
 
 <style lang="scss" scoped>

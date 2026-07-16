@@ -89,7 +89,9 @@
           @single="handleQuickDetect('single')"
           @batch="handleQuickDetect('batch')"
           @zip="handleQuickDetect('zip')"
+          @video="handleQuickDetect('video')"
         />
+
       </div>
     </template>
 
@@ -98,7 +100,6 @@
       <div class="chat-main">
         <MessageList
           :messages="agentStore.messages"
-          :tool-call="agentStore.currentToolCall"
           :is-streaming="agentStore.isStreaming"
           @regenerate="handleRegenerate"
         />
@@ -113,6 +114,7 @@
           @single="handleQuickDetect('single')"
           @batch="handleQuickDetect('batch')"
           @zip="handleQuickDetect('zip')"
+          @video="handleQuickDetect('video')"
         />
 
         <div :class="['prompt-card', { dragover: isDragover }]">
@@ -188,7 +190,7 @@ import {
   getAgentDetectionHistoryApi,
   streamAgentChat,
 } from '@/api/agent'
-import { detectBatchApi, detectSingleApi } from '@/api/detection'
+import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
@@ -232,7 +234,12 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   dropToUpload: 'Release to upload image',
   onlyImages: 'Only JPG and PNG images are supported',
   imageTooLarge: 'Image size cannot exceed 10MB',
-  zipUnavailable: 'ZIP detection is not available yet. Please use batch image detection first.',
+  zipDetecting: 'Running ZIP image detection...',
+  videoDetecting: 'Uploading and analyzing video...',
+  videoProgress: (progress) => `Video detection in progress (${progress}%)...`,
+  videoDone: (frames, count) => `Video detection completed. Analyzed ${frames} key frames and found ${count} possible defects.`,
+  zipFailed: 'ZIP detection failed. Please check the archive contents and try again.',
+  videoFailed: 'Video detection failed. Please check the video format and backend service.',
   noScene: 'No detection scene is available',
   noModel: 'No detection model is available',
   reconnecting: (count) => `Connection lost. Reconnecting (${count})...`,
@@ -248,7 +255,7 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   detectFailed: 'Detection failed. Check the backend service, model and authentication, then try again.',
   noDefect: 'No obvious defect detected. Review the threshold with the production context before rechecking.',
   unknownDefect: 'Unknown defect',
-  quickDetect: { single: 'Single image', batch: 'Batch images', zip: 'ZIP' },
+  quickDetect: { single: 'Single image', batch: 'Batch images', zip: 'ZIP', video: 'Video' },
   chips: [
     'Analyze defects in this steel surface',
     'What is the detection confidence?',
@@ -263,7 +270,12 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   dropToUpload: '释放以上传图片',
   onlyImages: '仅支持 JPG 和 PNG 图片',
   imageTooLarge: '图片大小不能超过 10MB',
-  zipUnavailable: '当前后端暂未开放 ZIP 检测接口，请先使用批量图片检测',
+  zipDetecting: '正在进行 ZIP 图片检测…',
+  videoDetecting: '正在上传并分析视频…',
+  videoProgress: (progress) => `视频检测处理中（${progress}%）…`,
+  videoDone: (frames, count) => `视频检测完成，共分析 ${frames} 个关键帧，发现 ${count} 个疑似缺陷。`,
+  zipFailed: 'ZIP 检测失败，请检查压缩包内容后重试。',
+  videoFailed: '视频检测失败，请检查视频格式和后端服务。',
   noScene: '未找到可用检测场景',
   noModel: '未找到可用检测模型',
   reconnecting: (count) => `连接中断，正在第 ${count} 次重连...`,
@@ -279,7 +291,7 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   detectFailed: '检测失败，请检查后端服务、模型和鉴权状态后重试。',
   noDefect: '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。',
   unknownDefect: '未知缺陷',
-  quickDetect: { single: '单图检测', batch: '批量图片检测', zip: 'ZIP 检测' },
+  quickDetect: { single: '单图检测', batch: '批量图片检测', zip: 'ZIP 检测', video: '视频检测' },
   chips: [
     '分析这张钢铁表面的缺陷',
     '检测结果置信度是多少',
@@ -322,9 +334,9 @@ function summarizeDetectionResult(result) {
     .join('，')
 
   if (settingsStore.isEnglish) {
-    return `Detection completed. Found ${objects.length} possible defects (${summary}); highest confidence ${(maxConfidence * 100).toFixed(1)}%.`
+    return `Detection completed. Found ${objects.length} possible defects (${summary}); highest confidence ${(maxConfidence * 100).toFixed(1)}%.\n\n`
   }
-  return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。`
+  return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。\n\n`
 }
 
 function onDragEnter() { dragCounter++; isDragover.value = true }
@@ -409,24 +421,27 @@ function chooseFiles({ accept, multiple }) {
 async function handleQuickDetect(type) {
   if (agentStore.isStreaming || isQuickDetecting.value) return
 
-  if (type === 'zip') {
-    ElMessage.warning(chatText.value.zipUnavailable)
-    return
-  }
-
   isQuickDetecting.value = true
   try {
+    const pickerOptions = type === 'zip'
+      ? { accept: '.zip,application/zip', multiple: false }
+      : type === 'video'
+        ? { accept: 'video/mp4,video/avi,video/quicktime,video/x-matroska', multiple: false }
+        : { accept: 'image/png,image/jpeg', multiple: type === 'batch' }
     const files = await chooseFiles({
-      accept: 'image/png,image/jpeg',
-      multiple: type === 'batch',
+      ...pickerOptions,
     })
     if (!files.length) return
 
     const options = await getQuickDetectOptions()
     if (type === 'single') {
       await runSingleDetect(files[0], options)
-    } else {
+    } else if (type === 'batch') {
       await runBatchDetect(files, options)
+    } else if (type === 'zip') {
+      await runZipDetect(files[0], options)
+    } else if (type === 'video') {
+      await runVideoDetect(files[0], options)
     }
   } finally {
     isQuickDetecting.value = false
@@ -501,6 +516,83 @@ async function runBatchDetect(files, options) {
   }
 }
 
+async function runZipDetect(file, options) {
+  agentStore.addMessage({
+    role: 'user',
+    content: settingsStore.isEnglish ? `[Quick ZIP detection] ${file.name}` : `[快捷 ZIP 检测] ${file.name}`,
+  })
+  agentStore.addMessage({ role: 'assistant', content: chatText.value.zipDetecting, toolCalls: [] })
+  agentStore.setToolCall({ name: 'detect_zip', status: 'running', input: { fileName: file.name } })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const result = await detectZipApi(file, options)
+    const totalObjects = (result.items || []).reduce((sum, item) => sum + Number(item.totalObjects || 0), 0)
+    assistantMessage.content = chatText.value.batchDone(result.successCount || result.items?.length || 0, totalObjects)
+    assistantMessage.detectionResult = result
+    agentStore.setToolCall({ name: 'detect_zip', status: 'success', result })
+  } catch (error) {
+    assistantMessage.content = chatText.value.zipFailed
+    agentStore.setToolCall({ name: 'detect_zip', status: 'error', error: error?.message || chatText.value.zipFailed })
+    ElMessage.error(error?.response?.data?.detail || chatText.value.zipFailed)
+  } finally {
+    saveCurrentSession()
+  }
+}
+
+async function runVideoDetect(file, options) {
+  agentStore.addMessage({
+    role: 'user',
+    content: settingsStore.isEnglish ? `[Quick video detection] ${file.name}` : `[快捷视频检测] ${file.name}`,
+  })
+  agentStore.addMessage({ role: 'assistant', content: chatText.value.videoDetecting, toolCalls: [] })
+  agentStore.setToolCall({ name: 'detect_video', status: 'running', input: { fileName: file.name, progress: 0 } })
+
+  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
+  try {
+    const task = await detectVideoApi(file, {
+      ...options,
+      frameSampleRate: 5,
+      maxFrames: 50,
+    })
+
+    let status
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      status = await getVideoStatusApi(task.task_id)
+      const progress = Math.round(status.progress || 0)
+      assistantMessage.content = chatText.value.videoProgress(progress)
+      agentStore.setToolCall({
+        name: 'detect_video',
+        status: 'running',
+        input: { fileName: file.name, progress },
+      })
+      if (status.status === 'completed' || status.status === 'failed') break
+      await new Promise(resolve => setTimeout(resolve, 1500))
+    }
+
+    if (!status || status.status !== 'completed') {
+      throw new Error(status?.message || chatText.value.videoFailed)
+    }
+
+    const result = status.result || status
+    assistantMessage.content = chatText.value.videoDone(result.processed_frames || 0, result.total_objects || 0)
+    assistantMessage.videoResult = {
+      processedFrames: result.processed_frames || 0,
+      totalObjects: result.total_objects || 0,
+      classCounts: result.class_counts || {},
+      durationSeconds: result.duration_seconds || 0,
+      annotatedVideoUrl: result.annotated_video_url || '',
+    }
+    agentStore.setToolCall({ name: 'detect_video', status: 'success', result })
+  } catch (error) {
+    assistantMessage.content = chatText.value.videoFailed
+    agentStore.setToolCall({ name: 'detect_video', status: 'error', error: error?.message || chatText.value.videoFailed })
+    ElMessage.error(error?.response?.data?.detail || error?.message || chatText.value.videoFailed)
+  } finally {
+    saveCurrentSession()
+  }
+}
+
 let _currentAgentLabel = ''
 
 function handleAgentEvent(event) {
@@ -558,26 +650,45 @@ function attachToolResultCard(rawResult) {
   }
   const result = payload?.result || payload
   if (!result || result.error) return
-  const detections = result.detections || result.results?.flatMap((item) => item.detections || []) || []
   const assistantMessage = [...agentStore.messages].reverse().find((message) => message.role === 'assistant')
   const userMessage = [...agentStore.messages].reverse().find((message) => message.role === 'user')
   if (!assistantMessage) return
-  assistantMessage.detectionResult = {
-    taskId: `agent-${Date.now()}`,
-    fileName: result.filename || '',
-    originalImageUrl: result.image_url || result.originalImageUrl || '',
-    annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '',
-    totalObjects: result.total_objects ?? result.totalObjects ?? detections.length,
-    totalImages: result.total_images ?? 1,
-    inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0),
-    objects: detections.map((item, index) => ({
+
+  const normalizeObjects = (detections = []) => detections.map((item, index) => ({
       id: String(index),
       className: item.class_name || item.className || 'unknown',
       classNameCn: item.class_name_cn || item.classNameCn || item.class_name || 'unknown',
       confidence: Number(item.confidence || 0),
       bbox: Array.isArray(item.bbox) ? item.bbox.map(Number) : [0, 0, 0, 0],
       bboxPercent: null,
-    })),
+  }))
+
+  if (Array.isArray(result.results)) {
+    assistantMessage.detectionResult = {
+      taskId: `agent-${Date.now()}`,
+      totalImages: result.total_images ?? result.results.length,
+      totalObjects: result.total_objects ?? 0,
+      items: result.results.map((item) => ({
+        fileName: item.filename || item.file_name || '',
+        annotatedImageUrl: item.annotated_image_url || item.annotatedImageUrl || '',
+        totalObjects: item.total_objects ?? item.detections?.length ?? 0,
+        inferenceTimeMs: Number(item.inference_time || 0),
+        objects: normalizeObjects(item.detections),
+        error: item.error || null,
+      })),
+    }
+  } else {
+    const detections = result.detections || []
+    assistantMessage.detectionResult = {
+      taskId: `agent-${Date.now()}`,
+      fileName: result.filename || '',
+      originalImageUrl: result.image_url || result.originalImageUrl || '',
+      annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '',
+      totalObjects: result.total_objects ?? result.totalObjects ?? detections.length,
+      totalImages: result.total_images ?? 1,
+      inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0),
+      objects: normalizeObjects(detections),
+    }
   }
   assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || ''
   assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)

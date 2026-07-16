@@ -32,6 +32,35 @@ UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "rsod_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+MAX_ZIP_FILES = 1_000
+MAX_ZIP_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+
+
+def _safe_extract_zip(zip_path: str, target_dir: str) -> None:
+    """Extract a user ZIP without allowing path traversal or zip bombs."""
+    target_root = Path(target_dir).resolve()
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        members = zf.infolist()
+        if len(members) > MAX_ZIP_FILES:
+            raise ValueError("ZIP 文件包含的条目过多")
+        total_size = sum(max(0, member.file_size) for member in members)
+        if total_size > MAX_ZIP_UNCOMPRESSED_BYTES:
+            raise ValueError("ZIP 解压后的文件总大小不能超过 200MB")
+
+        for member in members:
+            member_path = (target_root / member.filename).resolve()
+            if member_path != target_root and target_root not in member_path.parents:
+                raise ValueError("ZIP 文件包含非法路径")
+
+        for member in members:
+            member_path = (target_root / member.filename).resolve()
+            if member.is_dir():
+                member_path.mkdir(parents=True, exist_ok=True)
+                continue
+            member_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member, "r") as source, member_path.open("wb") as target:
+                while chunk := source.read(1024 * 1024):
+                    target.write(chunk)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -128,8 +157,7 @@ def detect_zip_images_file(zip_path: str, conf: float = 0.25) -> str:
     temp_dir = None
     try:
         temp_dir = tempfile.mkdtemp(prefix="rsod_zip_")
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(temp_dir)
+        _safe_extract_zip(zip_path, temp_dir)
 
         image_files = []
         for root, _, files in os.walk(temp_dir):
