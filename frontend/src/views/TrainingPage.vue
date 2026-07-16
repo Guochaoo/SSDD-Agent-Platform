@@ -46,6 +46,9 @@
       >
         <el-table-column prop="task_uuid" :label="text.taskId" min-width="108" />
         <el-table-column prop="model_name" :label="text.model" min-width="106" />
+        <el-table-column :label="text.dataset" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ formatDataset(row) }}</template>
+        </el-table-column>
         <el-table-column prop="device" :label="text.device" min-width="82" />
         <el-table-column :label="text.progress" min-width="188">
           <template #default="{ row }">
@@ -87,6 +90,15 @@
             >
               {{ text.stop }}
             </el-button>
+            <el-button
+              v-if="isDeletable(row)"
+              size="small"
+              type="danger"
+              text
+              @click.stop="deleteTask(row)"
+            >
+              {{ text.delete }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -103,6 +115,7 @@
           </div>
           <div class="monitor-info">
             <span>{{ text.model }}: {{ selectedTask.model_name }}</span>
+            <span>{{ text.dataset }}: {{ formatDataset(selectedTask) }}</span>
             <span>{{ text.device }}: {{ selectedTask.device }}</span>
             <span>Epoch：{{ selectedTask.current_epoch || 0 }}/{{ selectedTask.epochs || 0 }}</span>
           </div>
@@ -476,6 +489,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import {
   downloadTrainingModel,
+  deleteTrainingTask,
   exportTrainingModel,
   getTrainingDatasets,
   getTrainingMetrics,
@@ -504,6 +518,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   emptyTasks: 'No training tasks',
   taskId: 'Task ID',
   model: 'Model',
+  dataset: 'Dataset',
   device: 'Device',
   progress: 'Progress',
   status: 'Status',
@@ -511,6 +526,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   actions: 'Actions',
   monitor: 'Monitor',
   stop: 'Stop',
+  delete: 'Delete',
   task: 'Task',
   trainingMonitor: 'Training Monitor',
   modelActions: 'Model Actions',
@@ -540,6 +556,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   emptyTasks: '暂无训练任务',
   taskId: '任务 ID',
   model: '模型',
+  dataset: '数据集',
   device: '设备',
   progress: '进度',
   status: '状态',
@@ -547,6 +564,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   actions: '操作',
   monitor: '监控',
   stop: '停止',
+  delete: '删除',
   task: '任务',
   trainingMonitor: '训练监控',
   modelActions: '模型操作',
@@ -711,6 +729,17 @@ function normalizeProgress(value) {
   const progress = Number(value)
   if (!Number.isFinite(progress)) return 0
   return Math.min(100, Math.max(0, Math.round(progress)))
+}
+
+function formatDataset(task) {
+  const path = task?.dataset_name || task?.dataset_path
+  if (!path) return '-'
+  const count = Number(task.dataset_size)
+  return Number.isFinite(count) && count > 0 ? `${path} (${count})` : path
+}
+
+function isDeletable(task) {
+  return task && !RUNNING_STATUSES.has(task.status)
 }
 
 function formatMetric(value) {
@@ -970,6 +999,29 @@ async function stopTask(taskId) {
     if (error !== 'cancel' && error !== 'close') {
       console.error('停止训练任务失败', error)
       pageError.value = getApiErrorMessage(error, '训练任务停止失败')
+    }
+  }
+}
+
+async function deleteTask(task) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete training task ${task.task_uuid}? Its metrics and unexported run files will be removed.`,
+      text.value.delete,
+      { type: 'warning' },
+    )
+    await deleteTrainingTask(task.id)
+    if (selectedTask.value?.id === task.id) {
+      stopPolling()
+      selectedTask.value = null
+      evalReport.value = null
+      predictResult.value = null
+    }
+    await fetchTasks()
+    ElMessage.success('Training history task deleted')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      pageError.value = getApiErrorMessage(error, 'Failed to delete training task')
     }
   }
 }

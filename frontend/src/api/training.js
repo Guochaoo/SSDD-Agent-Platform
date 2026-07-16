@@ -126,6 +126,10 @@ export function stopTraining(taskId) {
   return request.post(`/training/stop/${taskId}`)
 }
 
+export function deleteTrainingTask(taskId) {
+  return request.delete(`/training/tasks/${taskId}`)
+}
+
 export function downloadTrainingResults(taskUuid) {
   return request.get(`/training/results/${taskUuid}`, {
     responseType: 'blob',
