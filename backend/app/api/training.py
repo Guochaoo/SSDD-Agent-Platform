@@ -58,6 +58,14 @@ def _safe_dataset_path(dataset_path: str | None) -> Path:
     return candidate
 
 
+def _dataset_image_count(dataset_path: Path) -> int:
+    image_suffixes = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+    return sum(
+        1 for item in dataset_path.rglob("*")
+        if item.is_file() and item.suffix.lower() in image_suffixes
+    )
+
+
 @router.get("/datasets")
 async def list_datasets(current_user=Depends(get_current_user)):
     root = _dataset_root()
@@ -156,6 +164,7 @@ async def start_training(
     if requested_dataset:
         dataset_path = str(_safe_dataset_path(requested_dataset))
     config["dataset_path"] = dataset_path
+    config["dataset_size"] = _dataset_image_count(Path(dataset_path))
 
     # 检查 data.yaml 是否存在
     data_yaml = os.path.join(dataset_path, "data.yaml")
@@ -201,6 +210,20 @@ async def list_training_tasks(
     """获取当前用户的训练任务列表"""
     tasks = training_service.get_task_list(db, user_id=current_user.id)
     return {"total": len(tasks), "items": tasks}
+
+
+@router.delete("/tasks/{task_id}")
+async def delete_training_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """删除已结束的训练历史及其指标，保留已发布的模型版本。"""
+    _check_task_access(db, task_id, current_user)
+    result = training_service.delete_training_task(db, task_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @router.get("/status/{task_id}")
@@ -255,6 +278,7 @@ async def stop_training(
 @router.get("/results/{task_uuid}")
 async def get_results_csv(
     task_uuid: str,
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """
@@ -262,6 +286,10 @@ async def get_results_csv(
 
     可用于离线分析或导出到其他工具
     """
+    task = db.query(TrainingTask).filter(TrainingTask.task_uuid == task_uuid).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="训练任务不存在")
+    _check_task_access(db, task.id, current_user)
     results_path = os.path.join(
         settings.TRAIN_OUTPUT_DIR,
         f"task_{task_uuid}",

@@ -133,6 +133,12 @@ def get_chat_session(
     )
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session.id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .all()
+    )
     return {
         "id": session.session_uuid,
         "title": session.title or "新对话",
@@ -144,9 +150,10 @@ def get_chat_session(
                 "id": message.id,
                 "role": message.role,
                 "content": message.content,
+                "has_image": bool(message.image_path),
                 "created_at": message.created_at,
             }
-            for message in session.messages
+            for message in messages
         ],
     }
 
@@ -262,7 +269,7 @@ async def chat_stream(
 
             # ── save to history ──
             if session_id and (message or full_reply):
-                _save_message(session_id, user_id, "user", message)
+                _save_message(session_id, user_id, "user", message, image_path=image_path)
                 _save_message(session_id, user_id, "assistant", full_reply)
 
             yield f"data: {json.dumps({'type': 'message_end'})}\n\n"
@@ -328,7 +335,7 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
         messages = (
             db.query(ChatMessage)
             .filter(ChatMessage.session_id == s.id)
-            .order_by(ChatMessage.created_at.desc())
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(MAX_HISTORY_MESSAGES)
             .all()
         )
@@ -336,14 +343,24 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
         history = []
         for m in messages:
             if m.role in ("user", "assistant"):
-                history.append({"role": m.role, "content": m.content or ""})
+                content = m.content or ""
+                if m.role == "user" and m.image_path:
+                    try:
+                        image_path = _validate_uploaded_image_path(m.image_path)
+                    except HTTPException:
+                        image_path = None
+                    if image_path:
+                        content = f"{content}\n[附件图片路径: {image_path}]"
+                history.append({"role": m.role, "content": content})
         return history
     finally:
         db.close()
 
 
-def _save_message(session_id: str, user_id: int, role: str, content: str):
-    if not content:
+def _save_message(
+    session_id: str, user_id: int, role: str, content: str, image_path: str | None = None
+):
+    if not content and not image_path:
         return
     db = SessionLocal()
     try:
@@ -355,11 +372,11 @@ def _save_message(session_id: str, user_id: int, role: str, content: str):
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)
             db.flush()
-        db.add(ChatMessage(session_id=s.id, role=role, content=content))
+        db.add(ChatMessage(session_id=s.id, role=role, content=content, image_path=image_path))
         s.message_count = (s.message_count or 0) + 1
         s.last_message_at = datetime.now()
         if role == "user" and (not s.title or s.title == ""):
-            s.title = content[:50]
+            s.title = (content or "图片消息")[:50]
         db.commit()
     finally:
         db.close()

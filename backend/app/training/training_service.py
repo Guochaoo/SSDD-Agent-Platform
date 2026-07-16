@@ -28,6 +28,7 @@
 
 import csv
 import os
+import shutil
 import threading
 import uuid
 from datetime import datetime
@@ -35,7 +36,7 @@ from datetime import datetime
 from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import SessionLocal
-from app.entity.db_models import TrainingMetric, TrainingTask
+from app.entity.db_models import ModelVersion, TrainingMetric, TrainingTask
 
 logger = get_logger(__name__)
 
@@ -111,6 +112,7 @@ class TrainingService:
             augment_config=config.get("augment_config"),
             dataset_path=dataset_path,
             data_yaml=data_yaml,
+            dataset_size=config.get("dataset_size"),
         )
         db.add(task)
         db.commit()
@@ -456,6 +458,10 @@ class TrainingService:
                 "device": task.device,
                 "batch_size": task.batch_size,
                 "img_size": task.img_size,
+                "dataset_path": task.dataset_path,
+                "dataset_name": os.path.basename(os.path.normpath(task.dataset_path)) if task.dataset_path else None,
+                "dataset_size": task.dataset_size,
+                "data_yaml": task.data_yaml,
                 "started_at": str(task.started_at) if task.started_at else None,
                 "completed_at": str(task.completed_at) if task.completed_at else None,
                 "error_message": task.error_message,
@@ -577,12 +583,50 @@ class TrainingService:
                 "current_epoch": t.current_epoch,
                 "progress": t.progress,
                 "device": t.device,
+                "dataset_path": t.dataset_path,
+                "dataset_name": os.path.basename(os.path.normpath(t.dataset_path)) if t.dataset_path else None,
+                "dataset_size": t.dataset_size,
+                "data_yaml": t.data_yaml,
                 "created_at": str(t.created_at),
                 "started_at": str(t.started_at) if t.started_at else None,
                 "completed_at": str(t.completed_at) if t.completed_at else None,
             }
             for t in tasks
         ]
+
+    @staticmethod
+    def delete_training_task(db, task_id: int) -> dict:
+        """删除已结束的训练任务及其指标和未发布的训练输出。
+
+        已导出的 ``ModelVersion`` 代表可追溯的模型资产，删除历史任务时保留它，
+        仅解除与任务的外键关联；训练过程中的 ``runs/train/task_*`` 目录则一并清理。
+        """
+        task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+        if not task:
+            return {"error": "训练任务不存在"}
+        if task.status in {"pending", "running"}:
+            return {"error": "运行中的训练任务不能删除，请先停止训练"}
+
+        task_uuid = task.task_uuid
+        # Model versions can be referenced by detection history, so retain the
+        # published asset and only sever this optional provenance link.
+        db.query(ModelVersion).filter(
+            ModelVersion.training_task_id == task.id
+        ).update({"training_task_id": None}, synchronize_session=False)
+        db.delete(task)  # TrainingTask.metrics uses delete-orphan cascade.
+        db.commit()
+
+        output_dir = os.path.join(
+            os.getcwd(), settings.TRAIN_OUTPUT_DIR, f"task_{task_uuid}"
+        )
+        try:
+            if os.path.isdir(output_dir):
+                shutil.rmtree(output_dir)
+        except OSError as exc:
+            logger.warning("训练任务已从数据库删除，但清理输出目录失败: %s", exc)
+
+        logger.info("训练历史任务已删除: task_id=%d, uuid=%s", task_id, task_uuid)
+        return {"task_id": task_id, "message": "训练历史任务已删除"}
 
     @staticmethod
     def parse_results_csv(results_csv_path: str) -> list:
@@ -896,6 +940,8 @@ class TrainingService:
 
         if model_version:
             model_version.version = version
+            model_version.model_name = f"{task.model_name}_{scene.name}_{version}"
+            model_version.model_type = task.model_name
             model_version.model_path = exported_weight
             model_version.minio_url = minio_url
             model_version.map50 = overall.get("map50")

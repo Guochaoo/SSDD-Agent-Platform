@@ -32,6 +32,11 @@ onMounted(() => {
   min-width: 0;
   background: var(--app-bg);
   overflow-y: auto;
-  padding: $spacing-lg;
+  padding: clamp(16px, 2vw, 28px);
+
+  > :deep(*) {
+    width: min(100%, var(--app-content-max));
+    margin-inline: auto;
+  }
 }
 </style>

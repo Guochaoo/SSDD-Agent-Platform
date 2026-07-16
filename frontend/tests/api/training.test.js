@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const request = vi.hoisted(() => ({
+  delete: vi.fn(),
   get: vi.fn(),
   post: vi.fn(),
 }))
@@ -10,6 +11,7 @@ vi.mock('@/utils/request', () => ({ default: request }))
 import {
   downloadTrainingModel,
   downloadTrainingResults,
+  deleteTrainingTask,
   exportTrainingModel,
   getTrainingMetrics,
   getTrainingStatus,
@@ -34,6 +36,7 @@ describe('training api', () => {
     await getTrainingMetrics(7)
     await stopTraining(7)
     await downloadTrainingResults('task-abcd')
+    await deleteTrainingTask(7)
 
     expect(request.get).toHaveBeenNthCalledWith(1, '/training/tasks')
     expect(request.post).toHaveBeenNthCalledWith(1, '/training/start', payload)
@@ -43,6 +46,7 @@ describe('training api', () => {
     expect(request.get).toHaveBeenNthCalledWith(4, '/training/results/task-abcd', {
       responseType: 'blob',
     })
+    expect(request.delete).toHaveBeenCalledWith('/training/tasks/7')
   })
 
   it('uses the four Day 7 evaluation endpoints', async () => {

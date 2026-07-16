@@ -91,15 +91,17 @@
 
     <!-- ── Normal chat state ── -->
     <template v-else>
-      <MessageList
-        :messages="agentStore.messages"
-        :tool-call="agentStore.currentToolCall"
-        :is-streaming="agentStore.isStreaming"
-        @regenerate="handleRegenerate"
-      />
+      <div class="chat-main">
+        <MessageList
+          :messages="agentStore.messages"
+          :tool-call="agentStore.currentToolCall"
+          :is-streaming="agentStore.isStreaming"
+          @regenerate="handleRegenerate"
+        />
+      </div>
 
       <!-- Prompt card (sticky bottom) -->
-      <div class="chat-bottom">
+      <div class="chat-bottom chat-composer">
         <QuickDetectBar
           class="chat-quick-detect"
           :disabled="agentStore.isStreaming || isQuickDetecting"
@@ -574,7 +576,7 @@ function doSend(text) {
   agentStore.errorMessage = ''
 
   const formData = new FormData()
-  formData.append('message', buildContextualMessage(text))
+  formData.append('message', text)
   formData.append('session_id', agentStore.currentSessionId)
   if (model.value && model.value !== DEFAULT_LLM_MODEL_VALUE) {
     formData.append('model', model.value)
@@ -603,34 +605,6 @@ function doSend(text) {
       ElMessage.error(chatText.value.agentUnavailable)
     },
   })
-}
-
-function buildContextualMessage(text) {
-  const context = buildLocalContext()
-  if (!context) return text
-  return `${text}\n\n[前端上下文]\n${context}`
-}
-
-function buildLocalContext() {
-  const recentMessages = agentStore.messages
-    .slice(-6)
-    .map((message) => `${message.role}: ${message.content || ''}`.slice(0, 180))
-    .join('\n')
-
-  const latestDetection = [...agentStore.messages]
-    .reverse()
-    .find((message) => message.detectionResult)
-
-  const parts = []
-  if (recentMessages) parts.push(`最近对话:\n${recentMessages}`)
-  if (latestDetection?.detectionResult) {
-    parts.push(`最近检测结果: ${JSON.stringify({
-      taskId: latestDetection.detectionResult.taskId,
-      totalObjects: latestDetection.detectionResult.totalObjects,
-      status: latestDetection.detectionResult.status,
-    })}`)
-  }
-  return parts.join('\n')
 }
 
 function handleSend(text) {
@@ -708,6 +682,11 @@ checkAgentToolContracts()
   &.hero {
     justify-content: center;
   }
+}
+
+.chat-main {
+  min-height: 0;
+  flex: 1;
 }
 
 /* ── Hero ── */
