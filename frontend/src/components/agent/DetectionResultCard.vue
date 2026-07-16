@@ -8,26 +8,33 @@
       <el-tag type="success" effect="light">{{ text.done }}</el-tag>
     </div>
 
-    <el-image
-      v-if="displayImage"
-      :src="displayImage"
-      :preview-src-list="[displayImage]"
-      fit="contain"
-      class="result-image"
-    />
+    <div :class="['result-overview', { 'without-image': !displayImages.length }]">
+      <div v-if="displayImages.length" :class="['result-gallery', { single: displayImages.length === 1 }]">
+        <figure v-for="(image, index) in displayImages" :key="`${image.src}-${index}`" class="result-figure">
+          <el-image
+            :src="image.src"
+            :preview-src-list="previewImages"
+            :initial-index="index"
+            fit="contain"
+            class="result-image"
+          />
+          <figcaption v-if="displayImages.length > 1">{{ image.label || `${text.image} ${index + 1}` }}</figcaption>
+        </figure>
+      </div>
 
-    <div class="summary">
-      <div>
-        <span>{{ text.imageCount }}</span>
-        <strong>{{ imageCount }}</strong>
-      </div>
-      <div>
-        <span>{{ text.defectCount }}</span>
-        <strong>{{ objectCount }}</strong>
-      </div>
-      <div>
-        <span>{{ text.maxConfidence }}</span>
-        <strong>{{ maxConfidence }}</strong>
+      <div class="summary">
+        <div>
+          <span>{{ text.imageCount }}</span>
+          <strong>{{ imageCount }}</strong>
+        </div>
+        <div>
+          <span>{{ text.defectCount }}</span>
+          <strong>{{ objectCount }}</strong>
+        </div>
+        <div>
+          <span>{{ text.maxConfidence }}</span>
+          <strong>{{ maxConfidence }}</strong>
+        </div>
       </div>
     </div>
 
@@ -96,12 +103,22 @@ const subtitle = computed(() => {
   return props.result.fileName || `${text.value.task} ${props.result.taskId || '-'}`
 })
 
-const displayImage = computed(() => {
+const displayImages = computed(() => {
   if (isBatch.value) {
-    return props.result.items?.find((item) => item.annotatedImageUrl)?.annotatedImageUrl || props.previewUrl
+    const images = (props.result.items || [])
+      .map((item, index) => ({
+        src: item.annotatedImageUrl || item.originalImageUrl || '',
+        label: item.fileName || `${text.value.image} ${index + 1}`,
+      }))
+      .filter(item => item.src)
+    if (images.length) return images
+    return props.previewUrl ? [{ src: props.previewUrl, label: '' }] : []
   }
-  return props.result.annotatedImageUrl || props.previewUrl
+  const src = props.result.annotatedImageUrl || props.result.originalImageUrl || props.previewUrl
+  return src ? [{ src, label: props.result.fileName || '' }] : []
 })
+
+const previewImages = computed(() => displayImages.value.map(item => item.src))
 
 const imageCount = computed(() => {
   if (isBatch.value) return props.result.items?.length || props.result.successCount || 0
@@ -178,20 +195,66 @@ function formatPercent(value) {
   }
 }
 
-.result-image {
-  width: 100%;
-  max-height: 320px;
+.result-overview {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px) minmax(150px, 1fr);
+  align-items: stretch;
+  gap: 12px;
   margin-bottom: 12px;
+
+  &.without-image {
+    grid-template-columns: 1fr;
+  }
+}
+
+.result-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+
+  &.single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.result-figure {
+  min-width: 0;
+  margin: 0;
+}
+
+.result-image {
+  display: block;
+  width: 100%;
+  height: 180px;
   border: 1px solid var(--app-border);
   border-radius: 10px;
   background: var(--app-subtle);
+  overflow: hidden;
+
+  :deep(.el-image__inner) {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.result-gallery.single .result-image {
+  height: clamp(200px, 30vw, 280px);
+}
+
+.result-figure figcaption {
+  margin-top: 5px;
+  overflow: hidden;
+  color: $text-secondary;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
 
   div {
     padding: 10px 12px;
@@ -217,8 +280,21 @@ function formatPercent(value) {
 }
 
 @media (max-width: 640px) {
-  .summary {
+  .result-overview {
     grid-template-columns: 1fr;
+  }
+
+  .result-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result-image,
+  .result-gallery.single .result-image {
+    height: 180px;
+  }
+
+  .summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>

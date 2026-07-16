@@ -17,7 +17,6 @@
       <ThinkingIndicator />
     </div>
 
-    <ToolCallDisplay :tool-call="toolCall" />
   </div>
 </template>
 
@@ -25,12 +24,10 @@
 import { computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import MessageItem from './MessageItem.vue'
-import ToolCallDisplay from './ToolCallDisplay.vue'
 import ThinkingIndicator from './ThinkingIndicator.vue'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
-  toolCall: { type: Object, default: null },
   isStreaming: { type: Boolean, default: false },
 })
 
@@ -69,6 +66,10 @@ const showThinking = computed(() => {
 }
 
 .thinking-row {
-  padding: 8px 24px;
+  width: calc(100% - 48px);
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 8px 0;
+  box-sizing: border-box;
 }
 </style>

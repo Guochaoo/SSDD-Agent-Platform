@@ -35,6 +35,8 @@ _MODEL_CACHE_TTL: float = 300
 
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "rsod_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+ARTIFACT_DIR = os.path.join(tempfile.gettempdir(), "rsod_agent_artifacts")
+os.makedirs(ARTIFACT_DIR, exist_ok=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -243,6 +245,18 @@ async def upload_image(
         f.write(content)
     logger.info("图片上传成功: %s → %s", file.filename, filepath)
     return {"image_path": filepath}
+
+
+@router.get("/artifacts/{filename}", include_in_schema=False)
+def get_agent_artifact(filename: str):
+    """Serve an opaque, generated detection artifact for inline chat previews."""
+    safe_name = Path(filename).name
+    if safe_name != filename or not safe_name.startswith("annotated_") or not safe_name.endswith(".jpg"):
+        raise HTTPException(status_code=404, detail="检测结果图片不存在")
+    artifact_path = (Path(ARTIFACT_DIR) / safe_name).resolve()
+    if artifact_path.parent != Path(ARTIFACT_DIR).resolve() or not artifact_path.is_file():
+        raise HTTPException(status_code=404, detail="检测结果图片不存在")
+    return FileResponse(artifact_path, media_type="image/jpeg")
 
 
 # ══════════════════════════════════════════════════════════════

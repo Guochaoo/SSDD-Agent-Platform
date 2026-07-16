@@ -821,13 +821,21 @@ class DetectionService:
                 class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
 
         inference_time = round(float(result.speed.get("inference", 0)), 2)
+        artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_name = f"annotated_{uuid4().hex}.jpg"
+        (artifact_dir / artifact_name).write_bytes(self._encode_annotated_image(result))
         logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
 
         return {
+            "filename": Path(image_path).name,
             "total_objects": total_objects,
             "class_counts": class_counts,
             "detections": detections,
             "inference_time": inference_time,
+            "image_width": int(result.orig_shape[1]),
+            "image_height": int(result.orig_shape[0]),
+            "annotated_image_url": f"/api/agent/artifacts/{artifact_name}",
         }
 
 

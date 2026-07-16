@@ -1,19 +1,35 @@
 <template>
   <!-- User message: subtle, right-aligned chip -->
   <div v-if="message.role === 'user'" class="user-msg">
-    <img
-      v-for="(url, i) in message.imagePreviewUrls"
-      :key="i"
-      :src="url"
-      class="user-image"
-      :alt="text.uploadAlt"
-    />
+    <div v-if="message.imagePreviewUrls?.length" class="user-images">
+      <img
+        v-for="(url, i) in message.imagePreviewUrls"
+        :key="i"
+        :src="url"
+        class="user-image"
+        :alt="text.uploadAlt"
+      />
+    </div>
     <span class="user-text">{{ message.content }}</span>
   </div>
 
   <!-- Assistant message: centered, prominent, no avatar -->
   <div v-else class="assistant-msg">
     <div class="assistant-content">
+      <div v-if="message.toolCalls?.length" class="message-tool-header">
+        <div v-if="agentLabel" class="agent-label">{{ agentLabel }}</div>
+        <div class="tool-trace">
+          <div
+            v-for="tool in message.toolCalls"
+            :key="tool.id || tool.name || tool.tool_name"
+            class="tool-trace-item"
+          >
+            <span class="tool-name">{{ getToolName(tool) }}</span>
+            <el-tag :type="getToolTag(tool)" size="small">{{ getToolStatus(tool) }}</el-tag>
+          </div>
+        </div>
+      </div>
+
       <div class="markdown-body" v-html="renderedContent" />
       <DetectionResultCard
         v-if="message.detectionResult"
@@ -21,14 +37,23 @@
         :preview-url="message.detectionPreviewUrl"
       />
 
-      <div v-if="message.toolCalls?.length" class="tool-trace">
-        <div
-          v-for="tool in message.toolCalls"
-          :key="tool.id || tool.name || tool.tool_name"
-          class="tool-trace-item"
-        >
-          <span class="tool-name">{{ getToolName(tool) }}</span>
-          <el-tag :type="getToolTag(tool)" size="small">{{ getToolStatus(tool) }}</el-tag>
+      <div v-if="message.videoResult" class="video-result-card">
+        <video
+          v-if="message.videoResult.annotatedVideoUrl"
+          :src="message.videoResult.annotatedVideoUrl"
+          class="result-video"
+          controls
+          preload="metadata"
+        />
+        <div class="video-result-meta">
+          <span>{{ message.videoResult.processedFrames }} {{ text.frames }}</span>
+          <span>{{ message.videoResult.totalObjects }} {{ text.objects }}</span>
+          <span v-if="message.videoResult.durationSeconds">{{ message.videoResult.durationSeconds }}s</span>
+        </div>
+        <div v-if="Object.keys(message.videoResult.classCounts || {}).length" class="video-class-counts">
+          <el-tag v-for="(count, name) in message.videoResult.classCounts" :key="name" effect="plain">
+            {{ name }} · {{ count }}
+          </el-tag>
         </div>
       </div>
 
@@ -89,6 +114,8 @@ const text = computed(() => settingsStore.isEnglish ? {
   detectionTool: 'Defect detection tool',
   historyTool: 'Detection history tool',
   knowledgeTool: 'Knowledge search tool',
+  frames: 'key frames',
+  objects: 'defects',
 } : {
   uploadAlt: '上传图片',
   agentError: '智能体响应失败，请重试',
@@ -104,10 +131,16 @@ const text = computed(() => settingsStore.isEnglish ? {
   detectionTool: '缺陷检测工具',
   historyTool: '检测历史工具',
   knowledgeTool: '知识库检索工具',
+  frames: '个关键帧',
+  objects: '个缺陷',
 })
 
 const renderedContent = computed(() => {
   return renderMarkdown(props.message.content || '')
+})
+
+const agentLabel = computed(() => {
+  return props.message.toolCalls?.find(tool => tool.agentLabel)?.agentLabel || ''
 })
 
 const formattedTime = computed(() => {
@@ -131,6 +164,8 @@ function getToolName(tool) {
   const map = {
     detect_single: text.value.singleTool,
     detect_batch: text.value.batchTool,
+    detect_zip: 'ZIP 检测工具',
+    detect_video: '视频检测工具',
     detection_tool: text.value.detectionTool,
     history_query: text.value.historyTool,
     knowledge_search: text.value.knowledgeTool,
@@ -158,8 +193,8 @@ function getToolTag(tool) {
 /* ── User message: subtle right-aligned chip, same max-width as assistant ── */
 .user-msg {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
   width: 100%;
   max-width: 780px;
@@ -167,11 +202,20 @@ function getToolTag(tool) {
   padding: 6px 24px;
 }
 
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 70%;
+}
+
 .user-image {
-  max-width: 120px;
-  max-height: 80px;
+  width: 64px;
+  height: 64px;
   border-radius: 8px;
   object-fit: cover;
+  border: 1px solid var(--app-border);
 }
 
 .user-text {
@@ -307,11 +351,22 @@ function getToolTag(tool) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 12px;
   padding: 10px 12px;
   border: 1px solid var(--app-border);
   border-radius: 10px;
   background: var(--app-surface);
+}
+
+.message-tool-header {
+  margin-bottom: 14px;
+}
+
+.agent-label {
+  margin: 0 0 6px 2px;
+  color: #8F8AB0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
 }
 
 .tool-trace-item {
@@ -328,5 +383,37 @@ function getToolTag(tool) {
 
 .message-error {
   margin-top: 12px;
+}
+
+.video-result-card {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-surface);
+}
+
+.result-video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  border-radius: 9px;
+  background: #000;
+}
+
+.video-result-meta,
+.video-class-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.video-result-meta span {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--app-subtle);
+  color: var(--app-muted);
+  font-size: 12px;
 }
 </style>
