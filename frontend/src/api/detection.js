@@ -1,6 +1,4 @@
 import request from "@/utils/request";
-import { isFrontendBMockMode } from './models'
-import { mockDetectBatch, mockDetectSingle } from './mockData'
 
 function unwrap(payload) {
   return payload?.data ?? payload;
@@ -58,7 +56,6 @@ export function normalizeDetectionResponse(payload) {
 }
 
 export async function detectSingleApi(file, options) {
-  if (isFrontendBMockMode) return normalizeDetectionResponse(await mockDetectSingle(file, options))
   const formData = new FormData();
   formData.append("file", file);
   formData.append("model_id", options.modelId);
@@ -72,7 +69,6 @@ export async function detectSingleApi(file, options) {
 }
 
 export async function detectBatchApi(files, options) {
-  if (isFrontendBMockMode) return mockDetectBatch(files, options)
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
   formData.append("model_id", options.modelId);

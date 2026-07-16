@@ -1,6 +1,4 @@
 import request from "@/utils/request";
-import { isFrontendBMockMode } from './models'
-import { mockGetDashboard } from './mockData'
 
 function unwrap(payload) {
   return payload?.data ?? payload;
@@ -40,7 +38,6 @@ export function normalizeDashboardResponse(payload) {
 }
 
 export async function getDashboardApi(params = {}) {
-  if (isFrontendBMockMode) return normalizeDashboardResponse(await mockGetDashboard(params));
   return normalizeDashboardResponse(
     await request.get("/history/statistics/summary", {
       params: { days: params.days ?? 30 },

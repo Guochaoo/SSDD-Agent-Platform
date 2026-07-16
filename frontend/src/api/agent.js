@@ -33,12 +33,6 @@ export function getAgentDetectionHistoryDetailApi(taskId) {
   return getHistoryDetailApi(taskId)
 }
 
-// Compatibility adapter retained for callers while the knowledge-base API is
-// still pending on the backend.
-export async function searchAgentKnowledgeApi() {
-  return { items: [], ready: false, message: '知识库检索接口尚未开放，前端已预留接入点。' }
-}
-
 export function listAgentSessions() {
   return request.get('/agent/sessions')
 }
