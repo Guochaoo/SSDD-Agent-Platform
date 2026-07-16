@@ -1,15 +1,11 @@
 <template>
   <div class="training-page">
-    <div class="page-header">
-      <div>
-        <h2>{{ text.title }}</h2>
-        <p>{{ text.description }}</p>
-      </div>
+    <ModulePageHeader :title="text.title" :description="text.description">
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
         {{ text.newTask }}
       </el-button>
-    </div>
+    </ModulePageHeader>
 
     <el-alert
       v-if="pageError"
@@ -44,6 +40,11 @@
         highlight-current-row
         @current-change="handleCurrentTaskChange"
       >
+        <template #empty>
+          <el-empty :description="text.emptyTasks">
+            <el-button type="primary" @click="showCreateDialog = true">{{ text.newTask }}</el-button>
+          </el-empty>
+        </template>
         <el-table-column prop="task_uuid" :label="text.taskId" min-width="108" />
         <el-table-column prop="model_name" :label="text.model" min-width="106" />
         <el-table-column :label="text.dataset" min-width="160" show-overflow-tooltip>
@@ -502,6 +503,7 @@ import {
   validateTrainingModel,
 } from '@/api/training'
 import { getScenesApi } from '@/api/models'
+import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
 import { getApiErrorMessage } from '@/utils/apiError'
 
 const POLL_INTERVAL = 5000
@@ -1190,26 +1192,6 @@ onBeforeUnmount(() => {
   margin-bottom: 16px;
 }
 
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 20px;
-
-  h2 {
-    margin: 0;
-    color: $text-primary;
-    font-size: 24px;
-  }
-
-  p {
-    margin: 8px 0 0;
-    color: $text-secondary;
-    font-size: 14px;
-  }
-}
-
 .section-card {
   margin-bottom: 20px;
 }
@@ -1354,7 +1336,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .page-header,
   .monitor-header,
   .card-header {
     align-items: stretch;

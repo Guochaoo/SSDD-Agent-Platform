@@ -94,7 +94,7 @@
                     {{ text.confThreshold }} <b>{{ form.confThreshold.toFixed(2) }}</b>
                   </span>
                 </template>
-                <el-slider v-model="form.confThreshold" :min="0.1" :max="0.9" :step="0.05" />
+                <el-slider v-model="form.confThreshold" :min="0.1" :max="0.9" :step="0.05" show-input />
               </el-form-item>
               <el-form-item>
                 <template #label>
@@ -102,7 +102,7 @@
                     {{ text.iouThreshold }} <b>{{ form.iouThreshold.toFixed(2) }}</b>
                   </span>
                 </template>
-                <el-slider v-model="form.iouThreshold" :min="0.1" :max="0.9" :step="0.05" />
+                <el-slider v-model="form.iouThreshold" :min="0.1" :max="0.9" :step="0.05" show-input />
               </el-form-item>
             </el-form>
 

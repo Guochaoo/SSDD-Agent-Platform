@@ -91,15 +91,17 @@
 
     <!-- ── Normal chat state ── -->
     <template v-else>
-      <MessageList
-        :messages="agentStore.messages"
-        :tool-call="agentStore.currentToolCall"
-        :is-streaming="agentStore.isStreaming"
-        @regenerate="handleRegenerate"
-      />
+      <div class="chat-main">
+        <MessageList
+          :messages="agentStore.messages"
+          :tool-call="agentStore.currentToolCall"
+          :is-streaming="agentStore.isStreaming"
+          @regenerate="handleRegenerate"
+        />
+      </div>
 
       <!-- Prompt card (sticky bottom) -->
-      <div class="chat-bottom">
+      <div class="chat-bottom chat-composer">
         <QuickDetectBar
           class="chat-quick-detect"
           :disabled="agentStore.isStreaming || isQuickDetecting"
@@ -680,6 +682,11 @@ checkAgentToolContracts()
   &.hero {
     justify-content: center;
   }
+}
+
+.chat-main {
+  min-height: 0;
+  flex: 1;
 }
 
 /* ── Hero ── */

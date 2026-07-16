@@ -9,12 +9,20 @@
   --app-surface: #ffffff;
   --app-sidebar-bg: #fcfcfc;
   --app-text: #0d0d0d;
-  --app-muted: #909399;
+  --app-muted: #667085;
   --app-border: rgba(0, 0, 0, 0.08);
   --app-hover: rgba(0, 0, 0, 0.04);
   --app-active: rgba(0, 0, 0, 0.06);
   --app-subtle: #f7f9fc;
   --app-shadow: 0 8px 24px rgba(28, 39, 60, 0.05);
+  --app-content-max: 1440px;
+  --app-radius-sm: 6px;
+  --app-radius: 10px;
+  --app-radius-lg: 14px;
+
+  --el-border-radius-base: var(--app-radius-sm);
+  --el-border-radius-small: 4px;
+  --el-font-size-base: 14px;
 
   --settings-bg: #ffffff;
   --settings-text: #171717;
@@ -47,6 +55,18 @@
 body {
   background: var(--app-bg);
   color: var(--app-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.el-button {
+  font-weight: 500;
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: var(--app-radius-sm);
 }
 
 :root[data-theme='dark'] {
