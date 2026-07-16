@@ -360,7 +360,7 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
 def _save_message(
     session_id: str, user_id: int, role: str, content: str, image_path: str | None = None
 ):
-    if not content:
+    if not content and not image_path:
         return
     db = SessionLocal()
     try:
@@ -376,7 +376,7 @@ def _save_message(
         s.message_count = (s.message_count or 0) + 1
         s.last_message_at = datetime.now()
         if role == "user" and (not s.title or s.title == ""):
-            s.title = content[:50]
+            s.title = (content or "图片消息")[:50]
         db.commit()
     finally:
         db.close()
