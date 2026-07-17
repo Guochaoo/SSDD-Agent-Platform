@@ -74,10 +74,10 @@ app.include_router(detection_router)
 app.include_router(agent_router)
 app.include_router(health_router)
 app.include_router(history_router)
-app.include_router(knowledge_router)
 app.include_router(operation_logs_router)
 app.include_router(scenes_router)
 app.include_router(training_router)
+app.include_router(knowledge_router)
 
 
 @app.get("/")

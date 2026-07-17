@@ -151,16 +151,27 @@ class KnowledgeService:
         doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
         if not doc:
             raise HTTPException(status_code=404, detail="知识文档不存在")
+        if doc.user_id is None:
+            raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "内置知识文档只读"})
         if not is_superuser and doc.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权删除该文档")
 
         try:
-            MinIOClient().delete_by_url(doc.file_url)
-        except Exception:
-            pass
-
-        db.delete(doc)
-        db.commit()
+            client = MinIOClient()
+            if doc.object_key:
+                client.delete_file(doc.object_key)
+            else:
+                client.delete_by_url(doc.file_url)
+            db.delete(doc)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            doc.cleanup_pending = True
+            doc.cleanup_error = str(exc)
+            doc.cleanup_retry_count = (doc.cleanup_retry_count or 0) + 1
+            doc.status = "cleanup_pending"
+            db.commit()
+            raise HTTPException(status_code=503, detail={"code": "CLEANUP_RETRY", "message": "文档对象清理失败，已记录并可重试"}) from exc
 
 
 # 全局单例

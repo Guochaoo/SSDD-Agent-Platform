@@ -5,7 +5,7 @@
       <el-button @click="modelUploadVisible = true">{{ text.uploadModel }}</el-button>
       <el-button :icon="Refresh" :loading="loading" @click="loadAssets">{{ text.refresh }}</el-button>
     </ModulePageHeader>
-    <el-alert v-if="pageError" :title="pageError" type="error" :closable="false" show-icon class="page-alert" />
+    <el-alert v-if="pageError" :title="pageError" type="error" :closable="false" show-icon class="page-alert"><template #default><el-button link type="primary" @click="loadAssets">{{ text.refresh }}</el-button></template></el-alert>
     <el-card shadow="never" class="asset-card">
       <template #header><div class="card-title">{{ text.datasets }}</div></template>
       <el-table :data="datasets" v-loading="loading" stripe>

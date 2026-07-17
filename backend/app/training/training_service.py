@@ -1002,6 +1002,7 @@ class TrainingService:
 
         # 上传到 MinIO
         minio_url = None
+        object_name = None
         if upload_minio:
             try:
                 from app.storage.minio_client import MinIOClient
@@ -1025,6 +1026,7 @@ class TrainingService:
             model_version.model_type = task.model_name
             model_version.model_path = exported_weight
             model_version.minio_url = minio_url
+            model_version.object_key = object_name if upload_minio else None
             model_version.map50 = overall.get("map50")
             model_version.map50_95 = overall.get("map50_95")
             model_version.precision = overall.get("precision")
@@ -1041,6 +1043,7 @@ class TrainingService:
                 model_name=f"{task.model_name}_{scene.name}_{version}",
                 model_type=task.model_name,
                 model_path=exported_weight,
+                object_key=object_name if upload_minio else None,
                 minio_url=minio_url,
                 map50=overall.get("map50"),
                 map50_95=overall.get("map50_95"),
