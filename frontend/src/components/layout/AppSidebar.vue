@@ -45,8 +45,11 @@
             :class="['session-item', { active: session.id === agentStore.currentSessionId && activeMenu === '/chat' }]"
             @click="handleSwitchSession(session.id)"
           >
-            <span class="session-title">{{ session.title || text.newChat }}</span>
+            <span class="session-title">
+              <template v-if="userStore.isSuperuser && session.ownerUsername">[{{ session.ownerUsername }}] </template>{{ session.title || text.newChat }}
+            </span>
             <span
+              v-if="!userStore.isSuperuser || session.ownerId === userStore.user?.id"
               class="session-delete"
               :title="text.delete"
               @click.stop="handleDeleteSession(session.id)"
@@ -121,7 +124,7 @@ const agentStore = useAgentStore()
 const settingsStore = useSettingsStore()
 
 onMounted(() => {
-  agentStore.fetchSessions().catch(() => {})
+  agentStore.fetchSessions(userStore.user?.id).catch(() => {})
 })
 
 const activeMenu = computed(() => '/' + route.path.split('/')[1])
@@ -206,6 +209,7 @@ function handleCommand(command) {
     ElMessageBox.confirm(text.value.logoutMessage, text.value.logoutTitle, {
       confirmButtonText: text.value.confirm, cancelButtonText: text.value.cancel, type: 'warning',
     }).then(() => {
+      agentStore.clearUserScope()
       userStore.logout()
       router.push('/login')
     }).catch(() => {})

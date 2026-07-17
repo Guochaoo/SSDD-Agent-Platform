@@ -3,12 +3,37 @@ import { deleteAgentSession, getAgentMessageImage, getAgentSession, listAgentSes
 
 const SESSION_KEY = 'ssdd_agent_session'
 const SESSIONS_KEY = 'ssdd_agent_sessions'
+const USER_KEY = 'ssdd_user'
 
-function loadSavedSessions() {
+function storageKey(base, userId) {
+  return `${base}:${userId}`
+}
+
+function storedUserId() {
   try {
-    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]')
+    return JSON.parse(localStorage.getItem(USER_KEY) || 'null')?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+function loadSavedSessions(userId) {
+  if (userId == null) return []
+  try {
+    return JSON.parse(localStorage.getItem(storageKey(SESSIONS_KEY, userId)) || '[]')
   } catch {
     return []
+  }
+}
+
+function initialState() {
+  const userId = storedUserId()
+  return {
+    userScope: userId == null ? null : String(userId),
+    currentSessionId: userId == null
+      ? crypto.randomUUID()
+      : localStorage.getItem(storageKey(SESSION_KEY, userId)) || crypto.randomUUID(),
+    sessions: loadSavedSessions(userId),
   }
 }
 
@@ -23,9 +48,8 @@ function serializeMessage(message) {
 
 export const useAgentStore = defineStore('agent', {
   state: () => ({
-    currentSessionId: localStorage.getItem(SESSION_KEY) || crypto.randomUUID(),
+    ...initialState(),
     messages: [],
-    sessions: loadSavedSessions(),
     isStreaming: false,
     abortController: null,
     selectedImages: [],
@@ -42,10 +66,38 @@ export const useAgentStore = defineStore('agent', {
   },
 
   actions: {
-    async fetchSessions() {
+    activateUser(userId = storedUserId()) {
+      const nextScope = userId == null ? null : String(userId)
+      if (this.userScope === nextScope) return
+      this.stopStreaming()
+      this.clearImages()
+      this.messages = []
+      this.currentToolCall = null
+      this.errorMessage = ''
+      this.userScope = nextScope
+      this.sessions = loadSavedSessions(nextScope)
+      this.currentSessionId = nextScope == null
+        ? crypto.randomUUID()
+        : localStorage.getItem(storageKey(SESSION_KEY, nextScope)) || crypto.randomUUID()
+    },
+
+    clearUserScope() {
+      this.activateUser(null)
+    },
+
+    persistCurrentSessionId() {
+      if (this.userScope != null) {
+        localStorage.setItem(storageKey(SESSION_KEY, this.userScope), this.currentSessionId)
+      }
+    },
+
+    async fetchSessions(userId = storedUserId()) {
+      this.activateUser(userId)
       const sessions = await listAgentSessions()
       this.sessions = (sessions || []).map((session) => ({
         id: session.id,
+        ownerId: session.owner_id,
+        ownerUsername: session.owner_username,
         title: session.title,
         createdAt: session.created_at,
         updatedAt: session.updated_at,
@@ -53,11 +105,15 @@ export const useAgentStore = defineStore('agent', {
       }))
       if (this.sessions.some((session) => session.id === this.currentSessionId)) {
         await this.loadSession(this.currentSessionId)
+      } else {
+        this.messages = []
+        this.currentSessionId = crypto.randomUUID()
+        this.persistCurrentSessionId()
       }
     },
 
     addMessage(message) {
-      localStorage.setItem(SESSION_KEY, this.currentSessionId)
+      this.persistCurrentSessionId()
       this.messages.push({
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
@@ -176,7 +232,7 @@ export const useAgentStore = defineStore('agent', {
         if (message.detectionPreviewUrl) URL.revokeObjectURL(message.detectionPreviewUrl)
       })
       this.currentSessionId = crypto.randomUUID()
-      localStorage.setItem(SESSION_KEY, this.currentSessionId)
+      this.persistCurrentSessionId()
       this.messages = []
       this.currentToolCall = null
       this.errorMessage = ''
@@ -204,7 +260,9 @@ export const useAgentStore = defineStore('agent', {
         })
       }
       this.sessions = this.sessions.slice(0, 20)
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions))
+      if (this.userScope != null) {
+        localStorage.setItem(storageKey(SESSIONS_KEY, this.userScope), JSON.stringify(this.sessions))
+      }
     },
 
     async loadSession(id) {
@@ -213,6 +271,7 @@ export const useAgentStore = defineStore('agent', {
       this.stopStreaming()
       const remote = await getAgentSession(id)
       this.currentSessionId = session.id
+      this.persistCurrentSessionId()
       session.title = remote.title
       session.messages = remote.messages || []
       this.messages = await Promise.all(session.messages.map(async (message) => ({
@@ -240,7 +299,9 @@ export const useAgentStore = defineStore('agent', {
     async deleteSession(id) {
       await deleteAgentSession(id)
       this.sessions = this.sessions.filter(s => s.id !== id)
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions))
+      if (this.userScope != null) {
+        localStorage.setItem(storageKey(SESSIONS_KEY, this.userScope), JSON.stringify(this.sessions))
+      }
       if (this.currentSessionId === id) {
         this.newChat()
       }
