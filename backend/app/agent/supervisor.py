@@ -175,7 +175,7 @@ class SupervisorAgent:
         # ── 子 Agent 工具 ──
         from app.agent.detection_agent import DETECTION_TOOLS
         data_tools = _make_data_tools(None, user_id)
-        general_tools = _make_general_tools()
+        general_tools = _make_general_tools(user_id)
 
         # ── 子 Agent Executors ──
         detection_exec = _make_executor(llm, DETECTION_TOOLS, _DETECTION_SYSTEM)
