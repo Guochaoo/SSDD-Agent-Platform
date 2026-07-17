@@ -372,46 +372,78 @@ class TrainingService:
             return
 
         try:
-            # 读取已有的 epoch 记录
-            existing_epochs = set()
-            existing = (
-                db.query(TrainingMetric).filter(TrainingMetric.task_id == task_id).all()
-            )
-            for m in existing:
-                existing_epochs.add(m.epoch)
-
-            # 解析 results.csv
-            with open(results_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # results.csv 的列名可能带空格
-                    row = {k.strip(): v.strip() for k, v in row.items()}
-                    epoch = int(row.get("epoch", 0)) + 1  # CSV 中 epoch 从 0 开始
-
-                    # 跳过已存在的 epoch（回调已写入）
-                    if epoch in existing_epochs:
-                        continue
-
-                    metric = TrainingMetric(
-                        task_id=task_id,
-                        epoch=epoch,
-                        box_loss=_safe_float(row.get("train/box_loss", "")),
-                        cls_loss=_safe_float(row.get("train/cls_loss", "")),
-                        dfl_loss=_safe_float(row.get("train/dfl_loss", "")),
-                        precision=_safe_float(row.get("metrics/precision(B)", "")),
-                        recall=_safe_float(row.get("metrics/recall(B)", "")),
-                        map50=_safe_float(row.get("metrics/mAP50(B)", "")),
-                        map50_95=_safe_float(row.get("metrics/mAP50-95(B)", "")),
-                        lr=_safe_float(row.get("lr/pg0", "")),
-                    )
-                    db.add(metric)
-
-            db.commit()
+            task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+            if task:
+                TrainingService._sync_results_csv(db, task)
             logger.info("results.csv 解析完成，指标已补充到数据库")
 
         except Exception as e:
             logger.warning("results.csv 解析异常（不影响训练结果）：%s", str(e))
             db.rollback()
+
+    @staticmethod
+    def _sync_results_csv(db, task: TrainingTask) -> None:
+        """Incrementally mirror completed epochs from Ultralytics results.csv.
+
+        ``on_train_epoch_end`` is not a reliable source of validation metrics
+        across Ultralytics versions: it can run before validation and before
+        results.csv is flushed.  The CSV is the durable epoch boundary, so API
+        polling synchronizes it and also repairs stale progress after a server
+        restart.
+        """
+        output_root = os.path.abspath(settings.TRAIN_OUTPUT_DIR)
+        results_csv = os.path.join(output_root, f"task_{task.task_uuid}", "results.csv")
+        parsed = TrainingService.parse_results_csv(results_csv)
+        if not parsed:
+            return
+
+        parsed_by_epoch = {values["epoch"]: values for values in parsed}
+        existing = {}
+        for metric in (
+            db.query(TrainingMetric)
+            .filter(TrainingMetric.task_id == task.id)
+            .order_by(TrainingMetric.id.asc())
+            .all()
+        ):
+            # Repair duplicate and out-of-range rows created by the former
+            # unconditional callback + CSV insertion behavior.
+            if (
+                metric.epoch < 1
+                or metric.epoch > task.epochs
+                or metric.epoch not in parsed_by_epoch
+                or metric.epoch in existing
+            ):
+                db.delete(metric)
+                continue
+            existing[metric.epoch] = metric
+        metric_fields = (
+            "box_loss", "cls_loss", "dfl_loss", "precision", "recall",
+            "map50", "map50_95", "lr",
+        )
+        changed = False
+        for values in parsed_by_epoch.values():
+            epoch = values["epoch"]
+            metric = existing.get(epoch)
+            if metric is None:
+                metric = TrainingMetric(task_id=task.id, epoch=epoch)
+                db.add(metric)
+                existing[epoch] = metric
+                changed = True
+            for field in metric_fields:
+                value = values.get(field)
+                if value is not None and getattr(metric, field) != value:
+                    setattr(metric, field, value)
+                    changed = True
+
+        completed_epoch = max(existing)
+        bounded_epoch = min(completed_epoch, task.epochs)
+        progress = min(100, int(bounded_epoch * 100 / max(task.epochs, 1)))
+        if task.current_epoch != bounded_epoch or task.progress != progress:
+            task.current_epoch = bounded_epoch
+            task.progress = progress
+            changed = True
+        if changed:
+            db.commit()
 
     @staticmethod
     def get_training_status(db, task_id: int) -> dict:
@@ -433,6 +465,9 @@ class TrainingService:
         task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
         if not task:
             return {"error": "训练任务不存在"}
+
+        TrainingService._sync_results_csv(db, task)
+        db.refresh(task)
 
         # 获取最新一条指标记录
         latest_metric = (
@@ -494,6 +529,10 @@ class TrainingService:
         Returns:
             指标列表，每项包含 epoch 和各项指标值
         """
+        task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+        if task:
+            TrainingService._sync_results_csv(db, task)
+
         metrics = (
             db.query(TrainingMetric)
             .filter(TrainingMetric.task_id == task_id)
@@ -644,12 +683,17 @@ class TrainingService:
             return metrics
 
         with open(results_csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                row = {k.strip(): v.strip() for k, v in row.items()}
+            rows = [
+                {k.strip(): v.strip() for k, v in row.items()}
+                for row in csv.DictReader(f)
+            ]
+            # Ultralytics releases have emitted both zero-based and one-based
+            # epoch columns. Normalize only when the file actually starts at 0.
+            epoch_offset = 1 if rows and min(int(row.get("epoch", 0)) for row in rows) == 0 else 0
+            for row in rows:
                 metrics.append(
                     {
-                        "epoch": int(row.get("epoch", 0)) + 1,
+                        "epoch": int(row.get("epoch", 0)) + epoch_offset,
                         "box_loss": _safe_float(row.get("train/box_loss", "")),
                         "cls_loss": _safe_float(row.get("train/cls_loss", "")),
                         "dfl_loss": _safe_float(row.get("train/dfl_loss", "")),
