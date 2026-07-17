@@ -30,6 +30,9 @@ DEFAULT_PERMISSIONS = [
     ("training:task:read", "查看训练任务", "training"),
     ("model:manage", "管理模型版本", "training"),
     ("agent:chat", "使用智能体对话", "agent"),
+    ("knowledge:document:create", "上传知识文档", "knowledge"),
+    ("knowledge:document:read", "查看/检索知识文档", "knowledge"),
+    ("knowledge:document:delete", "删除知识文档", "knowledge"),
     ("system:manage", "系统管理", "system"),
 ]
 
@@ -37,9 +40,14 @@ DEFAULT_ROLES = {
     "admin": ("管理员", [code for code, _, _ in DEFAULT_PERMISSIONS]),
     "operator": (
         "操作员",
-        ["detection:task:create", "detection:task:read", "training:task:create", "training:task:read", "agent:chat"],
+        [
+            "detection:task:create", "detection:task:read",
+            "training:task:create", "training:task:read",
+            "agent:chat",
+            "knowledge:document:create", "knowledge:document:read", "knowledge:document:delete",
+        ],
     ),
-    "viewer": ("访客", ["detection:task:read", "training:task:read"]),
+    "viewer": ("访客", ["detection:task:read", "training:task:read", "knowledge:document:read"]),
 }
 
 # NEU-CLS 六类钢铁表面缺陷
@@ -145,16 +153,11 @@ def seed_detection_scenes(db, admin_user_id: int | None) -> None:
             model_path=model_path,
             file_size=absolute_model_path.stat().st_size if absolute_model_path.is_file() else None,
             is_default=True,
-            is_builtin=True,
             description="钢铁表面缺陷检测首个部署权重",
         )
         db.add(model)
         db.commit()
         print("[seed] 注册默认模型：ssdd_yolo11n_v1（v1.0.0）")
-    elif not model.is_builtin:
-        model.is_builtin = True
-        model.owner_id = None
-        db.commit()
 
 
 def run_seed() -> None:

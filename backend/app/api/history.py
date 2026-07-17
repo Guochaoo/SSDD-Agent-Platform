@@ -5,7 +5,7 @@
 - GET    /api/history/{task_id}          检测任务详情（含结果列表）
 - DELETE /api/history/{task_id}          删除检测任务
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -16,6 +16,7 @@ from app.entity.schemas import (
     DetectionStatistics, PageResponse,
 )
 from app.services.history_service import history_service
+from app.services.operation_log_service import operation_log_service
 
 router = APIRouter(prefix="/api/history", tags=["检测历史"])
 
@@ -80,9 +81,15 @@ def get_history_detail(
 @router.delete("/{task_id}")
 def delete_history(
     task_id: int,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """删除检测任务：先清理 MinIO 标注图文件，再删数据库记录"""
     history_service.delete_task(db, task_id, current_user.id, current_user.is_superuser)
+    operation_log_service.record(
+        db, user=current_user, module="detection", action="delete_task",
+        target_type="detection_task", target_id=str(task_id),
+        description=f"删除检测任务 id={task_id}", request=http_request,
+    )
     return {"message": "删除成功"}

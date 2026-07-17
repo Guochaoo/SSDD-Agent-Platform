@@ -34,10 +34,19 @@ from app.database.session import Base
 # 原理：当 Python 执行此 import 时，会执行 db_models.py 中的所有类定义
 # 模型类继承自 Base，会自动注册到 Base.metadata 中
 # 虽然 db_models 变量没被直接使用，但这个导入是必须的
-from app.entity import db_models
+from app.entity import db_models  # noqa: F401
+
+# 导入项目 settings，把 alembic.ini 里可能过时的 sqlalchemy.url 覆盖成
+# 应用真实使用的 DATABASE_URL（来自环境变量/.env），保证 alembic 和应用
+# 连的是同一个数据库
+from app.config.settings import settings
 
 # 获取 Alembic 配置对象（从 alembic.ini 读取配置）
 config = context.config
+
+# 用 settings 的 DATABASE_URL 覆盖 alembic.ini 里的静态配置，避免 .env 改了
+# 密码/主机后 alembic 还连老库的问题
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # 配置 Python 日志系统（读取 alembic.ini 中的 [loggers] 等配置）
 if config.config_file_name is not None:

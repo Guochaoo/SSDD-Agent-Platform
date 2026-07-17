@@ -1,6 +1,6 @@
 # backend/requirements.txt
 pytest==8.2.2
-pytest-asyncio==0.23.0
+pytest-asyncio>=0.24.0
 pytest-cov==5.0.0
 
 # ═══════════════════════════════════════════════════════
@@ -32,6 +32,8 @@ Pillow==10.0.0   # Pillow图像处理库
 sqlalchemy==2.0.0  # SQLAlchemy ORM框架
 psycopg2-binary==2.9.9  # PostgreSQL数据库驱动
 pgvector==0.3.0   #PostgreSQL 向量存储扩展（RAG 用）
+pypdf==4.3.1  # 知识库 PDF 文档文本提取
+python-docx==1.1.2  # 知识库 DOCX 文档文本提取
 
 alembic==1.13.0  # Alembic 数据库迁移框架
 
