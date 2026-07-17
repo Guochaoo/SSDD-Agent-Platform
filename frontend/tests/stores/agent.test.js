@@ -8,6 +8,7 @@ vi.mock('@/api/agent', () => ({
   listAgentSessions: vi.fn().mockResolvedValue([]),
 }))
 
+import { listAgentSessions } from '@/api/agent'
 import { useAgentStore } from '@/stores/agent'
 
 describe('agent store user isolation', () => {
@@ -60,5 +61,23 @@ describe('agent store user isolation', () => {
     expect(store.messages).toEqual([])
     expect(store.sessions).toEqual([])
     expect(localStorage.getItem('ssdd_agent_session:7')).toBe('persistent-session')
+  })
+
+  it('keeps session owner metadata returned for an administrator', async () => {
+    listAgentSessions.mockResolvedValueOnce([{
+      id: 'other-user-session',
+      owner_id: 9,
+      owner_username: 'other-user',
+      title: 'persisted chat',
+    }])
+    const store = useAgentStore()
+
+    await store.fetchSessions(1)
+
+    expect(store.sessions[0]).toMatchObject({
+      id: 'other-user-session',
+      ownerId: 9,
+      ownerUsername: 'other-user',
+    })
   })
 })

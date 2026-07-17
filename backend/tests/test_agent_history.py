@@ -159,3 +159,41 @@ def test_chat_stream_rejects_foreign_session_before_streaming(db_session):
         asyncio.run(agent.chat_stream(Request(), _current_user=other, db=db_session))
 
     assert exc_info.value.status_code == 409
+
+
+def test_admin_can_list_and_read_other_users_sessions(db_session):
+    admin = User(
+        username="chat-admin", email="chat-admin@example.com", hashed_password="x",
+        is_superuser=True,
+    )
+    owner = User(username="chat-owner", email="chat-owner@example.com", hashed_password="x")
+    db_session.add_all([admin, owner])
+    db_session.flush()
+    session = ChatSession(user_id=owner.id, session_uuid="admin-visible-session", title="用户会话")
+    db_session.add(session)
+    db_session.flush()
+    db_session.add(ChatMessage(session_id=session.id, role="user", content="仅用于管理员查看"))
+    db_session.commit()
+
+    sessions = agent.list_chat_sessions(current_user=admin, db=db_session)
+    detail = agent.get_chat_session(session.session_uuid, current_user=admin, db=db_session)
+
+    assert sessions[0]["owner_id"] == owner.id
+    assert sessions[0]["owner_username"] == owner.username
+    assert detail["owner_username"] == owner.username
+    assert detail["messages"][0]["content"] == "仅用于管理员查看"
+
+
+def test_regular_user_cannot_read_other_users_session(db_session):
+    owner = User(username="private-owner", email="private-owner@example.com", hashed_password="x")
+    other = User(username="private-other", email="private-other@example.com", hashed_password="x")
+    db_session.add_all([owner, other])
+    db_session.flush()
+    db_session.add(ChatSession(user_id=owner.id, session_uuid="private-session"))
+    db_session.commit()
+
+    assert agent.list_chat_sessions(current_user=other, db=db_session) == []
+    with pytest.raises(HTTPException) as exc_info:
+        agent.get_chat_session("private-session", current_user=other, db=db_session)
+
+    assert exc_info.value.status_code == 404

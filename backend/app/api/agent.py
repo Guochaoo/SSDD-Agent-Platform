@@ -99,16 +99,18 @@ def list_chat_sessions(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return only the authenticated user's chat sessions."""
-    sessions = (
-        db.query(ChatSession)
-        .filter(ChatSession.user_id == current_user.id)
-        .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc())
-        .all()
-    )
+    """Return the user's sessions, or every user's sessions for administrators."""
+    query = db.query(ChatSession)
+    if not current_user.is_superuser:
+        query = query.filter(ChatSession.user_id == current_user.id)
+    sessions = query.order_by(
+        ChatSession.last_message_at.desc(), ChatSession.created_at.desc()
+    ).all()
     return [
         {
             "id": session.session_uuid,
+            "owner_id": session.user_id,
+            "owner_username": session.user.username if session.user else "",
             "title": session.title or "新对话",
             "message_count": session.message_count or 0,
             "created_at": session.created_at,
@@ -126,23 +128,25 @@ def _get_owned_session(db: Session, session_id: str, user_id: int) -> ChatSessio
     return session
 
 
+def _get_visible_session(db: Session, session_id: str, current_user) -> ChatSession:
+    """Resolve a session visible to its owner or to an administrator."""
+    query = db.query(ChatSession).filter(ChatSession.session_uuid == session_id)
+    if not current_user.is_superuser:
+        query = query.filter(ChatSession.user_id == current_user.id)
+    session = query.first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return session
+
+
 @router.get("/sessions/{session_id}")
 def get_chat_session(
     session_id: str,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return a session and messages only when it belongs to the current user."""
-    session = (
-        db.query(ChatSession)
-        .filter(
-            ChatSession.session_uuid == session_id,
-            ChatSession.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    """Return a session to its owner or to an administrator."""
+    session = _get_visible_session(db, session_id, current_user)
     messages = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session.id)
@@ -151,6 +155,8 @@ def get_chat_session(
     )
     return {
         "id": session.session_uuid,
+        "owner_id": session.user_id,
+        "owner_username": session.user.username if session.user else "",
         "title": session.title or "新对话",
         "message_count": session.message_count or 0,
         "created_at": session.created_at,
@@ -178,19 +184,16 @@ def get_chat_message_image(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Serve a persisted chat attachment only to the session owner."""
-    message = (
-        db.query(ChatMessage)
-        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-        .filter(
-            ChatSession.session_uuid == session_id,
-            ChatSession.user_id == current_user.id,
-            ChatMessage.id == message_id,
-        )
-        .first()
-    )
-    image_paths = message.image_paths or ([message.image_path] if message and message.image_path else [])
-    if not message or index < 0 or index >= len(image_paths):
+    """Serve a persisted attachment to its owner or to an administrator."""
+    session = _get_visible_session(db, session_id, current_user)
+    message = db.query(ChatMessage).filter(
+        ChatMessage.session_id == session.id,
+        ChatMessage.id == message_id,
+    ).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    image_paths = message.image_paths or ([message.image_path] if message.image_path else [])
+    if index < 0 or index >= len(image_paths):
         raise HTTPException(status_code=404, detail="图片不存在")
     image_path = _validate_uploaded_image_path(image_paths[index])
     return FileResponse(image_path)
@@ -202,17 +205,8 @@ def delete_chat_session(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete one of the current user's persisted chat sessions and messages."""
-    session = (
-        db.query(ChatSession)
-        .filter(
-            ChatSession.session_uuid == session_id,
-            ChatSession.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    """Delete a persisted session as its owner or as an administrator."""
+    session = _get_visible_session(db, session_id, current_user)
 
     image_paths = []
     for message in db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all():

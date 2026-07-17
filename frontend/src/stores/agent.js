@@ -96,6 +96,8 @@ export const useAgentStore = defineStore('agent', {
       const sessions = await listAgentSessions()
       this.sessions = (sessions || []).map((session) => ({
         id: session.id,
+        ownerId: session.owner_id,
+        ownerUsername: session.owner_username,
         title: session.title,
         createdAt: session.created_at,
         updatedAt: session.updated_at,

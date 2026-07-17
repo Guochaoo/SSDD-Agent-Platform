@@ -45,7 +45,9 @@
             :class="['session-item', { active: session.id === agentStore.currentSessionId && activeMenu === '/chat' }]"
             @click="handleSwitchSession(session.id)"
           >
-            <span class="session-title">{{ session.title || text.newChat }}</span>
+            <span class="session-title">
+              <template v-if="userStore.isSuperuser && session.ownerUsername">[{{ session.ownerUsername }}] </template>{{ session.title || text.newChat }}
+            </span>
             <span
               class="session-delete"
               :title="text.delete"
