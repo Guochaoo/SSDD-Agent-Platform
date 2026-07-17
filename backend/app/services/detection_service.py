@@ -78,12 +78,14 @@ class DetectionService:
         return {"status": self._warmup_status, "error": self._warmup_error, "loaded": len(self._models)}
 
     @staticmethod
-    def _resolve_model(db: Session, model_id: int) -> ModelVersion:
+    def _resolve_model(db: Session, model_id: int, user_id: int | None = None) -> ModelVersion:
         model_version = (
             db.query(ModelVersion)
             .filter(ModelVersion.id == model_id, ModelVersion.status == "active")
             .first()
         )
+        if model_version and user_id is not None and not model_version.is_builtin and model_version.owner_id != user_id:
+            model_version = None
         if not model_version:
             raise HTTPException(status_code=404, detail="模型版本不存在或不可用")
         return model_version
@@ -214,14 +216,16 @@ class DetectionService:
         object_id = uuid4().hex
         suffix = Path(filename).suffix.lower() or ".jpg"
         base_path = f"detections/{task.user_id}/{task.id}"
+        original_object_key = f"{base_path}/original/{object_id}{suffix}"
         image_url = minio_client.upload_bytes(
-            f"{base_path}/original/{object_id}{suffix}",
+            original_object_key,
             source_bytes,
             file.content_type,
         )
         try:
+            annotated_object_key = f"{base_path}/annotated/{object_id}.jpg"
             annotated_url = minio_client.upload_bytes(
-                f"{base_path}/annotated/{object_id}.jpg",
+                annotated_object_key,
                 self._encode_annotated_image(result),
                 "image/jpeg",
             )
@@ -233,6 +237,8 @@ class DetectionService:
             {
                 "image_path": image_url,
                 "annotated_image_url": annotated_url,
+                "original_object_key": original_object_key,
+                "annotated_object_key": annotated_object_key,
                 **item,
                 "inference_time": inference_time,
                 "image_width": image.width,
@@ -253,7 +259,7 @@ class DetectionService:
         }
 
     async def detect_single(self, db, user_id, file, model_id, conf_threshold, iou_threshold):
-        model_version = self._resolve_model(db, model_id)
+        model_version = self._resolve_model(db, model_id, user_id)
         task = history_service.create_task(
             db,
             user_id=user_id,
@@ -294,7 +300,7 @@ class DetectionService:
     ):
         if not files or len(files) > MAX_BATCH_SIZE:
             raise HTTPException(status_code=400, detail=f"批量检测需上传 1-{MAX_BATCH_SIZE} 张图片")
-        model_version = self._resolve_model(db, model_id)
+        model_version = self._resolve_model(db, model_id, user_id)
         task = history_service.create_task(
             db,
             user_id=user_id,
@@ -738,10 +744,10 @@ class DetectionService:
                         pass
             db.close()
 
-    def warmup_camera(self, db, model_id, mode, conf, iou):
+    def warmup_camera(self, db, model_id, mode, conf, iou, user_id=None):
         import numpy as np
 
-        model_version = self._resolve_model(db, model_id)
+        model_version = self._resolve_model(db, model_id, user_id)
         model = self._get_model(model_version)
         device = "cpu" if mode == "cpu" else "0"
         image_size = 416 if mode == "cpu" else 640

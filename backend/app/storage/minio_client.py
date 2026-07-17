@@ -3,10 +3,13 @@ MinIO 对象存储客户端封装
 用于存储检测图像、训练模型等文件
 """
 import io
+import logging
 from minio import Minio
 from minio.error import S3Error
 
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class MinIOClient:
@@ -101,7 +104,16 @@ class MinIOClient:
             object_name = path.split("/", 1)[1] if "/" in path else None
             if object_name:
                 self.delete_file(object_name)
-        except S3Error as e:
-            print(f"[warn] MinIO 删除失败 url={url}: {e}")
-        except Exception as e:
-            print(f"[warn] 无法从 URL 解析 object_name url={url}: {e}")
+        except Exception:
+            logger.exception("MinIO cleanup failed url=%s", url)
+            raise
+
+    def object_exists(self, object_name: str) -> bool:
+        try:
+            self.client.stat_object(self.bucket_name, object_name)
+            return True
+        except S3Error:
+            return False
+
+    def list_objects(self, prefix: str = ""):
+        return self.client.list_objects(self.bucket_name, prefix=prefix, recursive=True)

@@ -57,3 +57,11 @@ export function uploadModelVersionApi(sceneId, payload) {
   if (payload.description) formData.append('description', payload.description)
   return request.post(`/scenes/${sceneId}/models/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
+
+export function updateModelVersionApi(sceneId, modelVersionId, payload) {
+  const formData = new FormData()
+  if (payload.version != null) formData.append('version', payload.version)
+  if (payload.modelName != null) formData.append('model_name', payload.modelName)
+  if (payload.description != null) formData.append('description', payload.description)
+  return request.patch(`/scenes/${sceneId}/models/${modelVersionId}`, formData)
+}

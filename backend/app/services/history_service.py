@@ -157,15 +157,26 @@ class HistoryService:
         if task.user_id != user_id and not is_superuser:
             raise HTTPException(status_code=403, detail="无权删除该记录")
 
+        minio = MinIOClient()
         try:
-            minio = MinIOClient()
             for result in task.results:
-                minio.delete_by_url(result.annotated_image_url)
+                for object_key in (result.original_object_key, result.annotated_object_key):
+                    if object_key:
+                        minio.delete_file(object_key)
+                if not result.original_object_key:
+                    minio.delete_by_url(result.image_path)
+                if not result.annotated_object_key:
+                    minio.delete_by_url(result.annotated_image_url)
             db.delete(task)
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
-            raise
+            for result in task.results:
+                result.cleanup_pending = True
+                result.cleanup_error = str(exc)
+                result.cleanup_retry_count = (result.cleanup_retry_count or 0) + 1
+            db.commit()
+            raise HTTPException(status_code=503, detail={"code": "CLEANUP_RETRY", "message": "检测结果文件清理失败，已记录并可重试"}) from exc
 
     # ── 统计 ─────────────────────────────────────────────
 

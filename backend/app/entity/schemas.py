@@ -360,6 +360,10 @@ class ModelVersionResponse(BaseModel):
     status: str
     model_path: str
     minio_url: Optional[str] = None
+    object_key: Optional[str] = None
+    cleanup_pending: bool = False
+    cleanup_error: Optional[str] = None
+    cleanup_retry_count: int = 0
     map50: Optional[float] = None
     map50_95: Optional[float] = None
     precision: Optional[float] = None
@@ -525,6 +529,10 @@ class KnowledgeDocumentResponse(BaseModel):
     title: str
     filename: str
     file_url: str
+    object_key: Optional[str] = None
+    cleanup_pending: bool = False
+    cleanup_error: Optional[str] = None
+    cleanup_retry_count: int = 0
     file_type: Optional[str] = None
     status: str
     chunk_count: int

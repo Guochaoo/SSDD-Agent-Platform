@@ -43,6 +43,12 @@ from app.training.training_service import training_service
 
 logger = get_logger(__name__)
 
+BUILTIN_DATASET_PATH = "NEU-DET.v9i.yolov11"
+
+
+def _is_builtin_dataset(record: TrainingDataset | None) -> bool:
+    return bool(record and record.is_builtin and record.path == BUILTIN_DATASET_PATH)
+
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
 
 
@@ -69,7 +75,7 @@ def _dataset_image_count(dataset_path: Path) -> int:
 
 def _get_dataset_record(db: Session, dataset_path: str, current_user: User) -> TrainingDataset | None:
     record = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_path).first()
-    if record and not (record.is_builtin or record.owner_id == current_user.id or current_user.is_superuser):
+    if record and not (_is_builtin_dataset(record) or record.owner_id == current_user.id or current_user.is_superuser):
         raise HTTPException(status_code=403, detail="无权访问该数据集")
     return record
 
@@ -82,14 +88,14 @@ async def list_datasets(db: Session = Depends(get_db), current_user: User = Depe
     records = {record.path: record for record in db.query(TrainingDataset).all()}
     for directory in sorted(item for item in root.iterdir() if item.is_dir()):
         record = records.get(directory.name)
-        if record and not (record.is_builtin or record.owner_id == current_user.id or current_user.is_superuser):
+        if record and not (_is_builtin_dataset(record) or record.owner_id == current_user.id or current_user.is_superuser):
             continue
         datasets.append({
             "name": directory.name,
             "path": directory.name,
             "ready": (directory / "data.yaml").is_file(),
             "owner_id": record.owner_id if record else None,
-            "is_builtin": record.is_builtin if record else True,
+            "is_builtin": _is_builtin_dataset(record),
         })
     if (root / "data.yaml").is_file():
         datasets.insert(0, {"name": root.name, "path": ".", "ready": True, "owner_id": None, "is_builtin": True})
@@ -107,7 +113,7 @@ async def download_dataset(
     root = _dataset_root()
     dataset = _safe_dataset_path(dataset_path)
     if not dataset.is_dir():
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "数据集不存在"})
     _get_dataset_record(db, dataset_path, current_user)
 
     archive_dir = Path(tempfile.mkdtemp(prefix="dataset-download-"))
@@ -130,8 +136,8 @@ async def delete_dataset(
     if not dataset.is_dir():
         raise HTTPException(status_code=404, detail="数据集不存在")
     record = _get_dataset_record(db, dataset_path, current_user)
-    if record is None or record.is_builtin:
-        raise HTTPException(status_code=403, detail="内置数据集不可删除")
+    if record is None or _is_builtin_dataset(record):
+        raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "内置数据集只读"})
     if record.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="无权删除该数据集")
 
@@ -141,7 +147,7 @@ async def delete_dataset(
         if task.dataset_path
     }
     if dataset in active_paths:
-        raise HTTPException(status_code=400, detail="该数据集正在被训练任务使用，暂不能删除")
+        raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "该数据集正在被训练任务使用，暂不能删除"})
 
     shutil.rmtree(dataset)
     db.delete(record)

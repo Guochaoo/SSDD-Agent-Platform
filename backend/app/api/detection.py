@@ -136,7 +136,7 @@ async def detect_video(
             status_code=400,
             detail=f"不支持的视频格式: {suffix or '无扩展名'}",
         )
-    model_version = detection_service._resolve_model(db, model_id)
+    model_version = detection_service._resolve_model(db, model_id, current_user.id)
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -313,7 +313,7 @@ async def camera_detection(websocket: WebSocket):
                 try:
                     model_id = int(message.get("model_id"))
                     model_version, model = await run_in_threadpool(
-                        detection_service.warmup_camera, db, model_id, mode, conf, iou
+                        detection_service.warmup_camera, db, model_id, mode, conf, iou, user.id
                     )
                 except Exception as exc:
                     logger.exception("摄像头模型初始化失败 connection_id=%s", connection_id)

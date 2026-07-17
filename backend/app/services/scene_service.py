@@ -134,6 +134,7 @@ class SceneService:
     def create_uploaded_model(
         db: Session, scene_id: int, owner_id: int, version: str, model_name: str,
         model_type: str, model_path: str, file_size: int, description: str | None = None,
+        object_key: str | None = None, minio_url: str | None = None,
     ) -> ModelVersion:
         SceneService.get_scene(db, scene_id)
         model = ModelVersion(
@@ -145,6 +146,8 @@ class SceneService:
             model_path=model_path,
             file_size=file_size,
             description=description,
+            object_key=object_key,
+            minio_url=minio_url,
             is_builtin=False,
         )
         try:
@@ -167,16 +170,54 @@ class SceneService:
         if model.owner_id != user_id and not is_superuser:
             raise HTTPException(status_code=403, detail="无权删除该模型")
         if model.is_default:
-            raise HTTPException(status_code=400, detail="请先将其他模型设为默认模型")
+            raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "默认模型不可删除，请先切换默认模型"})
+        if model.training_task_id:
+            task = model.training_task
+            if task and task.status in {"pending", "running"}:
+                raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "正在训练的模型不可删除"})
         try:
             model.status = "deleted"
             model.is_default = False
             db.commit()
             db.refresh(model)
+            from pathlib import Path
+            local_path = Path(model.model_path)
+            if not local_path.is_absolute():
+                local_path = Path(__file__).resolve().parents[3] / local_path
+            try:
+                local_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if model.object_key:
+                from app.storage.minio_client import MinIOClient
+                try:
+                    MinIOClient().delete_file(model.object_key)
+                except Exception as exc:
+                    model.cleanup_pending = True
+                    model.cleanup_error = str(exc)
+                    model.cleanup_retry_count = (model.cleanup_retry_count or 0) + 1
+                    db.commit()
+                    raise HTTPException(status_code=503, detail={"code": "CLEANUP_RETRY", "message": "模型已软删除，但对象清理失败，请重试"}) from exc
             return model
         except Exception:
             db.rollback()
             raise
+
+    @staticmethod
+    def update_model_version(db, scene_id, model_version_id, user_id, is_superuser, description=None, version=None, model_name=None):
+        model = SceneService.get_model_version(db, scene_id, model_version_id, user_id, is_superuser)
+        if model.is_builtin:
+            raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "内置模型只读"})
+        if model.owner_id != user_id and not is_superuser:
+            raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "无权编辑该模型"})
+        if description is not None:
+            model.description = description
+        if version is not None:
+            model.version = version
+        if model_name is not None:
+            model.model_name = model_name
+        db.commit(); db.refresh(model)
+        return model
 
     @staticmethod
     def deactivate_scene(db: Session, scene_id: int) -> DetectionScene:
