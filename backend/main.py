@@ -21,7 +21,9 @@ from app.api.training import router as training_router
 from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
+from app.database.session import SessionLocal
 from app.middleware.request_logger import RequestLogMiddleware
+from app.storage.cleanup import retry_pending_cleanups
 from app.services.detection_service import detection_service
 import asyncio
 
@@ -45,8 +47,29 @@ async def lifespan(_app: FastAPI):
     logger.info("Starting service")
     init_minio()
     asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
-    yield
-    logger.info("Service stopped")
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        await asyncio.gather(cleanup_task, return_exceptions=True)
+        logger.info("Service stopped")
+
+
+async def _cleanup_loop():
+    """Retry durable object deletions while the API process is running."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                retry_pending_cleanups(db)
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Resource cleanup retry failed: %s", exc)
+        await asyncio.sleep(settings.CLEANUP_RETRY_INTERVAL_SECONDS)
 
 
 app = FastAPI(

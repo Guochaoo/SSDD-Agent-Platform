@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     # Training paths
     DATASET_BASE_DIR: str = "datasets/ssdd"
     TRAIN_OUTPUT_DIR: str = "runs/train"
+    CLEANUP_RETRY_INTERVAL_SECONDS: int = 300
 
     JWT_SECRET_KEY: str = "your-super-secret-key-change-in-production"
     JWT_ALGORITHM: str = "HS256"
