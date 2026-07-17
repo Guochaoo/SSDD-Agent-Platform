@@ -397,6 +397,7 @@ class TrainingService:
         if not parsed:
             return
 
+        parsed_by_epoch = {values["epoch"]: values for values in parsed}
         existing = {}
         for metric in (
             db.query(TrainingMetric)
@@ -406,7 +407,12 @@ class TrainingService:
         ):
             # Repair duplicate and out-of-range rows created by the former
             # unconditional callback + CSV insertion behavior.
-            if metric.epoch < 1 or metric.epoch > task.epochs or metric.epoch in existing:
+            if (
+                metric.epoch < 1
+                or metric.epoch > task.epochs
+                or metric.epoch not in parsed_by_epoch
+                or metric.epoch in existing
+            ):
                 db.delete(metric)
                 continue
             existing[metric.epoch] = metric
@@ -415,7 +421,7 @@ class TrainingService:
             "map50", "map50_95", "lr",
         )
         changed = False
-        for values in parsed:
+        for values in parsed_by_epoch.values():
             epoch = values["epoch"]
             metric = existing.get(epoch)
             if metric is None:
