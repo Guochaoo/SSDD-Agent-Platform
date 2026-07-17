@@ -7,7 +7,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
@@ -15,9 +15,16 @@ from sqlalchemy.orm import Session
 from app.core.security import decode_access_token
 from app.database.session import get_db
 from app.entity.schemas import (
-    TokenResponse, UserLogin, UserRegister, UserResponse, UserUpdate,
-    ChangePassword, PasswordResetRequest, PasswordResetConfirm,
+    TokenResponse,
+    UserLogin,
+    UserRegister,
+    UserResponse,
+    UserUpdate,
+    ChangePassword,
+    PasswordResetRequest,
+    PasswordResetConfirm,
 )
+from app.services.operation_log_service import operation_log_service
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -53,7 +60,9 @@ async def get_current_user(
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
-async def register(request: UserRegister, db: Session = Depends(get_db)):
+async def register(
+    request: UserRegister, http_request: Request, db: Session = Depends(get_db)
+):
     """
     用户注册
 
@@ -67,23 +76,71 @@ async def register(request: UserRegister, db: Session = Depends(get_db)):
         email=request.email,
         password=request.password,
     )
+    operation_log_service.record(
+        db,
+        user=user,
+        module="auth",
+        action="register",
+        target_type="user",
+        target_id=str(user.id),
+        description=f"用户注册：{user.username}",
+        request=http_request,
+    )
     return user
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: UserLogin, db: Session = Depends(get_db)):
+async def login(http_request: Request, db: Session = Depends(get_db)):
     """
     用户登录
 
     - 返回 JWT access_token
     - 后续请求在 Header 中携带：Authorization: Bearer <token>
-    """
-    user = user_service.login(
-        db=db,
-        username=request.username,
-        password=request.password,
-    )
 
+    同时支持 JSON 请求体（前端使用）和 form-urlencoded（Swagger OAuth2 弹窗使用）。
+    """
+    content_type = http_request.headers.get("content-type", "")
+
+    if "application/json" in content_type:
+        payload = await http_request.json()
+        username = payload.get("username")
+        password = payload.get("password")
+    else:
+        # form-urlencoded：Swagger 的 OAuth2 弹窗和标准 OAuth2 客户端走这条路径
+        form = await http_request.form()
+        username = form.get("username")
+        password = form.get("password")
+
+    if not username or not password:
+        raise HTTPException(status_code=422, detail="用户名和密码不能为空")
+
+    try:
+        user = user_service.login(db=db, username=username, password=password)
+    except HTTPException as exc:
+        operation_log_service.record(
+            db,
+            user=None,
+            module="auth",
+            action="login",
+            target_type="user",
+            target_id=str(username),
+            description=f"登录失败：{username}",
+            status="failure",
+            error_message=str(exc.detail),
+            request=http_request,
+        )
+        raise
+
+    operation_log_service.record(
+        db,
+        user=user,
+        module="auth",
+        action="login",
+        target_type="user",
+        target_id=str(user.id),
+        description=f"用户登录：{user.username}",
+        request=http_request,
+    )
     access_token = user_service.create_access_token_for_user(user)
     roles = user_service.get_user_roles(db, user)
 
@@ -138,25 +195,47 @@ async def update_profile(
     )
     roles = user_service.get_user_roles(db, user)
     return {
-        "id": user.id, "username": user.username, "email": user.email, "phone": user.phone,
-        "avatar": user.avatar, "is_active": user.is_active, "is_superuser": user.is_superuser,
-        "roles": roles, "last_login_at": user.last_login_at, "created_at": user.created_at,
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "phone": user.phone,
+        "avatar": user.avatar,
+        "is_active": user.is_active,
+        "is_superuser": user.is_superuser,
+        "roles": roles,
+        "last_login_at": user.last_login_at,
+        "created_at": user.created_at,
     }
 
 
 @router.post("/change-password")
 async def change_password(
     payload: ChangePassword,
+    http_request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """已登录状态下修改密码，需提供旧密码校验"""
-    user_service.change_password(db, current_user, payload.old_password, payload.new_password)
+    user_service.change_password(
+        db, current_user, payload.old_password, payload.new_password
+    )
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="auth",
+        action="change_password",
+        target_type="user",
+        target_id=str(current_user.id),
+        description="修改密码",
+        request=http_request,
+    )
     return {"message": "密码修改成功"}
 
 
 @router.post("/password-reset/request")
-async def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+async def request_password_reset(
+    payload: PasswordResetRequest, db: Session = Depends(get_db)
+):
     """
     忘记密码：申请重置令牌。
     出于安全考虑，无论邮箱是否存在都返回相同提示；实际发送重置邮件的逻辑（含 raw_token）
@@ -167,7 +246,9 @@ async def request_password_reset(payload: PasswordResetRequest, db: Session = De
 
 
 @router.post("/password-reset/confirm")
-async def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)):
+async def confirm_password_reset(
+    payload: PasswordResetConfirm, db: Session = Depends(get_db)
+):
     """忘记密码：使用邮件中的令牌设置新密码"""
     user_service.confirm_password_reset(db, payload.token, payload.new_password)
     return {"message": "密码重置成功，请使用新密码登录"}
@@ -176,6 +257,7 @@ async def confirm_password_reset(payload: PasswordResetConfirm, db: Session = De
 @router.post("/users/{user_id}/deactivate")
 async def deactivate_user(
     user_id: int,
+    http_request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -183,12 +265,23 @@ async def deactivate_user(
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     user_service.set_active(db, user_id, is_active=False)
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="system",
+        action="deactivate_user",
+        target_type="user",
+        target_id=str(user_id),
+        description=f"禁用用户 id={user_id}",
+        request=http_request,
+    )
     return {"message": "用户已禁用"}
 
 
 @router.post("/users/{user_id}/activate")
 async def activate_user(
     user_id: int,
+    http_request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -196,17 +289,39 @@ async def activate_user(
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     user_service.set_active(db, user_id, is_active=True)
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="system",
+        action="activate_user",
+        target_type="user",
+        target_id=str(user_id),
+        description=f"启用用户 id={user_id}",
+        request=http_request,
+    )
     return {"message": "用户已启用"}
 
 
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
+    http_request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """管理员删除用户，事务化级联清理其全部关联数据（对应任务文档步骤 13）"""
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    # 先记录日志（此时 user 还没被删，target_id 才能引用到）
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="system",
+        action="delete_user",
+        target_type="user",
+        target_id=str(user_id),
+        description=f"删除用户 id={user_id} 及其关联数据",
+        request=http_request,
+    )
     user_service.delete_user_cascade(db, user_id)
     return {"message": "用户及其关联数据已删除"}
