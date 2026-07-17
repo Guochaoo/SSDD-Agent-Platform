@@ -205,8 +205,14 @@ def delete_chat_session(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a persisted session as its owner or as an administrator."""
-    session = _get_visible_session(db, session_id, current_user)
+    """Delete a persisted session only as its owner.
+
+    Administrators may review other users' sessions, but reviewing must not
+    grant destructive access to another user's conversation.
+    """
+    session = _get_owned_session(db, session_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
 
     image_paths = []
     for message in db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all():

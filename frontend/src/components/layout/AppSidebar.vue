@@ -49,6 +49,7 @@
               <template v-if="userStore.isSuperuser && session.ownerUsername">[{{ session.ownerUsername }}] </template>{{ session.title || text.newChat }}
             </span>
             <span
+              v-if="!userStore.isSuperuser || session.ownerId === userStore.user?.id"
               class="session-delete"
               :title="text.delete"
               @click.stop="handleDeleteSession(session.id)"

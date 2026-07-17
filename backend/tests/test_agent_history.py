@@ -184,6 +184,24 @@ def test_admin_can_list_and_read_other_users_sessions(db_session):
     assert detail["messages"][0]["content"] == "仅用于管理员查看"
 
 
+def test_admin_cannot_delete_other_users_session(db_session):
+    admin = User(
+        username="delete-admin", email="delete-admin@example.com", hashed_password="x",
+        is_superuser=True,
+    )
+    owner = User(username="delete-owner", email="delete-owner@example.com", hashed_password="x")
+    db_session.add_all([admin, owner])
+    db_session.flush()
+    db_session.add(ChatSession(user_id=owner.id, session_uuid="protected-session"))
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        agent.delete_chat_session("protected-session", current_user=admin, db=db_session)
+
+    assert exc_info.value.status_code == 409
+    assert db_session.query(ChatSession).count() == 1
+
+
 def test_regular_user_cannot_read_other_users_session(db_session):
     owner = User(username="private-owner", email="private-owner@example.com", hashed_password="x")
     other = User(username="private-other", email="private-other@example.com", hashed_password="x")
