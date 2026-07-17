@@ -118,6 +118,14 @@ def list_chat_sessions(
     ]
 
 
+def _get_owned_session(db: Session, session_id: str, user_id: int) -> ChatSession | None:
+    """Resolve a globally unique session UUID and enforce its owner."""
+    session = db.query(ChatSession).filter(ChatSession.session_uuid == session_id).first()
+    if session is not None and session.user_id != user_id:
+        raise HTTPException(status_code=409, detail="会话标识已属于其他用户，请创建新会话")
+    return session
+
+
 @router.get("/sessions/{session_id}")
 def get_chat_session(
     session_id: str,
@@ -268,6 +276,7 @@ def get_agent_artifact(filename: str):
 async def chat_stream(
     request: Request,
     _current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """SSE 流式对话 — Agent 智能回复。
 
@@ -328,6 +337,11 @@ async def chat_stream(
 
     user_id = _current_user.id
 
+    # Validate ownership before starting the SSE response so a stale UUID from
+    # another signed-in user becomes a normal HTTP 409 instead of an INSERT error.
+    if session_id:
+        _get_owned_session(db, session_id, user_id)
+
     # ── load chat history ──
     history = _load_history(session_id, user_id) if session_id else []
 
@@ -387,7 +401,7 @@ async def chat_stream(
 def _ensure_session(session_id: str, user_id: int):
     db = SessionLocal()
     try:
-        s = db.query(ChatSession).filter(ChatSession.session_uuid == session_id).first()
+        s = _get_owned_session(db, session_id, user_id)
         if not s:
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)
@@ -463,10 +477,7 @@ def _save_message(
         return
     db = SessionLocal()
     try:
-        s = db.query(ChatSession).filter(
-            ChatSession.session_uuid == session_id,
-            ChatSession.user_id == user_id,
-        ).first()
+        s = _get_owned_session(db, session_id, user_id)
         if not s:
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)

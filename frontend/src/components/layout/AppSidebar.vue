@@ -121,7 +121,7 @@ const agentStore = useAgentStore()
 const settingsStore = useSettingsStore()
 
 onMounted(() => {
-  agentStore.fetchSessions().catch(() => {})
+  agentStore.fetchSessions(userStore.user?.id).catch(() => {})
 })
 
 const activeMenu = computed(() => '/' + route.path.split('/')[1])
@@ -206,6 +206,7 @@ function handleCommand(command) {
     ElMessageBox.confirm(text.value.logoutMessage, text.value.logoutTitle, {
       confirmButtonText: text.value.confirm, cancelButtonText: text.value.cancel, type: 'warning',
     }).then(() => {
+      agentStore.clearUserScope()
       userStore.logout()
       router.push('/login')
     }).catch(() => {})
