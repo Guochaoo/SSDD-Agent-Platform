@@ -33,6 +33,7 @@
 
     <div class="stats-grid">
       <StatCard :label="text.totalTasks" :value="dashboard.totals.totalTasks" :unit="text.times" :icon="DocumentChecked" :helper="text.totalTasksHelp" />
+      <StatCard label="训练任务" :value="dashboard.totals.trainingTasks" unit="次" :icon="DocumentChecked" accent="#0ea5e9" helper="当前周期内的训练任务" />
       <StatCard :label="text.totalImages" :value="dashboard.totals.totalImages" :unit="text.images" :icon="Picture" accent="#7c3aed" :helper="text.totalImagesHelp" />
       <StatCard :label="text.totalObjects" :value="dashboard.totals.totalObjects" :unit="text.objects" :icon="WarningFilled" accent="#f97316" :helper="text.totalObjectsHelp" />
       <StatCard :label="text.avgTime" :value="dashboard.totals.avgInferenceTimeMs" unit="ms" :decimals="1" :icon="Odometer" accent="#10b981" :helper="text.avgTimeHelp" />
@@ -42,7 +43,8 @@
       <EChartPanel :title="text.trendTitle" :subtitle="text.trendSubtitle" :option="trendOption" :loading="loading" :empty="dashboard.dailyTrend.length === 0" height="330px" />
       <EChartPanel :title="text.classTitle" :subtitle="text.classSubtitle" :option="classOption" :loading="loading" :empty="dashboard.classDistribution.length === 0" height="330px" />
     </div>
-    <div class="dashboard-grid dashboard-grid--single">
+    <div class="dashboard-grid dashboard-grid--primary">
+      <EChartPanel title="每日训练趋势" subtitle="按创建日期统计训练任务" :option="trainingTrendOption" :loading="loading" :empty="dashboard.trainingDailyTrend.length === 0" height="300px" />
       <EChartPanel :title="text.sceneTitle" :subtitle="text.sceneSubtitle" :option="sceneOption" :loading="loading" :empty="dashboard.sceneDistribution.length === 0" height="300px" />
     </div>
   </div>
@@ -70,6 +72,7 @@ const dashboard = reactive({
   totals: { totalTasks: 0, totalImages: 0, totalObjects: 0, avgInferenceTimeMs: 0 },
   classDistribution: [],
   dailyTrend: [],
+  trainingDailyTrend: [],
   sceneDistribution: [],
   updatedAt: "",
 });
@@ -173,6 +176,15 @@ const classOption = computed(() => ({
   color: ["#2563eb", "#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#f97316"],
   legend: { type: "scroll", orient: "vertical", right: 4, top: "middle" },
   series: [{ type: "pie", radius: ["43%", "70%"], center: ["38%", "53%"], avoidLabelOverlap: true, itemStyle: { borderColor: "#fff", borderWidth: 3 }, label: { show: false }, emphasis: { label: { show: true, fontSize: 15, fontWeight: "bold" } }, data: dashboard.classDistribution }],
+}));
+
+const trainingTrendOption = computed(() => ({
+  tooltip: { trigger: 'axis' },
+  color: ['#0ea5e9'],
+  grid: { left: 52, right: 18, top: 28, bottom: 34 },
+  xAxis: { type: 'category', data: dashboard.trainingDailyTrend.map((item) => item.date), ...axisStyle },
+  yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#edf0f5' } }, ...axisStyle },
+  series: [{ name: '训练任务', type: 'bar', data: dashboard.trainingDailyTrend.map((item) => item.tasks) }],
 }));
 
 const sceneOption = computed(() => ({

@@ -40,6 +40,8 @@ class UserBrief(BaseModel):
     email: str
     avatar: Optional[str] = None
     roles: list[str] = []
+    is_active: bool = True
+    is_superuser: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +50,7 @@ class TokenResponse(BaseModel):
     """登录成功响应"""
     access_token: str
     token_type: str = "bearer"
+    user: UserBrief
     user: UserBrief
 
 
@@ -260,6 +263,8 @@ class BatchDetectionResponse(BaseModel):
 # --- 检测统计 ---
 
 class DetectionStatistics(BaseModel):
+    training_total_tasks: int = 0
+    training_daily_trend: list[dict] = []
     """检测统计数据"""
     total_tasks: int
     total_images: int

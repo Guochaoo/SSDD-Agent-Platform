@@ -85,10 +85,16 @@ function restoreToolCards(message) {
   return message
 }
 
-function artifactFilename(url) {
-  const match = typeof url === 'string' && url.match(/^\/api\/agent\/artifacts\/([^/?]+)$/)
-  return match ? match[1] : ''
-}
+  function artifactFilename(url) {
+    if (typeof url !== 'string' || !url) return ''
+    try {
+      const parsed = new URL(url, window.location.origin)
+      const match = parsed.pathname.match(/^\/api\/agent\/artifacts\/([^/?]+)$/)
+      return match ? decodeURIComponent(match[1]) : ''
+    } catch {
+      return ''
+    }
+  }
 
 async function hydrateArtifactUrl(url) {
   const filename = artifactFilename(url)

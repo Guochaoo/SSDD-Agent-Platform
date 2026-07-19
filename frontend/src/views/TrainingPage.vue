@@ -113,6 +113,28 @@
       </el-table>
     </el-card>
 
+    <el-card class="section-card dataset-card" shadow="never">
+      <template #header>
+        <div class="card-header">
+          <div><span class="card-title">{{ bilingual('训练数据集管理', 'Training datasets') }}</span><span class="card-caption">{{ bilingual('仅可删除自己上传且未被任务使用的数据集', 'Only unused datasets uploaded by you can be deleted') }}</span></div>
+          <el-button text :loading="loadingDatasets" @click="fetchDatasets"><el-icon><Refresh /></el-icon>{{ text.refresh }}</el-button>
+        </div>
+      </template>
+      <el-table :data="datasets" size="small" stripe :empty-text="bilingual('暂无数据集', 'No datasets')">
+        <el-table-column prop="name" :label="bilingual('名称', 'Name')" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="path" :label="bilingual('路径', 'Path')" min-width="180" show-overflow-tooltip />
+        <el-table-column :label="bilingual('状态', 'Status')" width="110">
+          <template #default="{ row }"><el-tag size="small" :type="row.ready ? 'success' : 'warning'">{{ row.ready ? bilingual('可训练', 'Ready') : bilingual('待校验', 'Pending') }}</el-tag></template>
+        </el-table-column>
+        <el-table-column :label="bilingual('操作', 'Actions')" width="110" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="!row.is_builtin" text type="danger" size="small" @click="deleteDataset(row)">{{ text.delete }}</el-button>
+            <span v-else class="form-hint">{{ bilingual('内置', 'Built-in') }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-card v-if="selectedTask" class="section-card" shadow="never">
       <template #header>
         <div class="card-header monitor-header">
@@ -513,6 +535,7 @@ import {
   startTraining,
   stopTraining,
   uploadTrainingDataset,
+  deleteTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
 import { getScenesApi } from '@/api/models'
@@ -690,6 +713,7 @@ const trainForm = ref({
 const scenes = ref([])
 const datasets = ref([])
 const uploadingDataset = ref(false)
+const loadingDatasets = ref(false)
 
 const metricCards = computed(() => {
   const task = selectedTask.value
@@ -876,6 +900,7 @@ function handleCurrentTaskChange(task) {
 }
 
 async function fetchDatasets() {
+  loadingDatasets.value = true
   try {
     const response = await getTrainingDatasets()
     datasets.value = response.items || []
@@ -885,6 +910,25 @@ async function fetchDatasets() {
   } catch (error) {
     console.error('获取训练数据集失败', error)
     reportPageError(error, text.value.fetchDatasetsFailed, fetchDatasets)
+  } finally {
+    loadingDatasets.value = false
+  }
+}
+
+async function deleteDataset(dataset) {
+  try {
+    await ElMessageBox.confirm(
+      bilingual(`确定删除数据集“${dataset.name || dataset.path}”？`, `Delete dataset “${dataset.name || dataset.path}”?`),
+      bilingual('删除训练数据集', 'Delete training dataset'),
+      { type: 'warning' },
+    )
+    await deleteTrainingDataset(dataset.path)
+    if (trainForm.value.dataset_path === dataset.path) trainForm.value.dataset_path = ''
+    await fetchDatasets()
+    ElMessage.success(bilingual('数据集已删除', 'Dataset deleted'))
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    reportPageError(error, bilingual('数据集删除失败', 'Failed to delete dataset'), () => deleteDataset(dataset))
   }
 }
 
