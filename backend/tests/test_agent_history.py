@@ -298,6 +298,29 @@ def test_agent_artifact_is_only_visible_to_its_owner(tmp_path, monkeypatch):
     assert exc_info.value.status_code == 404
 
 
+def test_persisted_agent_artifact_is_visible_after_registry_reset(db_session, tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "ARTIFACT_DIR", str(tmp_path))
+    user = User(username="artifact-history", email="artifact-history@example.com", hashed_password="x")
+    db_session.add(user)
+    db_session.flush()
+    session = ChatSession(user_id=user.id, session_uuid="artifact-history-session")
+    db_session.add(session)
+    db_session.flush()
+    artifact_name = "annotated_persisted.jpg"
+    (tmp_path / artifact_name).write_bytes(b"image")
+    db_session.add(ChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="done",
+        tool_calls=[{"result": {"annotated_image_url": f"/api/agent/artifacts/{artifact_name}"}}],
+    ))
+    db_session.commit()
+
+    owner = type("User", (), {"id": user.id, "is_superuser": False})()
+    assert agent._artifact_referenced_by_user(db_session, artifact_name, owner)
+    assert Path(agent.get_agent_artifact(artifact_name, current_user=owner, db=db_session).path).exists()
+
+
 def test_save_message_rejects_session_uuid_owned_by_another_user(db_session, monkeypatch):
     owner = User(username="session-owner", email="owner@example.com", hashed_password="x")
     other = User(username="session-other", email="other@example.com", hashed_password="x")

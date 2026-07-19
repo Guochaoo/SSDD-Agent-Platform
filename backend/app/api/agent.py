@@ -106,6 +106,26 @@ def _artifact_filenames(tool_calls: list[dict] | None) -> set[str]:
     return filenames
 
 
+def _artifact_referenced_by_user(db: Session, filename: str, current_user) -> bool:
+    """Recover persisted artifact access after a process restart.
+
+    The in-process ownership map is intentionally fast, but it is not durable.
+    ChatMessage.tool_calls is the durable association between an artifact and
+    its session owner, so use it as the fallback authorization source.
+    """
+    # Keeping this guard makes direct unit calls to the route helper behave
+    # like the injected route (where FastAPI always supplies a Session).
+    if not hasattr(db, "query"):
+        return False
+    query = db.query(ChatMessage).join(ChatSession, ChatMessage.session_id == ChatSession.id)
+    if not current_user.is_superuser:
+        query = query.filter(ChatSession.user_id == current_user.id)
+    for message in query.all():
+        if filename in _artifact_filenames(message.tool_calls):
+            return True
+    return False
+
+
 # ══════════════════════════════════════════════════════════════
 # Model listing
 # ══════════════════════════════════════════════════════════════
@@ -333,12 +353,16 @@ async def upload_image(
 
 
 @router.get("/artifacts/{filename}", include_in_schema=False)
-def get_agent_artifact(filename: str, current_user=Depends(get_current_user)):
+def get_agent_artifact(
+    filename: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Serve an opaque, generated detection artifact for inline chat previews."""
     safe_name = Path(filename).name
     if safe_name != filename or not safe_name.startswith("annotated_") or not safe_name.endswith(".jpg"):
         raise HTTPException(status_code=404, detail="检测结果图片不存在")
-    if not can_read_artifact(safe_name, current_user.id, current_user.is_superuser):
+    if not can_read_artifact(safe_name, current_user.id, current_user.is_superuser) and not _artifact_referenced_by_user(db, safe_name, current_user):
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact_path = (Path(ARTIFACT_DIR) / safe_name).resolve()
     if artifact_path.parent != Path(ARTIFACT_DIR).resolve() or not artifact_path.is_file():

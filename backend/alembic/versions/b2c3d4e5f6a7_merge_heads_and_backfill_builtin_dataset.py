@@ -1,14 +1,14 @@
 """merge release heads and backfill the shipped dataset
 
 Revision ID: b2c3d4e5f6a7
-Revises: 9f1b2c3d4e5f, a1b2c3d4e5f6
+Revises: 9f1b2c3d4e5f
 """
 
 from alembic import op
 
 
 revision = "b2c3d4e5f6a7"
-down_revision = ("9f1b2c3d4e5f", "a1b2c3d4e5f6")
+down_revision = "9f1b2c3d4e5f"
 branch_labels = None
 depends_on = None
 
