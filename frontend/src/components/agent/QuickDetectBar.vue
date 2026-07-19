@@ -6,10 +6,10 @@
     <button class="quick-detect-btn" :disabled="disabled" @click="$emit('batch')">
       {{ labels.batch }}
     </button>
-    <button class="quick-detect-btn muted" :disabled="disabled" @click="$emit('zip')">
+    <button class="quick-detect-btn" :disabled="disabled" @click="$emit('zip')">
       {{ labels.zip }}
     </button>
-    <button class="quick-detect-btn muted" :disabled="disabled" @click="$emit('video')">
+    <button class="quick-detect-btn" :disabled="disabled" @click="$emit('video')">
       {{ labels.video }}
     </button>
   </div>
@@ -63,10 +63,6 @@ defineEmits(['single', 'batch', 'zip', 'video'])
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  &.muted {
-    color: var(--app-muted);
   }
 }
 </style>

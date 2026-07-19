@@ -84,104 +84,108 @@ def _format_detection_summary(result: dict) -> str:
 # 定义 Tool
 # ══════════════════════════════════════════════════════════════
 
-@tool
-def detect_single_image(image_path: str, conf: float = 0.25, iou: float = 0.45) -> str:
-    """
-    检测单张图片中的目标物体。用于用户上传了一张图片并要求检测的场景。
+def make_detection_tools(user_id: int):
+    """创建绑定到当前用户的检测工具。user_id 用于写入 DetectionTask 历史记录。"""
 
-    Args:
-        image_path: 图片文件路径
-        conf: 置信度阈值，取值 0~1，默认 0.25
-        iou: NMS IoU 阈值，取值 0~1，默认 0.45
+    @tool
+    def detect_single_image(image_path: str, conf: float = 0.25, iou: float = 0.45) -> str:
+        """
+        检测单张图片中的目标物体。用于用户上传了一张图片并要求检测的场景。
 
-    Returns:
-        JSON 字符串，包含 total_objects、class_counts、detections、inference_time
-    """
-    try:
-        result = detection_service._detect_file_sync(image_path, conf=conf, iou=iou)
-        summary = _format_detection_summary(result)
-        return json.dumps({"summary": summary, "result": result}, ensure_ascii=False)
-    except Exception as exc:
-        logger.exception("detect_single_image 工具异常")
-        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        Args:
+            image_path: 图片文件路径
+            conf: 置信度阈值，取值 0~1，默认 0.25
+            iou: NMS IoU 阈值，取值 0~1，默认 0.45
 
-
-@tool
-def detect_batch_images(image_paths: list[str], conf: float = 0.25) -> str:
-    """
-    批量检测多张图片。用于用户上传了多张图片或要求批量检测的场景。
-
-    Args:
-        image_paths: 图片文件路径列表
-        conf: 置信度阈值，默认 0.25
-
-    Returns:
-        JSON 字符串，汇总各类别的检测统计
-    """
-    results = []
-    total_objects = 0
-    class_counts = {}
-    for path in image_paths:
-        if not os.path.exists(path):
-            results.append({"image": path, "error": "文件不存在"})
-            continue
+        Returns:
+            JSON 字符串，包含 total_objects、class_counts、detections、inference_time
+        """
         try:
-            r = detection_service._detect_file_sync(path, conf=conf, iou=0.45)
-            results.append({"image": path, **r})
-            total_objects += r.get("total_objects", 0)
-            for name, count in r.get("class_counts", {}).items():
-                class_counts[name] = class_counts.get(name, 0) + count
+            result = detection_service._detect_file_sync(image_path, conf=conf, iou=iou, user_id=user_id, task_type="single")
+            summary = _format_detection_summary(result)
+            return json.dumps({"summary": summary, "result": result}, ensure_ascii=False)
         except Exception as exc:
-            results.append({"image": path, "error": str(exc)})
+            logger.exception("detect_single_image 工具异常")
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
-    return json.dumps(
-        {"total_images": len(image_paths), "total_objects": total_objects,
-         "class_counts": class_counts, "results": results},
-        ensure_ascii=False,
-    )
+    @tool
+    def detect_batch_images(image_paths: list[str], conf: float = 0.25) -> str:
+        """
+        批量检测多张图片。用于用户上传了多张图片或要求批量检测的场景。
+
+        Args:
+            image_paths: 图片文件路径列表
+            conf: 置信度阈值，默认 0.25
+
+        Returns:
+            JSON 字符串，汇总各类别的检测统计
+        """
+        results = []
+        total_objects = 0
+        class_counts = {}
+        for path in image_paths:
+            if not os.path.exists(path):
+                results.append({"image": path, "error": "文件不存在"})
+                continue
+            try:
+                r = detection_service._detect_file_sync(path, conf=conf, iou=0.45, user_id=user_id, task_type="batch")
+                results.append({"image": path, **r})
+                total_objects += r.get("total_objects", 0)
+                for name, count in r.get("class_counts", {}).items():
+                    class_counts[name] = class_counts.get(name, 0) + count
+            except Exception as exc:
+                results.append({"image": path, "error": str(exc)})
+
+        return json.dumps(
+            {"total_images": len(image_paths), "total_objects": total_objects,
+             "class_counts": class_counts, "results": results},
+            ensure_ascii=False,
+        )
+
+    @tool
+    def detect_zip_images_file(zip_path: str, conf: float = 0.25) -> str:
+        """
+        解压 ZIP 文件并批量检测其中所有图片。
+        适用于用户上传 .zip 压缩包（内含多张需要检测的图片）的场景。
+
+        Args:
+            zip_path: ZIP 文件在本地的路径
+            conf: 置信度阈值，默认 0.25
+
+        Returns:
+            JSON 字符串，汇总检测结果
+        """
+        temp_dir = None
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="rsod_zip_")
+            _safe_extract_zip(zip_path, temp_dir)
+
+            image_files = []
+            for root, _, files in os.walk(temp_dir):
+                for fname in files:
+                    if Path(fname).suffix.lower() in IMAGE_EXTENSIONS:
+                        image_files.append(os.path.join(root, fname))
+
+            if not image_files:
+                return json.dumps({"error": "ZIP 文件内未找到图片"}, ensure_ascii=False)
+
+            batch_result = detect_batch_images.invoke({"image_paths": image_files, "conf": conf})
+            return batch_result
+        except zipfile.BadZipFile:
+            return json.dumps({"error": "无效的 ZIP 文件"}, ensure_ascii=False)
+        except Exception as exc:
+            logger.exception("detect_zip_images_file 工具异常")
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        finally:
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return [detect_single_image, detect_batch_images, detect_zip_images_file]
 
 
-@tool
-def detect_zip_images_file(zip_path: str, conf: float = 0.25) -> str:
-    """
-    解压 ZIP 文件并批量检测其中所有图片。
-    适用于用户上传 .zip 压缩包（内含多张需要检测的图片）的场景。
-
-    Args:
-        zip_path: ZIP 文件在本地的路径
-        conf: 置信度阈值，默认 0.25
-
-    Returns:
-        JSON 字符串，汇总检测结果
-    """
-    temp_dir = None
-    try:
-        temp_dir = tempfile.mkdtemp(prefix="rsod_zip_")
-        _safe_extract_zip(zip_path, temp_dir)
-
-        image_files = []
-        for root, _, files in os.walk(temp_dir):
-            for fname in files:
-                if Path(fname).suffix.lower() in IMAGE_EXTENSIONS:
-                    image_files.append(os.path.join(root, fname))
-
-        if not image_files:
-            return json.dumps({"error": "ZIP 文件内未找到图片"}, ensure_ascii=False)
-
-        batch_result = detect_batch_images.invoke({"image_paths": image_files, "conf": conf})
-        return batch_result
-    except zipfile.BadZipFile:
-        return json.dumps({"error": "无效的 ZIP 文件"}, ensure_ascii=False)
-    except Exception as exc:
-        logger.exception("detect_zip_images_file 工具异常")
-        return json.dumps({"error": str(exc)}, ensure_ascii=False)
-    finally:
-        if temp_dir and os.path.exists(temp_dir):
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-DETECTION_TOOLS = [detect_single_image, detect_batch_images, detect_zip_images_file]
+# 向后兼容：无 user_id 时的默认工具列表（不写 DB）
+DETECTION_TOOLS = make_detection_tools(None)
 
 
 # ══════════════════════════════════════════════════════════════

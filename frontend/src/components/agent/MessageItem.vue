@@ -30,12 +30,12 @@
         </div>
       </div>
 
-      <div class="markdown-body" v-html="renderedContent" />
       <DetectionResultCard
         v-if="message.detectionResult"
         :result="message.detectionResult"
         :preview-url="message.detectionPreviewUrl"
       />
+      <div class="markdown-body" v-html="renderedContent" />
 
       <div v-for="card in message.toolResultCards || []" :key="card.id" class="tool-result-card">
         <strong>{{ getCardTitle(card.type) }}</strong>
@@ -164,7 +164,8 @@ const renderedContent = computed(() => {
 })
 
 const agentLabel = computed(() => {
-  return props.message.toolCalls?.find(tool => tool.agentLabel)?.agentLabel || ''
+  const tool = props.message.toolCalls?.find(t => t.agentLabel || t.agent)
+  return tool?.agentLabel || tool?.agent || ''
 })
 
 const formattedTime = computed(() => {

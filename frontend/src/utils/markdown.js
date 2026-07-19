@@ -19,7 +19,10 @@ const md = new MarkdownIt({
  */
 export function renderMarkdown(text) {
   if (!text) return ''
-  return md.render(text)
+  // Ensure markdown headings start on a new line so they render correctly
+  // even when the LLM concatenates them with preceding text.
+  const normalized = text.replace(/([^\n])(#{1,6}\s)/g, '$1\n\n$2')
+  return md.render(normalized)
 }
 
 export default md

@@ -9,7 +9,7 @@ const sidebar = readFileSync(
 
 describe('AppSidebar user menu', () => {
   it('opens the settings modal from the explicit user menu entry', () => {
-    expect(sidebar).toContain('command="settings"')
+    expect(sidebar).toContain("handleMenuCommand('settings')")
     expect(sidebar).toContain("if (command === 'settings')")
     expect(sidebar).toContain('settingsVisible.value = true')
     expect(sidebar).toContain('<SettingsModal v-model="settingsVisible" @closed="restoreSettingsFocus" />')

@@ -54,7 +54,19 @@ function parseToolResult(tool) {
   return payload?.result || payload
 }
 
+const AGENT_LABEL_BY_NAME = {
+  detection: '🔍 检测 Agent',
+  data: '📊 数据 Agent',
+  general: '💬 通用 Agent',
+}
+
+function ensureAgentLabel(tool) {
+  if (tool.agentLabel) return
+  tool.agentLabel = AGENT_LABEL_BY_NAME[tool.agent] || ''
+}
+
 function restoreToolCards(message) {
+  (message.toolCalls || []).forEach(ensureAgentLabel)
   const completedTools = (message.toolCalls || []).filter((item) => item.status !== 'error' && parseToolResult(item))
   const tool = [...completedTools].reverse().find((item) => {
     const result = parseToolResult(item)
