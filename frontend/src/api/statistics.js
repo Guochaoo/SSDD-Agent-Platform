@@ -40,7 +40,14 @@ export function normalizeDashboardResponse(payload) {
 export async function getDashboardApi(params = {}) {
   return normalizeDashboardResponse(
     await request.get("/history/statistics/summary", {
-      params: { days: params.days ?? 30 },
+      params: Object.fromEntries(Object.entries({
+        days: params.days ?? 30,
+        scene_id: params.sceneId,
+        task_type: params.taskType,
+        status: params.status,
+        start_date: params.startDate,
+        end_date: params.endDate,
+      }).filter(([, value]) => value !== '' && value != null)),
     }),
   );
 }

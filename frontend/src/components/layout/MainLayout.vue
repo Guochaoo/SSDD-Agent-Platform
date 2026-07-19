@@ -5,6 +5,7 @@
     <main :class="['layout-content', { 'layout-content--chat': route.name === 'Chat' }]">
       <router-view />
     </main>
+    <TaskCenter />
   </div>
 </template>
 
@@ -12,6 +13,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
+import TaskCenter from '@/components/common/TaskCenter.vue'
 import { useLlmStore } from '@/stores/llm'
 
 const collapsed = ref(false)

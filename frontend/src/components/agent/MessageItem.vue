@@ -37,6 +37,30 @@
         :preview-url="message.detectionPreviewUrl"
       />
 
+      <div v-for="card in message.toolResultCards || []" :key="card.id" class="tool-result-card">
+        <strong>{{ getCardTitle(card.type) }}</strong>
+        <template v-if="card.type === 'statistics'">
+          <div class="tool-result-tags">
+            <el-tag>任务 {{ card.result.total_tasks || 0 }}</el-tag>
+            <el-tag>图片 {{ card.result.total_images || 0 }}</el-tag>
+            <el-tag type="success">缺陷 {{ card.result.total_objects || 0 }}</el-tag>
+          </div>
+        </template>
+        <template v-else-if="card.type === 'history'">
+          <div v-for="task in card.result.tasks || []" :key="task.id" class="tool-result-row">
+            #{{ task.id }} · {{ task.scene_name || task.task_type }} · {{ task.status }}
+          </div>
+          <span v-if="!(card.result.tasks || []).length">暂无检测记录</span>
+        </template>
+        <template v-else-if="card.type === 'knowledge_citations'">
+          <div v-for="(item, index) in card.result.results || []" :key="index" class="tool-result-row">
+            <b>{{ item.document_title || '知识库文档' }}</b>：{{ item.content }}
+          </div>
+          <span v-if="!card.result.found">{{ card.result.message || '未找到相关知识' }}</span>
+        </template>
+        <span v-else>{{ card.result.message || '工具调用已完成' }}</span>
+      </div>
+
       <div v-if="message.videoResult" class="video-result-card">
         <video
           v-if="message.videoResult.annotatedVideoUrl"
@@ -187,6 +211,14 @@ function getToolTag(tool) {
   if (tool.status === 'error') return 'danger'
   return 'warning'
 }
+
+function getCardTitle(type) {
+  return {
+    statistics: '检测统计',
+    history: '检测历史',
+    knowledge_citations: '知识库引用',
+  }[type] || '工具结果'
+}
 </script>
 
 <style lang="scss" scoped>
@@ -228,6 +260,29 @@ function getToolTag(tool) {
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-result-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 13px;
+}
+
+.tool-result-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tool-result-row {
+  margin-top: 8px;
+  line-height: 1.5;
   word-break: break-word;
 }
 

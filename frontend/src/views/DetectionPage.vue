@@ -7,13 +7,12 @@
       <el-button :icon="Refresh" @click="resetCurrentMode">{{ text.resetMode }}</el-button>
     </ModulePageHeader>
 
-    <el-alert
+    <PageErrorAlert
       v-if="pageError"
-      class="page-alert"
-      :title="pageError"
-      type="error"
-      show-icon
+      :message="pageError"
+      :retry-text="text.resetMode"
       closable
+      @retry="resetCurrentMode"
       @close="pageError = ''"
     />
 
@@ -243,9 +242,9 @@
             <el-table-column prop="fileName" label="文件" min-width="220" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
-                <el-tag :type="row.status === 'completed' ? 'success' : 'danger'" size="small">
+                <StatusTag :status="row.status" :label="row.status === 'completed' ? '完成' : '失败'" size="small">
                   {{ row.status === "completed" ? "完成" : "失败" }}
-                </el-tag>
+                </StatusTag>
               </template>
             </el-table-column>
             <el-table-column prop="totalObjects" label="缺陷数" width="100" />
@@ -390,17 +389,21 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
 import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getDetectionModelStatus, getVideoStatusApi } from "@/api/detection";
 import { getModelsApi, getScenesApi } from "@/api/models";
 import { createCameraWs } from "@/utils/cameraWs";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
+import PageErrorAlert from "@/components/common/PageErrorAlert.vue";
+import StatusTag from "@/components/common/StatusTag.vue";
 import DetectionResultPanel from "@/components/detection/DetectionResultPanel.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 import { displayDefectName, displaySceneName } from "@/utils/displayText";
 
 const imageAccept = ".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp";
 const settingsStore = useSettingsStore()
+const route = useRoute()
 const activeMode = ref("single");
 const pageError = ref("");
 const scenes = ref([]);
@@ -880,6 +883,15 @@ async function startCamera() {
         pageError.value = message;
         ElMessage.error(message);
       },
+      onReconnect: (attempt, total) => {
+        cameraConnecting.value = true;
+        pageError.value = `摄像头连接中断，正在重连（${attempt}/${total}）`;
+      },
+      onReconnectFailed: () => {
+        stopCamera();
+        pageError.value = "摄像头连接重试失败，已释放设备，请检查后端后重新开始";
+        ElMessage.error(pageError.value);
+      },
       onClose: () => { cameraConnecting.value = false; },
     });
     cameraWs.connect();
@@ -965,6 +977,13 @@ function resetCurrentMode() {
 onMounted(() => {
   loadOptions();
   refreshModelWarmupStatus();
+  if (route.query.videoTask) {
+    activeMode.value = 'video';
+    videoTaskId.value = String(route.query.videoTask);
+    videoStatus.value = 'processing';
+    videoPollTimer = window.setInterval(pollVideoStatus, 1500);
+    pollVideoStatus();
+  }
 });
 onBeforeUnmount(() => {
   revokePreview();

@@ -29,6 +29,7 @@ class KnowledgeService:
         title: str,
         filename: str,
         file_url: str,
+        object_key: str | None = None,
         file_type: str | None = None,
     ) -> KnowledgeDocument:
         """创建知识文档记录（原文件已上传至 MinIO 之后调用）。
@@ -38,6 +39,7 @@ class KnowledgeService:
             title=title,
             filename=filename,
             file_url=file_url,
+            object_key=object_key,
             file_type=file_type,
             status="processing",
         )
@@ -151,7 +153,7 @@ class KnowledgeService:
         doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
         if not doc:
             raise HTTPException(status_code=404, detail="知识文档不存在")
-        if doc.user_id is None:
+        if doc.user_id is None and not is_superuser:
             raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "内置知识文档只读"})
         if not is_superuser and doc.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权删除该文档")

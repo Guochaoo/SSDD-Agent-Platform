@@ -53,12 +53,18 @@ defineProps({
   align-items: center;
   gap: $spacing-sm;
   padding-top: 4px;
-  white-space: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 @media (max-width: 780px) {
   .module-header {
     flex-direction: column;
+  }
+
+  .module-header__actions {
+    justify-content: flex-start;
+    padding-top: 0;
   }
 }
 </style>

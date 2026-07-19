@@ -1,17 +1,21 @@
+import asyncio
+import os
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
+from uuid import uuid4
 
 from fastapi import FastAPI
-
-# Pydantic v2 reserves "model_" prefix; suppress the harmless lint
-warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
 from fastapi.middleware.cors import CORSMiddleware
 
+# Pydantic v2 reserves "model_" prefix; suppress the harmless lint.
+warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
+
+from app.api.agent import router as agent_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.detection import router as detection_router
-from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.history import router as history_router
 from app.api.knowledge import router as knowledge_router
@@ -21,18 +25,29 @@ from app.api.training import router as training_router
 from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
+from app.core.redis_client import redis_client
 from app.database.session import SessionLocal
 from app.middleware.request_logger import RequestLogMiddleware
-from app.storage.cleanup import retry_pending_cleanups
 from app.services.detection_service import detection_service
-import asyncio
-
+from app.storage.cleanup import retry_pending_cleanups
 
 setup_logging()
 logger = get_logger(__name__)
 
 
-def init_minio():
+def configure_provider_proxy_bypass() -> None:
+    """Bypass a broken system proxy for DashScope only in this backend process."""
+    host = urlparse(settings.OPENAI_BASE_URL).hostname
+    if host != "dashscope.aliyuncs.com":
+        return
+    for name in ("NO_PROXY", "no_proxy"):
+        hosts = [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
+        if host not in hosts:
+            hosts.append(host)
+            os.environ[name] = ",".join(hosts)
+
+
+def init_minio() -> None:
     try:
         from app.storage.minio_client import MinIOClient
 
@@ -42,42 +57,59 @@ def init_minio():
         logger.warning("MinIO initialization failed: %s", exc)
 
 
+def retry_resource_cleanups() -> dict:
+    lock_key = "ssdd:resource-cleanup-lock"
+    lock_token = uuid4().hex
+    if not redis_client.acquire_lock(lock_key, lock_token, settings.CLEANUP_LOCK_TTL_SECONDS):
+        logger.debug("Pending resource cleanup skipped because another worker holds the lock")
+        return {"attempted": 0, "succeeded": 0, "skipped": True}
+    db = SessionLocal()
+    try:
+        result = retry_pending_cleanups(db)
+        if result["attempted"]:
+            logger.info("Pending resource cleanup retried: %s", result)
+        return result
+    finally:
+        db.close()
+        redis_client.release_lock(lock_key, lock_token)
+
+
+async def _cleanup_loop() -> None:
+    """Retry durable deletions while the API process is running."""
+    while True:
+        try:
+            await asyncio.to_thread(retry_resource_cleanups)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Pending resource cleanup retry failed")
+        await asyncio.sleep(settings.CLEANUP_RETRY_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("Starting service")
+    configure_provider_proxy_bypass()
     init_minio()
-    asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
+    warmup_task = asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
     cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield
     finally:
         cleanup_task.cancel()
         await asyncio.gather(cleanup_task, return_exceptions=True)
+        if not warmup_task.done():
+            warmup_task.cancel()
+        await asyncio.gather(warmup_task, return_exceptions=True)
         logger.info("Service stopped")
-
-
-async def _cleanup_loop():
-    """Retry durable object deletions while the API process is running."""
-    while True:
-        try:
-            db = SessionLocal()
-            try:
-                retry_pending_cleanups(db)
-            finally:
-                db.close()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("Resource cleanup retry failed: %s", exc)
-        await asyncio.sleep(settings.CLEANUP_RETRY_INTERVAL_SECONDS)
 
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="YOLOv11 object detection agent platform API",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
@@ -105,12 +137,7 @@ app.include_router(knowledge_router)
 
 @app.get("/")
 def root():
-    return {
-        "message": f"Welcome to {settings.APP_NAME}",
-        "version": settings.APP_VERSION,
-        "docs": "/docs",
-        "redoc": "/redoc",
-    }
+    return {"message": f"Welcome to {settings.APP_NAME}", "version": settings.APP_VERSION, "docs": "/docs", "redoc": "/redoc"}
 
 
 if __name__ == "__main__":

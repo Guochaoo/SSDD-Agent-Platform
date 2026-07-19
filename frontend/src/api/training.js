@@ -70,7 +70,7 @@ export async function startTrainingApi(payload) {
     epochs: payload.epochs,
     img_size: payload.imgSize,
     batch_size: payload.batchSize,
-    device: payload.device ?? "0",
+    device: payload.device ?? "cpu",
     optimizer: payload.optimizer ?? "SGD",
     lr0: payload.lr0 ?? 0.01,
     augment_config: payload.augmentConfig ?? null,
@@ -103,6 +103,10 @@ export function downloadTrainingDataset(datasetPath) {
 
 export function deleteTrainingDataset(datasetPath) {
   return request.delete(`/training/datasets/${encodeURIComponent(datasetPath)}`)
+}
+
+export function updateTrainingDatasetMetadata(datasetPath, payload) {
+  return request.patch(`/training/datasets/${encodeURIComponent(datasetPath)}`, payload)
 }
 
 export function uploadTrainingDataset(file) {

@@ -25,6 +25,7 @@ from app.config.detection import (
     MAX_ZIP_EXTRACTED_SIZE,
 )
 from app.core.logger import get_logger
+from app.core.artifact_access import register_artifact
 from app.entity.db_models import ModelVersion
 from app.database.session import SessionLocal
 from app.services.history_service import history_service
@@ -841,6 +842,7 @@ class DetectionService:
         _cleanup_agent_artifacts(artifact_dir)
         artifact_name = f"annotated_{uuid4().hex}.jpg"
         (artifact_dir / artifact_name).write_bytes(self._encode_annotated_image(result))
+        register_artifact(artifact_name)
         logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
 
         return {

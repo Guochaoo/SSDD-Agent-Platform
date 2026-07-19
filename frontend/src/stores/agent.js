@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { deleteAgentSession, getAgentMessageImage, getAgentSession, listAgentSessions } from '@/api/agent'
+import { deleteAgentSession, getAgentArtifact, getAgentMessageImage, getAgentSession, listAgentSessions } from '@/api/agent'
 
 const SESSION_KEY = 'ssdd_agent_session'
 const SESSIONS_KEY = 'ssdd_agent_sessions'
@@ -44,6 +44,60 @@ function serializeMessage(message) {
     ...serializable
   } = message
   return serializable
+}
+
+function parseToolResult(tool) {
+  let payload = tool.payload ?? tool.result
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload) } catch { return null }
+  }
+  return payload?.result || payload
+}
+
+function restoreToolCards(message) {
+  const completedTools = (message.toolCalls || []).filter((item) => item.status !== 'error' && parseToolResult(item))
+  const tool = [...completedTools].reverse().find((item) => {
+    const result = parseToolResult(item)
+    return result?.detections || result?.results
+  })
+  message.toolResultCards = completedTools
+    .map((item) => ({
+      id: item.id || `${item.name || item.tool_name}-${item.display_order || 0}`,
+      type: item.card_type || 'tool_result',
+      result: parseToolResult(item),
+      references: item.references || {},
+    }))
+    .filter((card) => card.type !== 'detection_result')
+  if (!tool) return message
+  const result = parseToolResult(tool)
+  if (!result || result.error) return message
+  const normalizeObjects = (items = []) => items.map((item, index) => ({
+    id: String(index), className: item.class_name || item.className || 'unknown',
+    classNameCn: item.class_name_cn || item.classNameCn || item.class_name || 'unknown',
+    confidence: Number(item.confidence || 0), bbox: Array.isArray(item.bbox) ? item.bbox.map(Number) : [0, 0, 0, 0], bboxPercent: null,
+  }))
+  if (Array.isArray(result.results)) {
+    message.detectionResult = { taskId: `agent-${message.id}`, totalImages: result.total_images ?? result.results.length, totalObjects: result.total_objects ?? 0, items: result.results.map((item) => ({ fileName: item.filename || item.file_name || '', annotatedImageUrl: item.annotated_image_url || item.annotatedImageUrl || '', totalObjects: item.total_objects ?? item.detections?.length ?? 0, inferenceTimeMs: Number(item.inference_time || 0), objects: normalizeObjects(item.detections), error: item.error || null })) }
+  } else {
+    const detections = result.detections || []
+    message.detectionResult = { taskId: `agent-${message.id}`, fileName: result.filename || '', originalImageUrl: result.image_url || result.originalImageUrl || '', annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '', totalObjects: result.total_objects ?? result.totalObjects ?? detections.length, totalImages: result.total_images ?? 1, inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0), objects: normalizeObjects(detections) }
+  }
+  return message
+}
+
+function artifactFilename(url) {
+  const match = typeof url === 'string' && url.match(/^\/api\/agent\/artifacts\/([^/?]+)$/)
+  return match ? match[1] : ''
+}
+
+async function hydrateArtifactUrl(url) {
+  const filename = artifactFilename(url)
+  if (!filename) return url || ''
+  try {
+    return URL.createObjectURL(await getAgentArtifact(filename))
+  } catch {
+    return ''
+  }
 }
 
 export const useAgentStore = defineStore('agent', {
@@ -195,10 +249,16 @@ export const useAgentStore = defineStore('agent', {
     },
 
     stopStreaming() {
+      const wasStreaming = this.isStreaming
       this.abortController?.()
       this.abortController = null
       this.isStreaming = false
       this.connectionStatus = 'idle'
+      const lastMessage = this.messages[this.messages.length - 1]
+      if (wasStreaming && lastMessage?.role === 'assistant' && lastMessage.status === 'streaming') {
+        lastMessage.status = 'cancelled'
+        this.saveSession()
+      }
     },
 
     /**
@@ -274,26 +334,44 @@ export const useAgentStore = defineStore('agent', {
       this.persistCurrentSessionId()
       session.title = remote.title
       session.messages = remote.messages || []
-      this.messages = await Promise.all(session.messages.map(async (message) => ({
-        id: String(message.id),
-        role: message.role,
-        content: message.content || '',
-        imagePreviewUrls: (await Promise.all(
-          (message.image_urls || (message.image_url ? [message.image_url] : [])).map(async (_, index) => {
-            try {
-              const blob = await getAgentMessageImage(session.id, message.id, index)
-              return URL.createObjectURL(blob)
-            } catch {
-              return ''
-            }
-          }),
-        )).filter(Boolean),
-        toolCalls: message.tool_calls || [],
-        createdAt: message.created_at,
-      })))
+      this.messages = await Promise.all(session.messages.map(async (message) => {
+        const restored = restoreToolCards({
+          id: String(message.id),
+          role: message.role,
+          content: message.content || '',
+          imagePreviewUrls: (await Promise.all(
+            (message.image_urls || (message.image_url ? [message.image_url] : [])).map(async (_, index) => {
+              try {
+                const blob = await getAgentMessageImage(session.id, message.id, index)
+                return URL.createObjectURL(blob)
+              } catch {
+                return ''
+              }
+            }),
+          )).filter(Boolean),
+          toolCalls: message.tool_calls || [],
+          createdAt: message.created_at,
+        })
+        await this.hydrateDetectionImages(restored)
+        return restored
+      }))
       this.currentToolCall = null
       this.errorMessage = ''
       this.clearImages()
+    },
+
+    async hydrateDetectionImages(message) {
+      const result = message?.detectionResult
+      if (!result) return
+      if (Array.isArray(result.items)) {
+        await Promise.all(result.items.map(async (item) => {
+          item.annotatedImageUrl = await hydrateArtifactUrl(item.annotatedImageUrl)
+          item.originalImageUrl = await hydrateArtifactUrl(item.originalImageUrl)
+        }))
+      } else {
+        result.annotatedImageUrl = await hydrateArtifactUrl(result.annotatedImageUrl)
+        result.originalImageUrl = await hydrateArtifactUrl(result.originalImageUrl)
+      }
     },
 
     async deleteSession(id) {

@@ -20,3 +20,17 @@ export function getApiErrorMessage(error, fallback = "请求失败，请稍后�
   if (!error?.response) return "无法连接后端服务，请确认服务已启动";
   return message || (typeof detail === 'string' ? detail : fallback);
 }
+
+export function getApiErrorInfo(error, fallback) {
+  const status = error?.response?.status
+  const detail = error?.response?.data?.detail
+  const code = error?.response?.data?.error_code
+    || error?.response?.data?.code
+    || detail?.error_code
+    || detail?.code
+    || (error?.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : null)
+    || (!error?.response ? 'NETWORK_ERROR' : `HTTP_${status}`)
+  const requestId = error?.response?.data?.request_id || error?.response?.headers?.['x-request-id']
+  const message = getApiErrorMessage(error, fallback)
+  return { code, message: requestId ? `${message} (Request ID: ${requestId})` : message, requestId }
+}

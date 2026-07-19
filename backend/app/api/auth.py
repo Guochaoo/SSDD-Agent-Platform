@@ -7,13 +7,17 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.database.session import get_db
+from app.entity.db_models import (
+    ChatSession, DetectionResult, DetectionTask, KnowledgeDocument, ModelVersion,
+    TrainingDataset, TrainingTask, User,
+)
 from app.entity.schemas import (
     TokenResponse,
     UserLogin,
@@ -254,6 +258,69 @@ async def confirm_password_reset(
     return {"message": "密码重置成功，请使用新密码登录"}
 
 
+@router.get("/users")
+async def list_users(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Administrator-only user roster with roles and account state."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "需要管理员权限"})
+    users, total = user_service.list_users(db, page, page_size)
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+        "items": [
+            UserResponse(
+                id=user.id, username=user.username, email=user.email, phone=user.phone,
+                avatar=user.avatar, is_active=user.is_active, is_superuser=user.is_superuser,
+                roles=user_service.get_user_roles(db, user), last_login_at=user.last_login_at,
+                created_at=user.created_at,
+            )
+            for user in users
+        ],
+    }
+
+
+@router.get("/resource-status")
+def get_resource_status(
+    http_request: Request,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Administrator overview of owned resources, task state, and pending cleanup."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "需要管理员权限"})
+    cleanup_pending = {
+        "models": db.query(ModelVersion).filter(ModelVersion.cleanup_pending.is_(True)).count(),
+        "detection_results": db.query(DetectionResult).filter(DetectionResult.cleanup_pending.is_(True)).count(),
+        "knowledge_documents": db.query(KnowledgeDocument).filter(KnowledgeDocument.cleanup_pending.is_(True)).count(),
+    }
+    operation_log_service.record(
+        db, user=current_user, module="system", action="view_resource_status",
+        description="查看资源、任务与清理状态总览", request=http_request,
+    )
+    return {
+        "resources": {
+            "users": db.query(User).count(),
+            "datasets": db.query(TrainingDataset).count(),
+            "models": db.query(ModelVersion).count(),
+            "knowledge_documents": db.query(KnowledgeDocument).count(),
+            "sessions": db.query(ChatSession).count(),
+        },
+        "tasks": {
+            "detection": {status: db.query(DetectionTask).filter(DetectionTask.status == status).count() for status in ("pending", "processing", "completed", "failed")},
+            "training": {status: db.query(TrainingTask).filter(TrainingTask.status == status).count() for status in ("pending", "running", "completed", "failed", "cancelled")},
+        },
+        "cleanup_pending": cleanup_pending,
+        "cleanup_pending_total": sum(cleanup_pending.values()),
+    }
+
+
 @router.post("/users/{user_id}/deactivate")
 async def deactivate_user(
     user_id: int,
@@ -264,6 +331,8 @@ async def deactivate_user(
     """管理员禁用某个用户账号"""
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail={"code": "SELF_PROTECTION", "message": "不能禁用当前登录的管理员"})
     user_service.set_active(db, user_id, is_active=False)
     operation_log_service.record(
         db,
@@ -312,6 +381,8 @@ async def delete_user(
     """管理员删除用户，事务化级联清理其全部关联数据（对应任务文档步骤 13）"""
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail={"code": "SELF_PROTECTION", "message": "不能删除当前登录的管理员"})
     # 先记录日志（此时 user 还没被删，target_id 才能引用到）
     operation_log_service.record(
         db,

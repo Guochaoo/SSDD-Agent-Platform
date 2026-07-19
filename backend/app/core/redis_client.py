@@ -56,6 +56,23 @@ class RedisClient:
         with self._memory_lock:
             self._memory_cache.pop(key, None)
 
+    def acquire_lock(self, key: str, token: str, ttl: int) -> bool:
+        """Acquire a Redis-only distributed lock; never fall back to process memory."""
+        try:
+            return bool(self.client.set(key, token, nx=True, ex=ttl))
+        except redis.RedisError:
+            return False
+
+    def release_lock(self, key: str, token: str) -> None:
+        """Release only the lock held by this caller, preserving a renewed lock."""
+        try:
+            self.client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0",
+                1, key, token,
+            )
+        except redis.RedisError:
+            pass
+
     # ── 视频检测进度：video:progress:{task_id} ───────────
 
     def set_video_progress(self, task_id: int, current_frame: int, total_frames: int, ttl: int = DEFAULT_TTL) -> None:

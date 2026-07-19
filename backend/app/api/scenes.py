@@ -177,8 +177,10 @@ def set_default_model(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """切换某场景的默认模型版本，所有已登录用户均可操作。"""
-    model = scene_service.set_default_model(db, scene_id, model_version_id)
+    """切换当前用户可访问的场景模型版本。"""
+    model = scene_service.set_default_model(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
+    )
     operation_log_service.record(
         db, user=current_user, module="training", action="set_default_model",
         target_type="model", target_id=str(model_version_id),
@@ -199,3 +201,15 @@ def delete_model_version(
         db, scene_id, model_version_id, current_user.id, current_user.is_superuser
     )
     return {"id": model.id, "status": model.status}
+
+
+@router.post("/{scene_id}/models/{model_version_id}/retry-cleanup", response_model=ModelVersionResponse)
+def retry_model_cleanup(
+    scene_id: int,
+    model_version_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return scene_service.retry_model_cleanup(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
+    )

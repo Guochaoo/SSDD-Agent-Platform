@@ -7,14 +7,13 @@
       </el-button>
     </ModulePageHeader>
 
-    <el-alert
+    <PageErrorAlert
       v-if="pageError"
-      class="page-alert"
-      :title="pageError"
-      type="error"
-      show-icon
+      :message="pageError.message"
+      :retry-text="text.retry"
       closable
-      @close="pageError = ''"
+      @retry="retryPageAction"
+      @close="pageError = null"
     />
 
     <el-card class="section-card" shadow="never">
@@ -67,9 +66,9 @@
         </el-table-column>
         <el-table-column :label="text.status" min-width="96">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">
+            <StatusTag :status="row.status" :label="statusText(row.status)" size="small">
               {{ statusText(row.status) }}
-            </el-tag>
+            </StatusTag>
           </template>
         </el-table-column>
         <el-table-column :label="text.createdAt" min-width="168">
@@ -92,6 +91,15 @@
               {{ text.stop }}
             </el-button>
             <el-button
+              v-if="row.status === 'failed'"
+              size="small"
+              type="warning"
+              text
+              @click.stop="retryTask(row)"
+            >
+              {{ text.retry }}
+            </el-button>
+            <el-button
               v-if="isDeletable(row)"
               size="small"
               type="danger"
@@ -110,9 +118,9 @@
         <div class="card-header monitor-header">
           <div>
             <span class="card-title">{{ text.trainingMonitor }} - {{ text.task }} {{ selectedTask.task_uuid }}</span>
-            <el-tag :type="statusType(selectedTask.status)" size="small">
+            <StatusTag :status="selectedTask.status" :label="statusText(selectedTask.status)" size="small">
               {{ statusText(selectedTask.status) }}
-            </el-tag>
+            </StatusTag>
           </div>
           <div class="monitor-info">
             <span>{{ text.model }}: {{ selectedTask.model_name }}</span>
@@ -123,14 +131,20 @@
         </div>
       </template>
 
-      <el-alert
-        v-if="monitorError"
-        class="monitor-alert"
-        :title="monitorError"
-        type="error"
-        show-icon
-        :closable="false"
+    <PageErrorAlert
+      v-if="monitorError"
+      class="monitor-alert"
+      :message="monitorError.message"
+      :retry-text="text.retry"
+      @retry="retryMonitorAction"
       />
+    <PageErrorAlert
+      v-if="selectedTask.status === 'failed' && selectedTask.error_message"
+      class="monitor-alert"
+      :message="selectedTask.error_message"
+      :retry-text="text.retry"
+      @retry="retryTask(selectedTask)"
+    />
 
       <el-progress
         class="monitor-progress"
@@ -482,7 +496,9 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
+import { useTaskStore } from '@/stores/tasks'
 import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -493,7 +509,6 @@ import {
   getTrainingDatasets,
   getTrainingMetrics,
   getTrainingStatus,
-  getTrainingTasks,
   predictTrainingImage,
   startTraining,
   stopTraining,
@@ -502,11 +517,14 @@ import {
 } from '@/api/training'
 import { getScenesApi } from '@/api/models'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
-import { getApiErrorMessage } from '@/utils/apiError'
+import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
+import StatusTag from '@/components/common/StatusTag.vue'
+import { getApiErrorInfo } from '@/utils/apiError'
 
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 const settingsStore = useSettingsStore()
+const taskStore = useTaskStore()
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Model Training & Monitoring',
@@ -560,6 +578,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   dateLocale: 'en-US',
   fetchTasksFailed: 'Failed to load training tasks',
   fetchDatasetsFailed: 'Failed to load training datasets',
+  retry: 'Retry',
 } : {
   title: '模型训练与监控',
   description: '创建 YOLOv11 训练任务，实时查看训练进度并完成模型评估与导出。',
@@ -612,12 +631,12 @@ const text = computed(() => settingsStore.isEnglish ? {
   dateLocale: 'zh-CN',
   fetchTasksFailed: '训练任务列表加载失败',
   fetchDatasetsFailed: '训练数据集加载失败',
+  retry: '重试',
 })
 
-const taskList = ref([])
-const loadingTasks = ref(false)
-const pageError = ref('')
-const monitorError = ref('')
+const { trainingTasks: taskList, loadingTrainingTasks: loadingTasks } = storeToRefs(taskStore)
+const pageError = ref(null)
+const monitorError = ref(null)
 const selectedTask = ref(null)
 const showCreateDialog = ref(false)
 const creating = ref(false)
@@ -734,16 +753,6 @@ const annotatedImageSrc = computed(() => {
   return image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`
 })
 
-function statusType(status) {
-  return {
-    pending: 'info',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger',
-    cancelled: 'info',
-  }[status] || 'info'
-}
-
 function statusText(status) {
   return {
     pending: text.value.pending,
@@ -822,19 +831,43 @@ function normalizeTaskStatusResponse(response) {
   }
 }
 
+function reportPageError(error, fallback, retry) {
+  const { code, message } = getApiErrorInfo(error, fallback)
+  pageError.value = { message: `[${code}] ${message}`, retry }
+}
+
+function reportMonitorError(error, fallback) {
+  const { code, message } = getApiErrorInfo(error, fallback)
+  monitorError.value = { message: `[${code}] ${message}` }
+}
+
+async function retryPageAction() {
+  const retry = pageError.value?.retry
+  pageError.value = null
+  await retry?.()
+}
+
+async function retryMonitorAction() {
+  monitorError.value = null
+  await fetchMetrics()
+}
+
 async function fetchTasks() {
-  loadingTasks.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
-    scenes.value = await getScenesApi()
+    const [loadedScenes] = await Promise.all([
+      getScenesApi(),
+      taskStore.fetchTrainingTasks(),
+    ])
+    scenes.value = loadedScenes
     if (!trainForm.value.scene_id) trainForm.value.scene_id = Number(scenes.value[0]?.id) || null
-    const response = await getTrainingTasks()
-    taskList.value = response.items || []
+    const selected = taskList.value.find((task) => task.id === selectedTask.value?.id)
+      || taskStore.selectedTrainingTask
+    if (selectedTask.value && selected) selectedTask.value = { ...selectedTask.value, ...selected }
+    return selected
   } catch (error) {
     console.error('获取训练任务列表失败', error)
-    pageError.value = getApiErrorMessage(error, text.value.fetchTasksFailed)
-  } finally {
-    loadingTasks.value = false
+    reportPageError(error, text.value.fetchTasksFailed, fetchTasks)
   }
 }
 
@@ -851,14 +884,14 @@ async function fetchDatasets() {
     }
   } catch (error) {
     console.error('获取训练数据集失败', error)
-    pageError.value = getApiErrorMessage(error, text.value.fetchDatasetsFailed)
+    reportPageError(error, text.value.fetchDatasetsFailed, fetchDatasets)
   }
 }
 
 async function handleDatasetUpload(uploadFile) {
   if (!uploadFile.raw) return
   uploadingDataset.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const dataset = await uploadTrainingDataset(uploadFile.raw)
     await fetchDatasets()
@@ -866,7 +899,7 @@ async function handleDatasetUpload(uploadFile) {
     ElMessage.success('数据集上传并校验通过')
   } catch (error) {
     console.error('上传训练数据集失败', error)
-    pageError.value = getApiErrorMessage(error, '训练数据集上传失败')
+    reportPageError(error, '训练数据集上传失败', () => handleDatasetUpload(uploadFile))
   } finally {
     uploadingDataset.value = false
   }
@@ -875,6 +908,7 @@ async function handleDatasetUpload(uploadFile) {
 async function selectTask(task) {
   stopPolling()
   selectedTask.value = { ...task }
+  taskStore.selectTrainingTask(task.id)
   evalReport.value = null
   predictResult.value = null
 
@@ -909,10 +943,7 @@ async function fetchMetrics() {
 
     if (taskStatus) {
       selectedTask.value = { ...selectedTask.value, ...taskStatus }
-      const index = taskList.value.findIndex((task) => task.id === taskStatus.id)
-      if (index !== -1) {
-        taskList.value[index] = { ...taskList.value[index], ...taskStatus }
-      }
+      taskStore.upsertTrainingTask(taskStatus)
     }
 
     updateCharts(metrics)
@@ -920,10 +951,10 @@ async function fetchMetrics() {
     if (!RUNNING_STATUSES.has(selectedTask.value.status)) {
       stopPolling()
     }
-    monitorError.value = ''
+    monitorError.value = null
   } catch (error) {
     console.error('获取训练监控数据失败', error)
-    monitorError.value = getApiErrorMessage(error, '训练监控数据加载失败')
+    reportMonitorError(error, '训练监控数据加载失败')
   }
 }
 
@@ -1010,7 +1041,7 @@ async function createTask() {
     return
   }
   creating.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const response = await startTraining(trainForm.value)
     ElMessage.success(`训练任务已创建：${response.task_uuid}`)
@@ -1020,14 +1051,41 @@ async function createTask() {
     if (task) await selectTask(task)
   } catch (error) {
     console.error('创建训练任务失败', error)
-    pageError.value = getApiErrorMessage(error, '训练任务创建失败')
+    reportPageError(error, '训练任务创建失败', createTask)
+  } finally {
+    creating.value = false
+  }
+}
+
+async function retryTask(task) {
+  creating.value = true
+  pageError.value = null
+  try {
+    const response = await startTraining({
+      scene_id: task.scene_id,
+      dataset_path: task.dataset_name || task.dataset_path,
+      model_name: task.model_name,
+      epochs: task.epochs,
+      batch_size: task.batch_size,
+      img_size: task.img_size,
+      device: task.device,
+      optimizer: task.optimizer || 'SGD',
+      lr0: task.lr0 || 0.01,
+      augment_config: task.augment_config || null,
+    })
+    ElMessage.success(`训练任务已重新创建：${response.task_uuid}`)
+    await fetchTasks()
+    const retriedTask = taskList.value.find((item) => item.id === response.id)
+    if (retriedTask) await selectTask(retriedTask)
+  } catch (error) {
+    reportPageError(error, '训练任务重试失败', () => retryTask(task))
   } finally {
     creating.value = false
   }
 }
 
 async function stopTask(taskId) {
-  pageError.value = ''
+  pageError.value = null
   try {
     await ElMessageBox.confirm('确定要停止当前训练任务吗？训练进度将被保留。', '确认停止', {
       type: 'warning',
@@ -1039,7 +1097,7 @@ async function stopTask(taskId) {
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       console.error('停止训练任务失败', error)
-      pageError.value = getApiErrorMessage(error, '训练任务停止失败')
+      reportPageError(error, '训练任务停止失败', () => stopTask(taskId))
     }
   }
 }
@@ -1055,6 +1113,7 @@ async function deleteTask(task) {
     if (selectedTask.value?.id === task.id) {
       stopPolling()
       selectedTask.value = null
+      taskStore.clearSelectedTrainingTask()
       evalReport.value = null
       predictResult.value = null
     }
@@ -1062,7 +1121,7 @@ async function deleteTask(task) {
     ElMessage.success('Training history task deleted')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      pageError.value = getApiErrorMessage(error, 'Failed to delete training task')
+      reportPageError(error, '删除训练任务失败', () => deleteTask(task))
     }
   }
 }
@@ -1070,7 +1129,7 @@ async function deleteTask(task) {
 async function validateModel() {
   if (!selectedTask.value) return
   validating.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const response = await validateTrainingModel(selectedTask.value.id, {
       split: 'val',
@@ -1083,7 +1142,7 @@ async function validateModel() {
     ElMessage.success(`评估完成：mAP@50 ${formatPercent(response.overall?.map50)}`)
   } catch (error) {
     console.error('模型评估失败', error)
-    pageError.value = getApiErrorMessage(error, '模型评估失败')
+    reportPageError(error, '模型评估失败', validateModel)
   } finally {
     validating.value = false
   }
@@ -1126,7 +1185,7 @@ function renderEvaluationCharts(visualization) {
 async function exportModel() {
   if (!selectedTask.value) return
   exporting.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const response = await exportTrainingModel(selectedTask.value.id, {
       ...exportForm.value,
@@ -1137,7 +1196,7 @@ async function exportModel() {
     showExportDialog.value = false
   } catch (error) {
     console.error('模型导出失败', error)
-    pageError.value = getApiErrorMessage(error, '模型导出失败')
+    reportPageError(error, '模型导出失败', exportModel)
   } finally {
     exporting.value = false
   }
@@ -1146,14 +1205,14 @@ async function exportModel() {
 async function downloadModel() {
   if (!selectedTask.value) return
   downloading.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const blob = await downloadTrainingModel(selectedTask.value.id)
     triggerBlobDownload(blob, `best_${selectedTask.value.task_uuid}.pt`)
     ElMessage.success('模型权重下载已开始')
   } catch (error) {
     console.error('模型权重下载失败', error)
-    pageError.value = getApiErrorMessage(error, '模型权重下载失败')
+    reportPageError(error, '模型权重下载失败', downloadModel)
   } finally {
     downloading.value = false
   }
@@ -1190,7 +1249,7 @@ function handlePredictFileChange(file) {
 async function runPredict() {
   if (!predictFile.value || !selectedTask.value) return
   predicting.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const formData = new FormData()
     formData.append('file', predictFile.value)
@@ -1204,7 +1263,7 @@ async function runPredict() {
     ElMessage.success(`检测完成：发现 ${predictResult.value.total_objects} 个目标`)
   } catch (error) {
     console.error('测试图验证失败', error)
-    pageError.value = getApiErrorMessage(error, '测试图验证失败')
+    reportPageError(error, '测试图验证失败', runPredict)
   } finally {
     predicting.value = false
   }
@@ -1246,7 +1305,9 @@ function resizeCharts() {
 }
 
 onMounted(() => {
-  fetchTasks()
+  fetchTasks().then((restoredTask) => {
+    if (restoredTask && !selectedTask.value) selectTask(restoredTask)
+  })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)
 })
