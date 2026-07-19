@@ -8,18 +8,12 @@
       <el-button :icon="Refresh" :loading="loading" @click="loadDashboard">{{ text.refresh }}</el-button>
     </ModulePageHeader>
 
-    <el-alert
+    <PageErrorAlert
       v-if="pageError"
-      class="page-alert"
-      :title="pageError"
-      type="error"
-      show-icon
-      :closable="false"
-    >
-      <template #default>
-        <el-button link type="primary" @click="loadDashboard">{{ text.reload }}</el-button>
-      </template>
-    </el-alert>
+      :message="pageError"
+      :retry-text="text.reload"
+      @retry="loadDashboard"
+    />
 
     <section class="filter-bar">
       <div class="filter-bar__title"><el-icon><Filter /></el-icon><span>{{ text.period }}</span></div>
@@ -29,12 +23,17 @@
         <el-option :label="text.lastDays(90)" :value="90" />
         <el-option :label="text.lastDays(365)" :value="365" />
       </el-select>
+      <el-select v-model="filters.sceneId" clearable :placeholder="text.allScenes"><el-option v-for="scene in scenes" :key="scene.id" :label="scene.displayName || scene.name" :value="scene.id" /></el-select>
+      <el-select v-model="filters.taskType" clearable :placeholder="text.allTypes"><el-option v-for="item in taskTypeOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+      <el-select v-model="filters.status" clearable :placeholder="text.completedOnly"><el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+      <el-date-picker v-model="filters.dateRange" type="daterange" value-format="YYYY-MM-DD" :start-placeholder="text.startDate" :end-placeholder="text.endDate" />
       <el-button type="primary" @click="loadDashboard">{{ text.apply }}</el-button>
       <span class="filter-hint">{{ text.rangeHint }}</span>
     </section>
 
     <div class="stats-grid">
       <StatCard :label="text.totalTasks" :value="dashboard.totals.totalTasks" :unit="text.times" :icon="DocumentChecked" :helper="text.totalTasksHelp" />
+      <StatCard label="训练任务" :value="dashboard.totals.trainingTasks" unit="次" :icon="DocumentChecked" accent="#0ea5e9" helper="当前周期内的训练任务" />
       <StatCard :label="text.totalImages" :value="dashboard.totals.totalImages" :unit="text.images" :icon="Picture" accent="#7c3aed" :helper="text.totalImagesHelp" />
       <StatCard :label="text.totalObjects" :value="dashboard.totals.totalObjects" :unit="text.objects" :icon="WarningFilled" accent="#f97316" :helper="text.totalObjectsHelp" />
       <StatCard :label="text.avgTime" :value="dashboard.totals.avgInferenceTimeMs" unit="ms" :decimals="1" :icon="Odometer" accent="#10b981" :helper="text.avgTimeHelp" />
@@ -44,7 +43,8 @@
       <EChartPanel :title="text.trendTitle" :subtitle="text.trendSubtitle" :option="trendOption" :loading="loading" :empty="dashboard.dailyTrend.length === 0" height="330px" />
       <EChartPanel :title="text.classTitle" :subtitle="text.classSubtitle" :option="classOption" :loading="loading" :empty="dashboard.classDistribution.length === 0" height="330px" />
     </div>
-    <div class="dashboard-grid dashboard-grid--single">
+    <div class="dashboard-grid dashboard-grid--primary">
+      <EChartPanel title="每日训练趋势" subtitle="按创建日期统计训练任务" :option="trainingTrendOption" :loading="loading" :empty="dashboard.trainingDailyTrend.length === 0" height="300px" />
       <EChartPanel :title="text.sceneTitle" :subtitle="text.sceneSubtitle" :option="sceneOption" :loading="loading" :empty="dashboard.sceneDistribution.length === 0" height="300px" />
     </div>
   </div>
@@ -55,19 +55,24 @@ import { DocumentChecked, Filter, Odometer, Picture, Refresh, WarningFilled } fr
 import { computed, onMounted, reactive, ref } from "vue";
 import { useSettingsStore } from '@/stores/settings'
 import { getDashboardApi } from "@/api/statistics";
+import { HISTORY_TASK_TYPE_OPTIONS } from "@/api/history";
+import { getScenesApi } from "@/api/models";
 import EChartPanel from "@/components/charts/EChartPanel.vue";
 import StatCard from "@/components/charts/StatCard.vue";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
+import PageErrorAlert from "@/components/common/PageErrorAlert.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 
 const loading = ref(false);
 const settingsStore = useSettingsStore()
 const pageError = ref("");
-const filters = reactive({ days: 30 });
+const filters = reactive({ days: 30, sceneId: '', taskType: '', status: '', dateRange: [] });
+const scenes = ref([])
 const dashboard = reactive({
   totals: { totalTasks: 0, totalImages: 0, totalObjects: 0, avgInferenceTimeMs: 0 },
   classDistribution: [],
   dailyTrend: [],
+  trainingDailyTrend: [],
   sceneDistribution: [],
   updatedAt: "",
 });
@@ -80,6 +85,11 @@ const text = computed(() => settingsStore.isEnglish ? {
   refresh: 'Refresh',
   reload: 'Reload',
   period: 'Period',
+  allScenes: 'All scenes',
+  allTypes: 'All task types',
+  completedOnly: 'Completed only',
+  startDate: 'Start date',
+  endDate: 'End date',
   lastDays: (days) => `Last ${days} days`,
   apply: 'Apply',
   rangeHint: 'Statistics are provided by `/history/statistics/summary`.',
@@ -110,6 +120,11 @@ const text = computed(() => settingsStore.isEnglish ? {
   refresh: '刷新',
   reload: '重新加载',
   period: '统计周期',
+  allScenes: '全部场景',
+  allTypes: '全部任务类型',
+  completedOnly: '仅已完成任务',
+  startDate: '开始日期',
+  endDate: '结束日期',
   lastDays: (days) => `最近 ${days} 天`,
   apply: '应用',
   rangeHint: '统计范围由后端 `/history/statistics/summary` 接口提供',
@@ -135,6 +150,18 @@ const text = computed(() => settingsStore.isEnglish ? {
   loadFailed: '看板数据加载失败',
 })
 
+const taskTypeOptions = computed(() => HISTORY_TASK_TYPE_OPTIONS.map((item) => ({
+  ...item,
+  label: settingsStore.isEnglish ? item.value : item.label,
+})))
+const statusOptions = computed(() => settingsStore.isEnglish ? [
+  { value: 'pending', label: 'Pending' }, { value: 'processing', label: 'Processing' },
+  { value: 'completed', label: 'Completed' }, { value: 'failed', label: 'Failed' },
+] : [
+  { value: 'pending', label: '等待中' }, { value: 'processing', label: '处理中' },
+  { value: 'completed', label: '已完成' }, { value: 'failed', label: '失败' },
+])
+
 const trendOption = computed(() => ({
   tooltip: { trigger: "axis" },
   color: ["#2563eb"],
@@ -151,6 +178,15 @@ const classOption = computed(() => ({
   series: [{ type: "pie", radius: ["43%", "70%"], center: ["38%", "53%"], avoidLabelOverlap: true, itemStyle: { borderColor: "#fff", borderWidth: 3 }, label: { show: false }, emphasis: { label: { show: true, fontSize: 15, fontWeight: "bold" } }, data: dashboard.classDistribution }],
 }));
 
+const trainingTrendOption = computed(() => ({
+  tooltip: { trigger: 'axis' },
+  color: ['#0ea5e9'],
+  grid: { left: 52, right: 18, top: 28, bottom: 34 },
+  xAxis: { type: 'category', data: dashboard.trainingDailyTrend.map((item) => item.date), ...axisStyle },
+  yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#edf0f5' } }, ...axisStyle },
+  series: [{ name: '训练任务', type: 'bar', data: dashboard.trainingDailyTrend.map((item) => item.tasks) }],
+}));
+
 const sceneOption = computed(() => ({
   tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
   color: ["#7c3aed"],
@@ -164,7 +200,14 @@ async function loadDashboard() {
   loading.value = true;
   pageError.value = "";
   try {
-    const data = await getDashboardApi({ days: filters.days });
+    const data = await getDashboardApi({
+      days: filters.days,
+      sceneId: filters.sceneId,
+      taskType: filters.taskType,
+      status: filters.status,
+      startDate: filters.dateRange?.[0],
+      endDate: filters.dateRange?.[1],
+    });
     Object.assign(dashboard, data, { updatedAt: new Date().toLocaleString(settingsStore.isEnglish ? "en-US" : "zh-CN", { hour12: false }) });
   } catch (error) {
     pageError.value = getApiErrorMessage(error, text.value.loadFailed);
@@ -173,7 +216,10 @@ async function loadDashboard() {
   }
 }
 
-onMounted(loadDashboard);
+onMounted(async () => {
+  try { scenes.value = await getScenesApi() } catch { scenes.value = [] }
+  await loadDashboard()
+});
 </script>
 
 <style lang="scss" scoped>

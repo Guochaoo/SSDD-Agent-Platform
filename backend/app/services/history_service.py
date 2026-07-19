@@ -3,13 +3,13 @@
 处理检测任务的创建、状态更新、详情查询、分页历史、筛选、删除和统计
 对应任务文档步骤 9。检测本身（跑 YOLO 推理）由后端 B 负责，这里只负责数据落库和查询。
 """
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.entity.db_models import DetectionTask, DetectionResult, DetectionScene
+from app.entity.db_models import DetectionTask, DetectionResult, DetectionScene, TrainingTask
 from app.storage.minio_client import MinIOClient
 
 
@@ -103,6 +103,24 @@ class HistoryService:
     # ── 查询 ─────────────────────────────────────────────
 
     @staticmethod
+    def _apply_task_filters(query, user_id, is_superuser=False, scene_id=None, task_type=None,
+                            status=None, start_date=None, end_date=None):
+        """Apply the shared history/dashboard visibility and filter contract."""
+        if not is_superuser:
+            query = query.filter(DetectionTask.user_id == user_id)
+        if scene_id is not None:
+            query = query.filter(DetectionTask.scene_id == scene_id)
+        if task_type:
+            query = query.filter(DetectionTask.task_type == task_type)
+        if status:
+            query = query.filter(DetectionTask.status == status)
+        if start_date:
+            query = query.filter(DetectionTask.created_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            query = query.filter(DetectionTask.created_at < datetime.combine(end_date + timedelta(days=1), time.min))
+        return query
+
+    @staticmethod
     def _get_task_or_404(db: Session, task_id: int) -> DetectionTask:
         task = db.query(DetectionTask).filter(DetectionTask.id == task_id).first()
         if not task:
@@ -125,19 +143,16 @@ class HistoryService:
         scene_id: int | None = None,
         task_type: str | None = None,
         status: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[DetectionTask], int]:
         """分页历史查询，支持按场景/类型/状态筛选；非管理员只能看到自己的记录"""
-        query = db.query(DetectionTask)
-        if not is_superuser:
-            query = query.filter(DetectionTask.user_id == user_id)
-        if scene_id:
-            query = query.filter(DetectionTask.scene_id == scene_id)
-        if task_type:
-            query = query.filter(DetectionTask.task_type == task_type)
-        if status:
-            query = query.filter(DetectionTask.status == status)
+        query = HistoryService._apply_task_filters(
+            db.query(DetectionTask), user_id, is_superuser, scene_id, task_type,
+            status, start_date, end_date,
+        )
 
         total = query.count()
         items = (
@@ -181,11 +196,20 @@ class HistoryService:
     # ── 统计 ─────────────────────────────────────────────
 
     @staticmethod
-    def get_statistics(db: Session, user_id: int, is_superuser: bool = False, days: int = 30) -> dict:
-        """检测统计：总任务数/图像数/目标数、平均耗时、类别分布、每日趋势、场景分布"""
-        query = db.query(DetectionTask).filter(DetectionTask.status == "completed")
-        if not is_superuser:
-            query = query.filter(DetectionTask.user_id == user_id)
+    def get_statistics(db: Session, user_id: int, is_superuser: bool = False, days: int = 30,
+                       scene_id: int | None = None, task_type: str | None = None,
+                       status: str | None = None, start_date: date | None = None,
+                       end_date: date | None = None) -> dict:
+        """Statistics use history filters; absent status means completed tasks only."""
+        if not start_date and not end_date:
+            start_date = (datetime.now() - timedelta(days=days - 1)).date()
+        start_date = start_date or end_date
+        end_date = end_date or date.today()
+        effective_status = status or "completed"
+        query = HistoryService._apply_task_filters(
+            db.query(DetectionTask), user_id, is_superuser, scene_id, task_type,
+            effective_status, start_date, end_date,
+        )
 
         total_tasks = query.count()
         total_images = query.with_entities(func.coalesce(func.sum(DetectionTask.total_images), 0)).scalar()
@@ -193,29 +217,40 @@ class HistoryService:
         avg_time = query.with_entities(func.coalesce(func.avg(DetectionTask.total_inference_time), 0)).scalar()
 
         # 类别分布：基于 detection_results 按 class_name 聚合
-        result_query = db.query(DetectionResult.class_name, func.count(DetectionResult.id)).join(
-            DetectionTask, DetectionResult.task_id == DetectionTask.id
+        result_query = HistoryService._apply_task_filters(
+            db.query(DetectionResult.class_name, func.count(DetectionResult.id)).join(
+                DetectionTask, DetectionResult.task_id == DetectionTask.id
+            ),
+            user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
         )
-        if not is_superuser:
-            result_query = result_query.filter(DetectionTask.user_id == user_id)
         class_distribution = dict(result_query.group_by(DetectionResult.class_name).all())
 
-        # 每日趋势：最近 N 天，每天完成的任务数
-        since = datetime.now() - timedelta(days=days)
-        daily_query = (
-            db.query(func.date(DetectionTask.created_at), func.count(DetectionTask.id))
-            .filter(DetectionTask.created_at >= since)
+        daily_query = HistoryService._apply_task_filters(
+            db.query(func.date(DetectionTask.created_at), func.count(DetectionTask.id)),
+            user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
         )
-        if not is_superuser:
-            daily_query = daily_query.filter(DetectionTask.user_id == user_id)
         daily_rows = daily_query.group_by(func.date(DetectionTask.created_at)).order_by(func.date(DetectionTask.created_at)).all()
-        daily_trend = [{"date": str(d), "count": c} for d, c in daily_rows]
+        daily_counts = {str(d): int(c) for d, c in daily_rows}
+        daily_trend = [{"date": str(day), "count": daily_counts.get(str(day), 0)}
+                       for offset in range((end_date - start_date).days + 1)
+                       for day in [start_date + timedelta(days=offset)]]
 
         # 场景分布
         scene_query = query.join(DetectionScene, DetectionTask.scene_id == DetectionScene.id).with_entities(
             DetectionScene.display_name, func.count(DetectionTask.id)
         )
         scene_distribution = dict(scene_query.group_by(DetectionScene.display_name).all())
+
+        training_query = db.query(TrainingTask)
+        if not is_superuser:
+            training_query = training_query.filter(TrainingTask.user_id == user_id)
+        training_query = training_query.filter(TrainingTask.created_at >= datetime.combine(start_date, time.min))
+        training_query = training_query.filter(TrainingTask.created_at < datetime.combine(end_date + timedelta(days=1), time.min))
+        training_rows = training_query.with_entities(func.date(TrainingTask.created_at), func.count(TrainingTask.id)).group_by(func.date(TrainingTask.created_at)).all()
+        training_counts = {str(d): int(c) for d, c in training_rows}
+        training_daily_trend = [{"date": str(day), "count": training_counts.get(str(day), 0)}
+                                for offset in range((end_date - start_date).days + 1)
+                                for day in [start_date + timedelta(days=offset)]]
 
         return {
             "total_tasks": total_tasks,
@@ -225,6 +260,8 @@ class HistoryService:
             "class_distribution": class_distribution,
             "daily_trend": daily_trend,
             "scene_distribution": scene_distribution,
+            "training_total_tasks": training_query.count(),
+            "training_daily_trend": training_daily_trend,
         }
 
 

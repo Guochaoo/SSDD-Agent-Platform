@@ -5,6 +5,8 @@
 - GET    /api/history/{task_id}          检测任务详情（含结果列表）
 - DELETE /api/history/{task_id}          删除检测任务
 """
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
@@ -32,6 +34,8 @@ def list_history(
     scene_id: int | None = None,
     task_type: str | None = None,
     status: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -41,6 +45,7 @@ def list_history(
     items, total = history_service.list_tasks(
         db, user_id=current_user.id, is_superuser=current_user.is_superuser,
         scene_id=scene_id, task_type=task_type, status=status,
+        start_date=start_date, end_date=end_date,
         page=page, page_size=page_size,
     )
     return {
@@ -55,12 +60,19 @@ def list_history(
 @router.get("/statistics/summary", response_model=DetectionStatistics)
 def get_statistics(
     days: int = Query(default=30, ge=1, le=365),
+    scene_id: int | None = None,
+    task_type: str | None = None,
+    status: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """检测统计数据：总量、平均耗时、类别分布、每日趋势、场景分布"""
     return history_service.get_statistics(
-        db, user_id=current_user.id, is_superuser=current_user.is_superuser, days=days
+        db, user_id=current_user.id, is_superuser=current_user.is_superuser,
+        days=days, scene_id=scene_id, task_type=task_type, status=status,
+        start_date=start_date, end_date=end_date,
     )
 
 

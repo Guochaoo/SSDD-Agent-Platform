@@ -13,6 +13,7 @@ export function normalizeDashboardResponse(payload) {
       totalObjects: data.totals?.totalObjects ?? data.total_objects ?? 0,
       avgInferenceTimeMs:
         data.totals?.avgInferenceTimeMs ?? data.avg_inference_time ?? 0,
+      trainingTasks: data.totals?.trainingTasks ?? data.training_total_tasks ?? 0,
     },
     classDistribution:
       data.classDistribution ??
@@ -24,6 +25,7 @@ export function normalizeDashboardResponse(payload) {
       date: item.date,
       tasks: Number(item.tasks ?? item.count ?? item.images ?? 0),
     })),
+    trainingDailyTrend: (data.trainingDailyTrend ?? data.training_daily_trend ?? []).map((item) => ({ date: item.date, tasks: Number(item.tasks ?? item.count ?? 0) })),
     sceneDistribution:
       data.sceneDistribution ??
       Object.entries(data.scene_distribution ?? {}).map(([name, value]) => ({
@@ -40,7 +42,14 @@ export function normalizeDashboardResponse(payload) {
 export async function getDashboardApi(params = {}) {
   return normalizeDashboardResponse(
     await request.get("/history/statistics/summary", {
-      params: { days: params.days ?? 30 },
+      params: Object.fromEntries(Object.entries({
+        days: params.days ?? 30,
+        scene_id: params.sceneId,
+        task_type: params.taskType,
+        status: params.status,
+        start_date: params.startDate,
+        end_date: params.endDate,
+      }).filter(([, value]) => value !== '' && value != null)),
     }),
   );
 }

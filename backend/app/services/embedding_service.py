@@ -45,7 +45,11 @@ class EmbeddingService:
             return []
         client = self._get_client()
         try:
-            resp = client.embeddings.create(model=settings.EMBEDDING_MODEL, input=texts)
+            resp = client.embeddings.create(
+                model=settings.EMBEDDING_MODEL,
+                input=texts,
+                dimensions=EMBEDDING_DIM,
+            )
         except Exception as exc:
             logger.warning("Embedding 调用失败: %s", exc)
             raise HTTPException(status_code=502, detail=f"向量化失败: {exc}") from exc

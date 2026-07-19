@@ -23,7 +23,14 @@ export function streamChat(url, body, callbacks = {}, options = {}) {
         signal: controller.signal,
       })
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (!response.ok) {
+        let payload = null
+        try { payload = await response.json() } catch { /* non-JSON gateway response */ }
+        const error = new Error(payload?.message || payload?.detail?.message || `HTTP ${response.status}`)
+        error.code = payload?.error_code || payload?.detail?.code || `HTTP_${response.status}`
+        error.requestId = payload?.request_id || response.headers.get('x-request-id')
+        throw error
+      }
       if (!response.body) throw new Error('当前浏览器不支持流式响应')
 
       const reader = response.body.getReader()

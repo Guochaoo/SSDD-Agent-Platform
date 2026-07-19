@@ -57,6 +57,12 @@ const routes = [
         component: () => import('@/views/DashboardPage.vue'),
         meta: { title: '数据看板', icon: 'DataAnalysis' },
       },
+      {
+        path: 'admin',
+        name: 'Admin',
+        component: () => import('@/views/AdminPage.vue'),
+        meta: { title: '管理中心', icon: 'Setting', requiresAdmin: true },
+      },
     ],
   },
   {
@@ -75,9 +81,14 @@ router.beforeEach((to, from, next) => {
 
   const token = localStorage.getItem('ssdd_token')
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false)
+  const requiresAdmin = to.matched.some((record) => record.meta.requiresAdmin)
+  let isSuperuser = false
+  try { isSuperuser = JSON.parse(localStorage.getItem('ssdd_user') || 'null')?.is_superuser === true } catch { /* user info will be refreshed after login */ }
 
   if (requiresAuth && !token) {
     next({ path: '/login', query: { redirect: to.fullPath } })
+  } else if (requiresAdmin && !isSuperuser) {
+    next('/dashboard')
   } else if ((to.path === '/login' || to.path === '/register') && token) {
     next('/')
   } else {

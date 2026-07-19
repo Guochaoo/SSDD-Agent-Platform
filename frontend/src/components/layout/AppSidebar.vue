@@ -95,7 +95,7 @@ import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import { Setting, SwitchButton } from '@element-plus/icons-vue'
-import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder } from '@boxicons/vue'
+import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield } from '@boxicons/vue'
 import { ElMessageBox } from 'element-plus'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 
@@ -138,6 +138,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   files: 'Files',
   history: 'History',
   dashboard: 'Dashboard',
+  admin: 'Administration',
   chatHistory: 'Chats',
   newChat: 'New chat',
   noSessions: 'No chats',
@@ -157,6 +158,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   files: '文件查看',
   history: '历史记录',
   dashboard: '数据看板',
+  admin: '管理中心',
   chatHistory: '会话历史',
   newChat: '新对话',
   noSessions: '暂无会话',
@@ -176,7 +178,8 @@ const menuItems = computed(() => [
   { path: '/files', title: text.value.files, icon: Folder },
   { path: '/history', title: text.value.history, icon: History },
   { path: '/dashboard', title: text.value.dashboard, icon: ChartTrend },
-])
+  { path: '/admin', title: text.value.admin, icon: Shield, adminOnly: true },
+].filter((item) => !item.adminOnly || userStore.isSuperuser))
 
 function handleNewChat() {
   agentStore.saveSession()

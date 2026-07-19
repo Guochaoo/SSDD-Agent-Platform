@@ -96,6 +96,8 @@ export async function getHistoryApi(params = {}) {
         scene_id: params.sceneId,
         task_type: params.taskType,
         status: params.status,
+        start_date: params.startDate,
+        end_date: params.endDate,
         page: params.page ?? 1,
         page_size: params.pageSize ?? 20,
       }).filter(([, value]) => value !== "" && value != null),

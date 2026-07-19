@@ -12,6 +12,7 @@ RAG 知识库 API 路由
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -57,16 +58,24 @@ async def upload_document(
     owner_id = None if (is_system and current_user.is_superuser) else current_user.id
 
     object_name = f"knowledge/{owner_id or 'system'}/{uuid4().hex}/{filename}"
-    file_url = MinIOClient().upload_bytes(object_name, content, file.content_type or "application/octet-stream")
-
-    doc = knowledge_service.create_document(
-        db,
-        user_id=owner_id,
-        title=(title or filename).strip() or filename,
-        filename=filename,
-        file_url=file_url,
-        file_type=file_type,
-    )
+    minio = MinIOClient()
+    file_url = minio.upload_bytes(object_name, content, file.content_type or "application/octet-stream")
+    try:
+        doc = knowledge_service.create_document(
+            db,
+            user_id=owner_id,
+            title=(title or filename).strip() or filename,
+            filename=filename,
+            file_url=file_url,
+            object_key=object_name,
+            file_type=file_type,
+        )
+    except Exception:
+        try:
+            minio.delete_file(object_name)
+        except Exception:
+            pass
+        raise
 
     try:
         text = extract_text(filename, content)
@@ -112,6 +121,21 @@ def get_document(
     return knowledge_service.get_document(
         db, document_id, user_id=current_user.id, is_superuser=current_user.is_superuser
     )
+
+
+@router.get("/documents/{document_id}/download", include_in_schema=False)
+def download_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = knowledge_service.get_document(
+        db, document_id, user_id=current_user.id, is_superuser=current_user.is_superuser
+    )
+    url = MinIOClient().get_presigned_url(doc.object_key) if doc.object_key else doc.file_url
+    if not url:
+        raise HTTPException(status_code=404, detail="Knowledge document file not found")
+    return RedirectResponse(url=url, status_code=307)
 
 
 @router.get("/documents/{document_id}/chunks", response_model=list[KnowledgeChunkResponse])

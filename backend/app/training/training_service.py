@@ -29,9 +29,12 @@
 import csv
 import os
 import shutil
+import tempfile
 import threading
 import uuid
 from datetime import datetime
+
+import yaml
 
 from app.config.settings import settings
 from app.core.logger import get_logger
@@ -45,6 +48,27 @@ logger = get_logger(__name__)
 # key: task_uuid, value: YOLO model 实例
 _running_tasks: dict = {}
 _running_lock = threading.Lock()
+
+
+def _create_runtime_data_yaml(source_path: str) -> str:
+    """Create an isolated training config with paths rooted at its dataset.
+
+    Uploaded datasets are user assets.  Training must never rewrite their
+    ``data.yaml`` just to make relative image paths work, especially when a
+    legacy archive contains a stale absolute ``path`` value.
+    """
+    with open(source_path, "r", encoding="utf-8") as source:
+        config = yaml.safe_load(source) or {}
+    if not isinstance(config, dict):
+        raise ValueError("data.yaml 必须是对象")
+
+    config["path"] = os.path.dirname(os.path.abspath(source_path))
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".yaml", prefix="ssdd-training-",
+        delete=False,
+    ) as runtime_file:
+        yaml.safe_dump(config, runtime_file, allow_unicode=True, sort_keys=False)
+        return runtime_file.name
 
 
 class TrainingService:
@@ -155,6 +179,7 @@ class TrainingService:
         """
         # ── 创建独立的数据库会话（后台线程不能复用请求级会话）──
         db = SessionLocal()
+        runtime_data_yaml = None
         try:
             task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
             if not task:
@@ -187,23 +212,12 @@ class TrainingService:
             if not os.path.exists(data_yaml):
                 raise FileNotFoundError(f"data.yaml 不存在：{data_yaml}")
 
-            data_yaml_dir = os.path.dirname(data_yaml)
             original_cwd = os.getcwd()
-
-            # 临时修改 data.yaml 的 path 为绝对路径（训练后恢复）
-            with open(data_yaml, "r", encoding="utf-8") as f:
-                original_content = f.read()
-
-            modified_content = original_content.replace(
-                "path: .",
-                f"path: {data_yaml_dir}"
-            )
-            with open(data_yaml, "w", encoding="utf-8") as f:
-                f.write(modified_content)
-            logger.info(f"临时修改 data.yaml path 为绝对路径：{data_yaml_dir}")
+            runtime_data_yaml = _create_runtime_data_yaml(data_yaml)
+            logger.info("创建训练运行时 data.yaml：%s", runtime_data_yaml)
 
             train_kwargs = {
-                "data": data_yaml,
+                "data": runtime_data_yaml,
                 "epochs": config.get("epochs", 50),
                 "imgsz": config.get("img_size", 640),
                 "batch": config.get("batch_size", 8),
@@ -292,16 +306,18 @@ class TrainingService:
 
             # ── 开始训练（阻塞直到完成）──
             logger.info(
-                "开始训练：data=%s, epochs=%d", data_yaml, train_kwargs["epochs"]
+                "开始训练：data=%s, epochs=%d", runtime_data_yaml, train_kwargs["epochs"]
             )
             results = model.train(**train_kwargs)
 
             # ── 训练完成，解析最终结果 ──
-            task.status = "completed"
-            task.progress = 100
-            task.current_epoch = config.get("epochs", 50)
-            task.completed_at = datetime.now()
-            db.commit()
+            db.refresh(task)
+            if task.status != "cancelled":
+                task.status = "completed"
+                task.progress = 100
+                task.current_epoch = config.get("epochs", 50)
+                task.completed_at = datetime.now()
+                db.commit()
 
             # ── 从 results.csv 补充最终指标 ──
             project_path = os.path.join(original_cwd, settings.TRAIN_OUTPUT_DIR)
@@ -311,26 +327,28 @@ class TrainingService:
 
         except FileNotFoundError as e:
             logger.error("训练文件缺失：task_id=%d, error=%s", task_id, str(e))
-            task.status = "failed"
-            task.error_message = str(e)
-            db.commit()
+            if task.status != "cancelled":
+                task.status = "failed"
+                task.error_message = str(e)
+                task.completed_at = datetime.now()
+                db.commit()
 
         except Exception as e:
             logger.error(
                 "训练异常：task_id=%d, error=%s", task_id, str(e), exc_info=True
             )
-            task.status = "failed"
-            task.error_message = str(e)[:2000]  # 限制错误信息长度
-            db.commit()
+            if task.status != "cancelled":
+                task.status = "failed"
+                task.error_message = str(e)[:2000]  # 限制错误信息长度
+                task.completed_at = datetime.now()
+                db.commit()
 
         finally:
-            # 恢复 data.yaml 原始内容
-            try:
-                with open(data_yaml, "w", encoding="utf-8") as f:
-                    f.write(original_content)
-                logger.info(f"恢复 data.yaml 原始内容")
-            except Exception:
-                pass
+            if runtime_data_yaml:
+                try:
+                    os.unlink(runtime_data_yaml)
+                except OSError:
+                    pass
 
             # 恢复工作目录
             try:
@@ -581,7 +599,9 @@ class TrainingService:
             if model:
                 # ultralytics 支持通过设置 model.train 的 interrupt 来停止
                 try:
-                    model.trainer.stop()
+                    trainer = getattr(model, "trainer", None)
+                    if trainer is not None:
+                        trainer.stop = True
                 except Exception as e:
                     logger.warning("停止训练异常：%s", str(e))
 
@@ -594,7 +614,7 @@ class TrainingService:
         return {"message": "训练任务已停止", "task_id": task_id}
 
     @staticmethod
-    def get_task_list(db, user_id: int = None, limit: int = 20) -> list:
+    def get_task_list(db, user_id: int = None, limit: int = 20, is_superuser: bool = False) -> list:
         """
         获取训练任务列表
 
@@ -607,7 +627,7 @@ class TrainingService:
             任务列表
         """
         query = db.query(TrainingTask)
-        if user_id:
+        if user_id and not is_superuser:
             query = query.filter(TrainingTask.user_id == user_id)
 
         tasks = query.order_by(TrainingTask.created_at.desc()).limit(limit).all()
@@ -615,13 +635,20 @@ class TrainingService:
         return [
             {
                 "id": t.id,
+                "user_id": t.user_id,
                 "task_uuid": t.task_uuid,
+                "scene_id": t.scene_id,
                 "status": t.status,
                 "model_name": t.model_name,
                 "epochs": t.epochs,
                 "current_epoch": t.current_epoch,
                 "progress": t.progress,
                 "device": t.device,
+                "batch_size": t.batch_size,
+                "img_size": t.img_size,
+                "optimizer": t.optimizer,
+                "lr0": t.lr0,
+                "augment_config": t.augment_config,
                 "dataset_path": t.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(t.dataset_path)) if t.dataset_path else None,
                 "dataset_size": t.dataset_size,
@@ -629,6 +656,7 @@ class TrainingService:
                 "created_at": str(t.created_at),
                 "started_at": str(t.started_at) if t.started_at else None,
                 "completed_at": str(t.completed_at) if t.completed_at else None,
+                "error_message": t.error_message,
             }
             for t in tasks
         ]

@@ -9,18 +9,12 @@
       </el-button>
     </ModulePageHeader>
 
-    <el-alert
+    <PageErrorAlert
       v-if="pageError"
-      class="page-alert"
-      :title="pageError"
-      type="error"
-      show-icon
-      :closable="false"
-    >
-      <template #default>
-        <el-button link type="primary" @click="loadHistory">{{ text.reload }}</el-button>
-      </template>
-    </el-alert>
+      :message="pageError"
+      :retry-text="text.reload"
+      @retry="loadHistory"
+    />
 
     <section class="filter-bar">
       <div class="filter-bar__title">
@@ -51,6 +45,13 @@
           :value="option.value"
         />
       </el-select>
+      <el-date-picker
+        v-model="filters.dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        :start-placeholder="text.startDate"
+        :end-placeholder="text.endDate"
+      />
       <el-button type="primary" :icon="Search" @click="applyFilters">{{ text.search }}</el-button>
       <el-button @click="resetFilters">{{ text.reset }}</el-button>
     </section>
@@ -71,9 +72,9 @@
         </el-table-column>
         <el-table-column :label="text.status" width="105">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" effect="light" round>
+            <StatusTag :status="row.status" :label="statusLabel(row.status)" round>
               {{ statusLabel(row.status) }}
-            </el-tag>
+            </StatusTag>
           </template>
         </el-table-column>
         <el-table-column prop="totalImages" :label="text.images" width="82" align="right" />
@@ -129,9 +130,9 @@
           <el-descriptions :column="2" border>
             <el-descriptions-item :label="text.taskId">{{ detail.task.id }}</el-descriptions-item>
             <el-descriptions-item :label="text.status">
-              <el-tag :type="statusType(detail.task.status)" effect="light">
+              <StatusTag :status="detail.task.status" :label="statusLabel(detail.task.status)">
                 {{ statusLabel(detail.task.status) }}
-              </el-tag>
+              </StatusTag>
             </el-descriptions-item>
             <el-descriptions-item :label="text.scene">{{ displayScene(detail.task.sceneName) }}</el-descriptions-item>
             <el-descriptions-item :label="text.taskType">{{ taskTypeLabel(detail.task.taskType) }}</el-descriptions-item>
@@ -196,6 +197,7 @@
 import { Delete, Filter, Refresh, Search, View } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRoute } from "vue-router";
 import { useSettingsStore } from '@/stores/settings'
 import {
   HISTORY_TASK_TYPE_OPTIONS,
@@ -206,10 +208,13 @@ import {
 } from "@/api/history";
 import { getScenesApi } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
+import PageErrorAlert from "@/components/common/PageErrorAlert.vue";
+import StatusTag from "@/components/common/StatusTag.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 import { displayDefectName, displaySceneName } from "@/utils/displayText";
 
 const settingsStore = useSettingsStore()
+const route = useRoute()
 const taskTypeOptions = computed(() => HISTORY_TASK_TYPE_OPTIONS.map((item) => ({
   ...item,
   label: taskTypeLabel(item.value),
@@ -230,6 +235,8 @@ const text = computed(() => settingsStore.isEnglish ? {
   allScenes: 'All scenes',
   allTypes: 'All types',
   allStatuses: 'All statuses',
+  startDate: 'Start date',
+  endDate: 'End date',
   search: 'Search',
   reset: 'Reset',
   emptyHistory: 'No detection records for the current filters',
@@ -285,6 +292,8 @@ const text = computed(() => settingsStore.isEnglish ? {
   allScenes: '全部场景',
   allTypes: '全部类型',
   allStatuses: '全部状态',
+  startDate: '开始日期',
+  endDate: '结束日期',
   search: '查询',
   reset: '重置',
   emptyHistory: '当前筛选条件下暂无检测记录',
@@ -337,7 +346,7 @@ const loading = ref(false);
 const pageError = ref("");
 const scenes = ref([]);
 const deletingId = ref(null);
-const filters = reactive({ sceneId: "", taskType: "", status: "" });
+const filters = reactive({ sceneId: "", taskType: "", status: "", dateRange: [] });
 const pagination = reactive({ page: 1, pageSize: 20 });
 const history = reactive({ items: [], total: 0 });
 
@@ -372,10 +381,6 @@ function displayDefect(name) {
 
 function statusLabel(value) {
   return statusOptions.value.find((item) => item.value === value)?.label || value || "—";
-}
-
-function statusType(value) {
-  return { completed: "success", failed: "danger", processing: "primary", pending: "warning" }[value] || "info";
 }
 
 function formatDateTime(value) {
@@ -422,7 +427,11 @@ async function loadHistory() {
   pageError.value = "";
   try {
     const data = await getHistoryApi({
-      ...filters,
+      sceneId: filters.sceneId,
+      taskType: filters.taskType,
+      status: filters.status,
+      startDate: filters.dateRange?.[0],
+      endDate: filters.dateRange?.[1],
       page: pagination.page,
       pageSize: pagination.pageSize,
     });
@@ -443,7 +452,7 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  Object.assign(filters, { sceneId: "", taskType: "", status: "" });
+  Object.assign(filters, { sceneId: "", taskType: "", status: "", dateRange: [] });
   pagination.page = 1;
   loadHistory();
 }
@@ -491,6 +500,8 @@ async function removeHistory(row) {
 
 onMounted(async () => {
   await Promise.all([loadScenes(), loadHistory()]);
+  const taskId = Number(route.query.task);
+  if (Number.isInteger(taskId) && taskId > 0) await openDetail({ id: taskId });
 });
 </script>
 

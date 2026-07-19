@@ -5,10 +5,15 @@
 Vector 类型，SQLite 测试库里没建这张表（见 conftest.py），向量检索需要连真实
 PostgreSQL + pgvector 才能测，这里只测文档级别的增删查权限。
 """
+import asyncio
+import io
+
 import pytest
 from fastapi import HTTPException
+from fastapi import UploadFile
 
 from app.entity.db_models import User
+from app.api import knowledge
 from app.services.knowledge_service import knowledge_service
 
 
@@ -93,3 +98,43 @@ def test_delete_nonexistent_document_raises_404(db_session):
     with pytest.raises(HTTPException) as exc:
         knowledge_service.delete_document(db_session, 9999, user_id=alice.id, is_superuser=False)
     assert exc.value.status_code == 404
+
+
+def test_download_requires_document_visibility_and_uses_object_key(db_session, monkeypatch):
+    alice = _make_user(db_session, "download-alice")
+    bob = _make_user(db_session, "download-bob")
+    doc = _make_doc(db_session, alice.id, "download-doc")
+    doc.object_key = "knowledge/alice/download-doc.txt"
+    db_session.commit()
+    monkeypatch.setattr(
+        knowledge, "MinIOClient",
+        lambda: type("Stub", (), {"get_presigned_url": staticmethod(lambda key: f"http://minio/{key}")})(),
+    )
+
+    response = knowledge.download_document(doc.id, current_user=alice, db=db_session)
+    assert response.status_code == 307
+    assert response.headers["location"].endswith(doc.object_key)
+    with pytest.raises(HTTPException) as exc:
+        knowledge.download_document(doc.id, current_user=bob, db=db_session)
+    assert exc.value.status_code == 403
+
+
+def test_upload_compensates_minio_object_when_document_insert_fails(db_session, monkeypatch):
+    user = _make_user(db_session, "upload-compensation")
+    deleted = []
+    stub = type("Stub", (), {
+        "upload_bytes": staticmethod(lambda *_args: "http://minio/knowledge/upload.txt"),
+        "delete_file": staticmethod(lambda key: deleted.append(key)),
+    })()
+    monkeypatch.setattr(knowledge, "MinIOClient", lambda: stub)
+    monkeypatch.setattr(
+        knowledge.knowledge_service,
+        "create_document",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+    upload = UploadFile(filename="upload.txt", file=io.BytesIO(b"content"), headers={"content-type": "text/plain"})
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        asyncio.run(knowledge.upload_document(upload, title=None, is_system=False, current_user=user, db=db_session))
+    assert len(deleted) == 1
+    assert deleted[0].startswith("knowledge/")

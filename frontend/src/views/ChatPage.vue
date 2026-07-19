@@ -40,7 +40,7 @@
               <div class="footer-left">
                 <ModelSelect v-model="model" />
                 <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
-                  <Image :size="16" />
+                  <Image size="16" />
                 </button>
                 <input
                   ref="fileInputRef"
@@ -59,7 +59,7 @@
                 @click="handleHeroSend"
               >
                 <el-icon :size="28">
-                  <ArrowUpStroke :size="16" v-if="!agentStore.isStreaming" />
+                  <ArrowUpStroke v-if="!agentStore.isStreaming" size="16" />
                   <CloseBold v-else />
                 </el-icon>
               </button>
@@ -143,7 +143,7 @@
             <div class="footer-left">
               <ModelSelect v-model="model" />
               <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
-                <Image :size="16" />
+                <Image size="16" />
               </button>
               <input
                 ref="fileInputRef"
@@ -623,7 +623,7 @@ function handleAgentEvent(event) {
       result: event.result,
       agentLabel: _currentAgentLabel || event.agent || '',
     })
-    attachToolResultCard(event.result)
+    void attachToolResultCard(event.result, event.tool_name)
   }
   if (event.type === 'message_end') {
     agentStore.isStreaming = false
@@ -643,7 +643,7 @@ function handleAgentEvent(event) {
   }
 }
 
-function attachToolResultCard(rawResult) {
+async function attachToolResultCard(rawResult, toolName = '') {
   let payload = rawResult
   if (typeof payload === 'string') {
     try { payload = JSON.parse(payload) } catch { return }
@@ -653,6 +653,22 @@ function attachToolResultCard(rawResult) {
   const assistantMessage = [...agentStore.messages].reverse().find((message) => message.role === 'assistant')
   const userMessage = [...agentStore.messages].reverse().find((message) => message.role === 'user')
   if (!assistantMessage) return
+
+  const cardType = {
+    get_detection_statistics: 'statistics',
+    query_detection_history: 'history',
+    search_knowledge: 'knowledge_citations',
+  }[toolName] || 'detection_result'
+  if (cardType !== 'detection_result') {
+    assistantMessage.toolResultCards = assistantMessage.toolResultCards || []
+    assistantMessage.toolResultCards.push({
+      id: `${toolName}-${Date.now()}`,
+      type: cardType,
+      result,
+    })
+    saveCurrentSession()
+    return
+  }
 
   const normalizeObjects = (detections = []) => detections.map((item, index) => ({
       id: String(index),
@@ -691,6 +707,7 @@ function attachToolResultCard(rawResult) {
     }
   }
   assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || ''
+  await agentStore.hydrateDetectionImages(assistantMessage)
   assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)
   saveCurrentSession()
 }
@@ -732,8 +749,9 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('error')
       agentStore.abortController = null
-      agentStore.markLastAssistantError(error?.message || chatText.value.agentUnavailable)
-      ElMessage.error(chatText.value.agentUnavailable)
+      const detail = error?.code ? `[${error.code}] ${error.message || chatText.value.agentUnavailable}${error.requestId ? ` (Request ID: ${error.requestId})` : ''}` : (error?.message || chatText.value.agentUnavailable)
+      agentStore.markLastAssistantError(detail)
+      ElMessage.error(detail)
     },
   })
 }

@@ -27,6 +27,7 @@ ultralytics==8.3.0   # Ultralytics YOLO框架（包含PyTorch）
 opencv-python==4.8.0.76 # OpenCV图像处理库
 numpy<2  # OpenCV 4.8 Windows wheels are not compatible with NumPy 2.x
 Pillow==10.0.0   # Pillow图像处理库
+PyYAML==6.0.2   # 训练数据集 data.yaml 校验
 
 # ── 数据库（PostgreSQL + ORM）─────────────────────────
 sqlalchemy==2.0.0  # SQLAlchemy ORM框架

@@ -40,6 +40,8 @@ class UserBrief(BaseModel):
     email: str
     avatar: Optional[str] = None
     roles: list[str] = []
+    is_active: bool = True
+    is_superuser: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +50,7 @@ class TokenResponse(BaseModel):
     """登录成功响应"""
     access_token: str
     token_type: str = "bearer"
+    user: UserBrief
     user: UserBrief
 
 
@@ -260,6 +263,8 @@ class BatchDetectionResponse(BaseModel):
 # --- 检测统计 ---
 
 class DetectionStatistics(BaseModel):
+    training_total_tasks: int = 0
+    training_daily_trend: list[dict] = []
     """检测统计数据"""
     total_tasks: int
     total_images: int
@@ -285,11 +290,17 @@ class TrainingTaskCreate(BaseModel):
     epochs: int = Field(default=100, ge=10, le=500, description="训练轮数")
     img_size: int = Field(default=640, description="图像尺寸")
     batch_size: int = Field(default=16, ge=1, le=64, description="批次大小")
-    device: str = Field(default="0", description="训练设备")
+    device: str = Field(default="cpu", description="训练设备")
     optimizer: str = Field(default="SGD", description="优化器")
     lr0: float = Field(default=0.01, description="初始学习率")
     augment_config: Optional[dict] = Field(None, description="数据增强配置")
     dataset_path: Optional[str] = Field(None, description="数据集目录")
+
+
+class TrainingDatasetMetadataUpdate(BaseModel):
+    """Editable metadata for a user-owned dataset; its directory remains unchanged."""
+    display_name: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
 
 
 class TrainingTaskResponse(BaseModel):

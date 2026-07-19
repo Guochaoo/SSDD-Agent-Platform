@@ -1,5 +1,6 @@
 """Agent chat API — streaming chat, model listing, and image upload."""
 
+import asyncio
 import json
 import os
 import tempfile
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.agent.supervisor import supervisor_agent
 from app.api.auth import get_current_user
 from app.config.settings import settings
+from app.core.artifact_access import artifact_owner_id, can_read_artifact, unregister_artifact
 from app.core.logger import get_logger
 from app.database.session import SessionLocal, get_db
 from app.entity.db_models import ChatMessage, ChatSession
@@ -28,6 +30,35 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/bmp", "image/tiff", "im
 logger = get_logger(__name__)
 MAX_HISTORY_MESSAGES = 20
 
+
+def _card_type_for_tool(tool_name: str) -> str:
+    if tool_name.startswith("detect_"):
+        return "detection_result"
+    if tool_name == "get_detection_statistics":
+        return "statistics"
+    if tool_name == "query_detection_history":
+        return "history"
+    if tool_name == "search_knowledge":
+        return "knowledge_citations"
+    return "tool_result"
+
+
+def _card_references(result: Any) -> dict[str, list[int]]:
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return {}
+    result = (result or {}).get("result", result) if isinstance(result, dict) else {}
+    if not isinstance(result, dict):
+        return {}
+    references = {}
+    for source, target in (("task_id", "task_ids"), ("model_id", "model_ids"), ("file_id", "file_ids"), ("knowledge_document_id", "knowledge_document_ids")):
+        value = result.get(source)
+        if isinstance(value, int):
+            references[target] = [value]
+    return references
+
 # ── in-process cache for model list ──
 _model_cache: dict[str, Any] | None = None
 _model_cache_ts: float = 0.0
@@ -37,6 +68,62 @@ UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "rsod_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ARTIFACT_DIR = os.path.join(tempfile.gettempdir(), "rsod_agent_artifacts")
 os.makedirs(ARTIFACT_DIR, exist_ok=True)
+
+
+def _user_upload_dir(user_id: int) -> Path:
+    """Return the per-user directory used for unpersisted chat attachments."""
+    directory = Path(UPLOAD_DIR) / str(user_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _new_upload_path(user_id: int, suffix: str) -> Path:
+    return _user_upload_dir(user_id) / f"{uuid4().hex}{suffix}"
+
+
+def _artifact_filenames(tool_calls: list[dict] | None) -> set[str]:
+    """Extract only opaque Agent artifact names from persisted tool payloads."""
+    filenames: set[str] = set()
+
+    def visit(value):
+        if isinstance(value, str):
+            try:
+                visit(json.loads(value))
+            except json.JSONDecodeError:
+                prefix = "/api/agent/artifacts/"
+                if value.startswith(prefix):
+                    filename = Path(value[len(prefix):]).name
+                    if filename.startswith("annotated_") and filename.endswith(".jpg"):
+                        filenames.add(filename)
+        elif isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(tool_calls or [])
+    return filenames
+
+
+def _artifact_referenced_by_user(db: Session, filename: str, current_user) -> bool:
+    """Recover persisted artifact access after a process restart.
+
+    The in-process ownership map is intentionally fast, but it is not durable.
+    ChatMessage.tool_calls is the durable association between an artifact and
+    its session owner, so use it as the fallback authorization source.
+    """
+    # Keeping this guard makes direct unit calls to the route helper behave
+    # like the injected route (where FastAPI always supplies a Session).
+    if not hasattr(db, "query"):
+        return False
+    query = db.query(ChatMessage).join(ChatSession, ChatMessage.session_id == ChatSession.id)
+    if not current_user.is_superuser:
+        query = query.filter(ChatSession.user_id == current_user.id)
+    for message in query.all():
+        if filename in _artifact_filenames(message.tool_calls):
+            return True
+    return False
 
 
 # ══════════════════════════════════════════════════════════════
@@ -215,8 +302,10 @@ def delete_chat_session(
         raise HTTPException(status_code=404, detail="会话不存在")
 
     image_paths = []
+    artifact_filenames = set()
     for message in db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all():
         image_paths.extend(message.image_paths or ([message.image_path] if message.image_path else []))
+        artifact_filenames.update(_artifact_filenames(message.tool_calls))
     db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete(
         synchronize_session=False
     )
@@ -225,9 +314,17 @@ def delete_chat_session(
 
     for image_path in image_paths:
         try:
-            os.unlink(_validate_uploaded_image_path(image_path))
+            os.unlink(_validate_uploaded_image_path(image_path, user_id=current_user.id))
         except (FileNotFoundError, HTTPException, OSError):
             pass
+    for filename in artifact_filenames:
+        artifact_path = (Path(ARTIFACT_DIR) / filename).resolve()
+        if artifact_path.parent == Path(ARTIFACT_DIR).resolve():
+            try:
+                artifact_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        unregister_artifact(filename)
     return {"id": session_id, "message": "会话已删除"}
 
 
@@ -238,13 +335,12 @@ def delete_chat_session(
 @router.post("/upload")
 async def upload_image(
     file: UploadFile = File(...),
-    _current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=415, detail="仅支持图片文件")
     suffix = Path(file.filename).suffix.lower() or ".jpg"
-    filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
+    filepath = _new_upload_path(current_user.id, suffix)
     content = await file.read(MAX_IMAGE_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="图片不能为空")
@@ -253,15 +349,21 @@ async def upload_image(
     with open(filepath, "wb") as f:
         f.write(content)
     logger.info("图片上传成功: %s → %s", file.filename, filepath)
-    return {"image_path": filepath}
+    return {"image_path": str(filepath)}
 
 
 @router.get("/artifacts/{filename}", include_in_schema=False)
-def get_agent_artifact(filename: str):
+def get_agent_artifact(
+    filename: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Serve an opaque, generated detection artifact for inline chat previews."""
     safe_name = Path(filename).name
     if safe_name != filename or not safe_name.startswith("annotated_") or not safe_name.endswith(".jpg"):
         raise HTTPException(status_code=404, detail="检测结果图片不存在")
+    if not can_read_artifact(safe_name, current_user.id, current_user.is_superuser) and not _artifact_referenced_by_user(db, safe_name, current_user):
+        raise HTTPException(status_code=404, detail="Artifact not found")
     artifact_path = (Path(ARTIFACT_DIR) / safe_name).resolve()
     if artifact_path.parent != Path(ARTIFACT_DIR).resolve() or not artifact_path.is_file():
         raise HTTPException(status_code=404, detail="检测结果图片不存在")
@@ -282,7 +384,7 @@ async def chat_stream(
 
     支持两种请求格式：
     - FormData: message, session_id, model (前端 uses FormData)
-    - JSON: {"message": "...", "image_path": "..."}
+    - JSON: {"message": "...", "session_id": "...", "model": "...", "image_path": "..."}
     """
     content_type = request.headers.get("content-type", "")
 
@@ -313,22 +415,24 @@ async def chat_stream(
                 if len(content) > MAX_IMAGE_BYTES:
                     raise HTTPException(status_code=413, detail="图片大小不能超过 10MB")
                 suffix = Path(image_file.filename).suffix.lower() or ".jpg"
-                filename = f"{os.getpid()}_{uuid4().hex}{suffix}"
-                filepath = os.path.join(UPLOAD_DIR, filename)
+                filepath = _new_upload_path(_current_user.id, suffix)
                 with open(filepath, "wb") as f:
                     f.write(content)
-                image_paths.append(filepath)
+                image_paths.append(str(filepath))
         if image_paths:
             image_path = image_paths[0]
     else:
         body = await request.json()
         message = (body.get("message") or "").strip()
+        raw_model = body.get("model")
+        if raw_model and isinstance(raw_model, str) and raw_model.strip():
+            model = raw_model.strip()
         raw_session = body.get("session_id")
         if raw_session and isinstance(raw_session, str) and raw_session.strip():
             session_id = raw_session.strip()
         raw_image_path = body.get("image_path")
         if raw_image_path:
-            image_paths = [_validate_uploaded_image_path(raw_image_path)]
+            image_paths = [_validate_uploaded_image_path(raw_image_path, user_id=_current_user.id)]
 
     if not message and not image_paths:
         raise HTTPException(status_code=422, detail="消息不能为空")
@@ -348,6 +452,8 @@ async def chat_stream(
     async def event_generator():
         full_reply = ""
         tool_calls = []
+        persisted = False
+        owner_token = artifact_owner_id.set(user_id)
         try:
             async for event in supervisor_agent.chat_stream(
                 message=message, image_paths=image_paths or None, model=model, chat_history=history, user_id=user_id
@@ -360,14 +466,32 @@ async def chat_stream(
                 elif event_type == "agent_switch":
                     yield f"data: {json.dumps({'type': 'agent_switch', 'agent': event['agent'], 'label': event['label']}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_call":
-                    tool_calls.append({"name": event["tool"], "status": "running", "input": event.get("input", {})})
-                    yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': event['tool'], 'input': event.get('input', {}), 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
+                    tool_call = {
+                        "id": uuid4().hex,
+                        "name": event["tool"],
+                        "status": "running",
+                        "input": event.get("input", {}),
+                        "card_type": _card_type_for_tool(event["tool"]),
+                        "display_order": len(tool_calls),
+                        "created_at": datetime.now().isoformat(),
+                    }
+                    tool_calls.append(tool_call)
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool_call_id': tool_call['id'], 'tool_name': event['tool'], 'input': event.get('input', {}), 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_result":
                     for tool_call in reversed(tool_calls):
                         if tool_call["name"] == event["tool"]:
-                            tool_call.update({"status": "success", "result": event["result"]})
+                            tool_call.update({
+                                "status": "success",
+                                "result": event["result"],
+                                "payload": event["result"],
+                                "references": _card_references(event["result"]),
+                                "snapshot": {"tool": event["tool"], "completed_at": datetime.now().isoformat()},
+                            })
+                            tool_call_id = tool_call["id"]
                             break
-                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event['tool'], 'result': event['result'], 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
+                    else:
+                        tool_call_id = None
+                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_call_id': tool_call_id, 'tool_name': event['tool'], 'result': event['result'], 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"
                 elif event_type == "error":
                     yield f"data: {json.dumps({'type': 'error', 'message': event['content']}, ensure_ascii=False)}\n\n"
 
@@ -375,13 +499,24 @@ async def chat_stream(
             if session_id and (message or full_reply):
                 _save_message(session_id, user_id, "user", message, image_paths=image_paths, image_path=image_path)
                 _save_message(session_id, user_id, "assistant", full_reply, tool_calls=tool_calls)
+                persisted = True
 
             yield f"data: {json.dumps({'type': 'message_end'})}\n\n"
             yield "data: [DONE]\n\n"
-
+        except asyncio.CancelledError:
+            if session_id and not persisted:
+                _save_message(session_id, user_id, "user", message, image_paths=image_paths, image_path=image_path)
+                _save_message(session_id, user_id, "assistant", full_reply, tool_calls=tool_calls)
+            logger.info("SSE stream cancelled session=%s user_id=%s", session_id, user_id)
+            raise
         except Exception as exc:
+            if session_id and not persisted:
+                _save_message(session_id, user_id, "user", message, image_paths=image_paths, image_path=image_path)
+                _save_message(session_id, user_id, "assistant", full_reply, tool_calls=tool_calls)
             logger.exception("SSE 流异常")
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+        finally:
+            artifact_owner_id.reset(owner_token)
 
     return StreamingResponse(
         event_generator(),
@@ -412,7 +547,7 @@ def _ensure_session(session_id: str, user_id: int):
         db.close()
 
 
-def _validate_uploaded_image_path(image_path: str) -> str:
+def _validate_uploaded_image_path(image_path: str, user_id: int | None = None) -> str:
     if not isinstance(image_path, str) or not image_path.strip():
         raise HTTPException(status_code=400, detail="图片路径无效")
     candidate = Path(image_path).resolve()
@@ -421,6 +556,11 @@ def _validate_uploaded_image_path(image_path: str) -> str:
         candidate.relative_to(upload_root)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="图片路径无效") from exc
+    if user_id is not None:
+        try:
+            candidate.relative_to(_user_upload_dir(user_id).resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="无权访问该图片") from exc
     if not candidate.is_file():
         raise HTTPException(status_code=400, detail="图片文件不存在")
     return str(candidate)
@@ -452,7 +592,7 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
                     valid_paths = []
                     for image_path in m.image_paths or ([m.image_path] if m.image_path else []):
                         try:
-                            valid_paths.append(_validate_uploaded_image_path(image_path))
+                            valid_paths.append(_validate_uploaded_image_path(image_path, user_id=user_id))
                         except HTTPException:
                             pass
                     if valid_paths:
@@ -473,7 +613,7 @@ def _save_message(
     tool_calls: list[dict] | None = None,
 ):
     image_paths = image_paths or ([image_path] if image_path else None)
-    if not content and not image_paths:
+    if not content and not image_paths and not tool_calls:
         return
     db = SessionLocal()
     try:

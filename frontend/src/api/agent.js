@@ -48,6 +48,12 @@ export function getAgentMessageImage(sessionId, messageId, index = 0) {
   })
 }
 
+export function getAgentArtifact(filename) {
+  return request.get(`/agent/artifacts/${encodeURIComponent(filename)}`, {
+    responseType: 'blob',
+  })
+}
+
 export function deleteAgentSession(sessionId) {
   return request.delete(`/agent/sessions/${encodeURIComponent(sessionId)}`)
 }

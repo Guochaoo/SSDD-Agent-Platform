@@ -21,6 +21,7 @@ import {
   stopTraining,
   validateTrainingModel,
 } from '@/api/training'
+import { startTrainingApi } from '@/api/training'
 
 describe('training api', () => {
   beforeEach(() => {
@@ -73,5 +74,21 @@ describe('training api', () => {
     expect(request.post).toHaveBeenNthCalledWith(3, '/training/predict', formData, {
       timeout: 300000,
     })
+  })
+
+  it('uses CPU when the normalized training adapter receives no device', async () => {
+    request.post.mockResolvedValueOnce({ id: 8, status: 'pending' })
+
+    await startTrainingApi({
+      sceneId: 1,
+      modelName: 'yolo11n.pt',
+      epochs: 10,
+      imgSize: 64,
+      batchSize: 1,
+    })
+
+    expect(request.post).toHaveBeenCalledWith('/training/start', expect.objectContaining({
+      device: 'cpu',
+    }))
   })
 })
