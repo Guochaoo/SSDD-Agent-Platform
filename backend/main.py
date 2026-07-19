@@ -40,11 +40,17 @@ def configure_provider_proxy_bypass() -> None:
     host = urlparse(settings.OPENAI_BASE_URL).hostname
     if host != "dashscope.aliyuncs.com":
         return
+    hosts = []
     for name in ("NO_PROXY", "no_proxy"):
-        hosts = [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
-        if host not in hosts:
-            hosts.append(host)
-            os.environ[name] = ",".join(hosts)
+        for item in os.environ.get(name, "").split(","):
+            item = item.strip()
+            if item and item not in hosts:
+                hosts.append(item)
+    if host not in hosts:
+        hosts.append(host)
+    value = ",".join(hosts)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
 
 
 def init_minio() -> None:

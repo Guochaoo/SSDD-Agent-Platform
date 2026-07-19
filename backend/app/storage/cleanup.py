@@ -11,7 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 def retry_pending_cleanups(db: Session, limit: int = 100) -> dict:
-    client = MinIOClient()
+    client = None
+
+    def storage_client() -> MinIOClient:
+        nonlocal client
+        if client is None:
+            client = MinIOClient()
+        return client
+
     models = db.query(ModelVersion).filter(ModelVersion.cleanup_pending.is_(True)).limit(limit).all()
     documents = db.query(KnowledgeDocument).filter(KnowledgeDocument.cleanup_pending.is_(True)).limit(limit).all()
     results = db.query(DetectionResult).filter(DetectionResult.cleanup_pending.is_(True)).limit(limit).all()
@@ -33,9 +40,9 @@ def retry_pending_cleanups(db: Session, limit: int = 100) -> dict:
         try:
             attempted += 1
             if document.object_key:
-                client.delete_file(document.object_key)
+                storage_client().delete_file(document.object_key)
             elif document.file_url:
-                client.delete_by_url(document.file_url)
+                storage_client().delete_by_url(document.file_url)
             document.cleanup_pending = False
             document.cleanup_error = None
             db.delete(document)
@@ -58,9 +65,9 @@ def retry_pending_cleanups(db: Session, limit: int = 100) -> dict:
             attempted += 1
             try:
                 if key:
-                    client.delete_file(key)
+                    storage_client().delete_file(key)
                 else:
-                    client.delete_by_url(legacy_url)
+                    storage_client().delete_by_url(legacy_url)
                 succeeded += 1
             except Exception as exc:
                 failed = True
