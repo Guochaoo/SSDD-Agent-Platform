@@ -1,6 +1,6 @@
 <template>
   <div class="training-page">
-    <ModulePageHeader :title="text.title" :description="text.description">
+    <ModulePageHeader :title="text.title">
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
         {{ text.newTask }}
@@ -600,7 +600,6 @@ const taskStore = useTaskStore()
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Model Training & Monitoring',
-  description: 'Create YOLOv11 training tasks, monitor progress, then evaluate and export models.',
   newTask: 'New training task',
   taskList: 'Training tasks',
   taskCount: (count) => `${count} tasks`,
@@ -653,7 +652,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   retry: 'Retry',
 } : {
   title: '模型训练与监控',
-  description: '创建 YOLOv11 训练任务，实时查看训练进度并完成模型评估与导出。',
   newTask: '新建训练任务',
   taskList: '训练任务列表',
   taskCount: (count) => `共 ${count} 个任务`,
