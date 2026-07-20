@@ -574,6 +574,7 @@ function handleAgentEvent(event) {
       name: event.tool_name,
       status: 'running',
       input: event.input,
+      agent: event.agent || '',
       agentLabel: _currentAgentLabel || event.agent || '',
     })
   }
@@ -583,6 +584,7 @@ function handleAgentEvent(event) {
       name: event.tool_name,
       status: 'success',
       result: event.result,
+      agent: event.agent || '',
       agentLabel: _currentAgentLabel || event.agent || '',
     })
     void attachToolResultCard(event.result, event.tool_name)
@@ -1045,6 +1047,7 @@ checkAgentToolContracts()
   bottom: 0;
   left: 0;
   right: 0;
+  z-index: 10;
   padding: 12px 16px 16px;
 
   .prompt-card {

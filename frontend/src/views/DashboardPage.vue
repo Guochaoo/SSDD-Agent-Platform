@@ -79,9 +79,10 @@
             <span class="chart-pill blue-light">{{ trendPrevTotal }} 次</span>
           </div>
           <div class="chart-compare-row">
-            <span class="chart-compare-label">vs prev.</span>
+            <span class="chart-compare-label">vs </span>
             <span class="chart-compare-date" ref="trendCompareRef" @click.stop="toggleTrendCompareCal">
               {{ trendDateLabel }}
+              <svg class="cal-arrow" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="m12 15.41 5.71-5.7-1.42-1.42-4.29 4.3-4.29-4.3-1.42 1.42z"/></svg>
             </span>
             <Teleport to="body">
               <div v-if="trendCompareOpen" class="period-overlay" @click="trendCompareOpen = false" />
@@ -998,10 +999,15 @@ onMounted(() => {
   font-size: 12px;
   color: #52525b;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 
   &:hover { color: #18181b; }
+}
+
+.cal-arrow {
+  flex-shrink: 0;
 }
 
 .side-left {

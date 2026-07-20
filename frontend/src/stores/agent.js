@@ -55,9 +55,15 @@ function parseToolResult(tool) {
 }
 
 const AGENT_LABEL_BY_NAME = {
-  detection: '🔍 检测 Agent',
-  data: '📊 数据 Agent',
-  general: '💬 通用 Agent',
+  detection: '检测 Agent',
+  data: '数据 Agent',
+  general: '通用 Agent',
+}
+
+export const AGENT_ICON_BY_NAME = {
+  detection: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
+  data: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="3" height="9" rx="1"/><rect x="10" y="7" width="3" height="14" rx="1"/><rect x="17" y="3" width="3" height="18" rx="1"/></svg>`,
+  general: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
 }
 
 function ensureAgentLabel(tool) {
