@@ -40,6 +40,7 @@ from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import SessionLocal
 from app.entity.db_models import ModelVersion, TrainingMetric, TrainingTask
+from app.entity.schemas import AdvancedTrainingConfig
 
 logger = get_logger(__name__)
 
@@ -108,6 +109,11 @@ class TrainingService:
         Returns:
             创建的 TrainingTask 数据库对象
         """
+        raw_train_config = config.get("train_config") or {}
+        if raw_train_config:
+            config = dict(config)
+            config["train_config"] = AdvancedTrainingConfig.model_validate(raw_train_config).model_dump(exclude_none=True)
+
         # ── 生成唯一任务标识 ──
         task_uuid = str(uuid.uuid4())[:8]
 
@@ -134,6 +140,7 @@ class TrainingService:
             optimizer=config.get("optimizer", "SGD"),
             lr0=config.get("lr0", 0.01),
             augment_config=config.get("augment_config"),
+            train_config=config.get("train_config") or {},
             dataset_path=dataset_path,
             data_yaml=data_yaml,
             dataset_size=config.get("dataset_size"),
@@ -236,6 +243,10 @@ class TrainingService:
                 "save": True,
                 "plots": False,
             }
+            # Advanced options were validated by ``TrainingTaskCreate``.  They
+            # cannot override protected paths or core task fields because the
+            # schema exposes only Ultralytics training knobs.
+            train_kwargs.update(config.get("train_config") or {})
 
             # ── 注册训练回调：每个 epoch 结束时更新数据库 ──
             def on_train_epoch_end(trainer):
@@ -529,6 +540,10 @@ class TrainingService:
                 "device": task.device,
                 "batch_size": task.batch_size,
                 "img_size": task.img_size,
+                "optimizer": task.optimizer,
+                "lr0": task.lr0,
+                "augment_config": task.augment_config,
+                "train_config": task.train_config or {},
                 "dataset_path": task.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(task.dataset_path)) if task.dataset_path else None,
                 "dataset_size": task.dataset_size,
@@ -669,6 +684,7 @@ class TrainingService:
                 "optimizer": t.optimizer,
                 "lr0": t.lr0,
                 "augment_config": t.augment_config,
+                "train_config": t.train_config or {},
                 "dataset_path": t.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(t.dataset_path)) if t.dataset_path else None,
                 "dataset_size": t.dataset_size,
