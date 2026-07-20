@@ -247,6 +247,7 @@ class TrainingTask(Base):
     optimizer = Column(String(20), default="SGD", comment="优化器：SGD/Adam/AdamW")
     lr0 = Column(Float, default=0.01, comment="初始学习率")
     augment_config = Column(JSON, nullable=True, comment="数据增强配置")
+    train_config = Column(JSON, nullable=True, comment="经校验的完整高级训练配置")
 
     # 训练进度
     current_epoch = Column(Integer, default=0, comment="当前轮数")

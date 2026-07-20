@@ -45,7 +45,7 @@
                 <input
                   ref="fileInputRef"
                   type="file"
-                  accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp,video/mp4,video/avi,.zip"
+                  accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
                   multiple
                   hidden
                   @change="onFileChange"
@@ -53,10 +53,10 @@
               </div>
 
               <div class="footer-quick">
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">单图</button>
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">批量</button>
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">ZIP</button>
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">视频</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
               </div>
 
               <button
@@ -136,7 +136,7 @@
               <input
                 ref="fileInputRef"
                 type="file"
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
                 multiple
                 hidden
                 @change="onFileChange"
@@ -144,10 +144,10 @@
             </div>
 
             <div class="footer-quick">
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">单图</button>
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">批量</button>
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">ZIP</button>
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">视频</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
             </div>
 
             <button
@@ -323,10 +323,9 @@ function onFileChange(e) {
 }
 
 function handleSelectedFile(file) {
-  const allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp', 'video/mp4', 'video/avi', 'application/zip', 'application/x-zip-compressed']
-  if (!allowed.includes(file.type) && !file.name.endsWith('.zip')) { ElMessage.error(chatText.value.onlyImages); return }
-  const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024
-  if (file.size > maxSize) { ElMessage.error(file.type.startsWith('video/') ? '视频不能超过50MB' : '文件不能超过10MB'); return }
+  const allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp']
+  if (!allowed.includes(file.type)) { ElMessage.error(chatText.value.onlyImages); return }
+  if (file.size > 10 * 1024 * 1024) { ElMessage.error(chatText.value.imageTooLarge); return }
   agentStore.addSelectedImages([file])
 }
 
