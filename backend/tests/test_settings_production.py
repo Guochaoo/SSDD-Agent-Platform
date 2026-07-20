@@ -7,12 +7,13 @@ from app.config.settings import Settings
 
 def test_production_settings_reject_example_secrets():
     with pytest.raises(ValidationError, match="JWT_SECRET_KEY"):
-        Settings(DEBUG=False, ALLOWED_ORIGINS="https://app.example.com")
+        Settings(_env_file=None, DEBUG=False, ALLOWED_ORIGINS="https://app.example.com")
 
 
 def test_production_settings_reject_localhost_cors():
     with pytest.raises(ValidationError, match="ALLOWED_ORIGINS"):
         Settings(
+            _env_file=None,
             DEBUG=False,
             JWT_SECRET_KEY="x" * 32,
             DB_PASSWORD="strong-db-password",
@@ -23,6 +24,7 @@ def test_production_settings_reject_localhost_cors():
 
 def test_production_settings_accept_explicit_secrets_and_origin():
     settings = Settings(
+        _env_file=None,
         DEBUG=False,
         JWT_SECRET_KEY="x" * 32,
         DB_PASSWORD="strong-db-password",
