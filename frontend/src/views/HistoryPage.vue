@@ -3,9 +3,10 @@
     <ModulePageHeader
       :title="text.title"
     >
-      <el-button :icon="Refresh" :loading="loading" @click="loadHistory">
-        {{ text.refresh }}
-      </el-button>
+      <button class="period-trigger refresh-btn" :disabled="loading" @click="loadHistory">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" :class="{ spin: loading }"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        <span class="period-val">{{ text.refresh }}</span>
+      </button>
     </ModulePageHeader>
 
     <PageErrorAlert
@@ -193,7 +194,7 @@
 </template>
 
 <script setup>
-import { Delete, Filter, Refresh, Search, View } from "@element-plus/icons-vue";
+import { Delete, Filter, Search, View } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
@@ -504,6 +505,25 @@ onMounted(async () => {
 
 <style lang="scss" scoped>
 .frontend-b-page { min-height: 100%; max-width: 1200px; margin: 0 auto; padding: 0; }
+.period-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  background: #fff;
+  color: #18181b;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+
+  &:hover:not(:disabled) { border-color: #a1a1aa; }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+.period-val { font-weight: 500; }
+.refresh-btn .spin { animation: dash-spin 1s linear infinite; }
+@keyframes dash-spin { to { transform: rotate(360deg); } }
 .page-alert { margin-bottom: 16px; }
 .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fff; }
 .filter-bar__title { display: flex; align-items: center; gap: 7px; margin-right: auto; color: #344054; font-weight: 600; }

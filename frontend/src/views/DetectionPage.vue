@@ -20,126 +20,81 @@
         <div class="detection-layout">
           <section class="control-card">
             <div class="section-title">
-              <div>
-                <h3>{{ text.configTitle }}</h3>
-                <p>{{ text.configHint }}</p>
-              </div>
-              <el-icon><Setting /></el-icon>
+              <h3>{{ text.configTitle }}</h3>
+              <span v-if="modelWarmupStatus === 'ready'" class="model-status ok">● {{ text.modelReady }}</span>
+              <span v-else-if="modelWarmupStatus === 'loading'" class="model-status loading">● {{ text.modelWarming }}</span>
+              <span v-else-if="modelWarmupStatus === 'error'" class="model-status err">● {{ text.modelWarmFailed(warmupError) }}</span>
             </div>
 
-            <el-alert
-              v-if="modelWarmupStatus === 'loading'"
-              :title="text.modelWarming"
-              type="info"
-              :closable="false"
-              show-icon
-              class="model-warmup-alert"
-            />
-            <el-alert
-              v-else-if="modelWarmupStatus === 'error'"
-              :title="text.modelWarmFailed(warmupError)"
-              type="warning"
-              :closable="false"
-              show-icon
-              class="model-warmup-alert"
-            />
-            <el-alert
-              v-else-if="modelWarmupStatus === 'ready' && (singleLoading || batchLoading)"
-              :title="text.modelDetecting"
-              type="success"
-              :closable="false"
-              show-icon
-              class="model-warmup-alert"
-            />
-            <el-alert
-              v-else-if="modelWarmupStatus === 'ready'"
-              :title="text.modelReady"
-              type="success"
-              :closable="false"
-              show-icon
-              class="model-warmup-alert"
-            />
-            <el-form label-position="top">
-              <el-form-item :label="text.scene">
-                <el-select v-model="form.sceneId" class="full-width" @change="loadModels">
-                  <el-option
-                    v-for="scene in scenes"
-                    :key="scene.id"
-                    :label="sceneLabel(scene)"
-                    :value="scene.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item :label="text.modelVersion">
-                <el-select v-model="form.modelId" class="full-width">
-                  <el-option
-                    v-for="model in models"
-                    :key="model.id"
-                    :value="model.id"
-                    :label="`${model.modelType} · ${model.version}`"
-                  >
-                    <div class="model-option">
-                      <span>{{ model.modelType }} · {{ model.version }}</span>
-                      <small>mAP50 {{ formatPercent(model.map50) }}</small>
-                    </div>
-                  </el-option>
-                </el-select>
-              </el-form-item>
-              <el-form-item>
-                <template #label>
-                  <span class="slider-label">
-                    {{ text.confThreshold }} <b>{{ form.confThreshold.toFixed(2) }}</b>
-                  </span>
-                </template>
-                <el-slider v-model="form.confThreshold" :min="0.1" :max="0.9" :step="0.05" show-input />
-              </el-form-item>
-              <el-form-item>
-                <template #label>
-                  <span class="slider-label">
-                    {{ text.iouThreshold }} <b>{{ form.iouThreshold.toFixed(2) }}</b>
-                  </span>
-                </template>
-                <el-slider v-model="form.iouThreshold" :min="0.1" :max="0.9" :step="0.05" show-input />
-              </el-form-item>
+            <el-form label-position="top" class="compact-form">
+              <div class="form-row">
+                <el-form-item :label="text.scene">
+                  <el-select v-model="form.sceneId" class="full-width" @change="loadModels" size="small">
+                    <el-option v-for="scene in scenes" :key="scene.id" :label="sceneLabel(scene)" :value="scene.id" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item :label="text.modelVersion">
+                  <el-select v-model="form.modelId" class="full-width" size="small">
+                    <el-option v-for="model in models" :key="model.id" :value="model.id" :label="`${model.modelType} · ${model.version}`">
+                      <div class="model-option"><span>{{ model.modelType }} · {{ model.version }}</span><small>mAP50 {{ formatPercent(model.map50) }}</small></div>
+                    </el-option>
+                  </el-select>
+                </el-form-item>
+              </div>
+              <div class="form-row">
+                <el-form-item>
+                  <template #label><span>置信度</span></template>
+                  <el-input-number v-model="form.confThreshold" :min="0.1" :max="0.9" :step="0.05" size="small" controls-position="right" class="slider-num-full" />
+                  <el-slider v-model="form.confThreshold" :min="0.1" :max="0.9" :step="0.05" size="small" />
+                </el-form-item>
+                <el-form-item>
+                  <template #label><span>IoU</span></template>
+                  <el-input-number v-model="form.iouThreshold" :min="0.1" :max="0.9" :step="0.05" size="small" controls-position="right" class="slider-num-full" />
+                  <el-slider v-model="form.iouThreshold" :min="0.1" :max="0.9" :step="0.05" size="small" />
+                </el-form-item>
+              </div>
             </el-form>
 
-            <el-upload
-              ref="singleUploadRef"
-              v-model:file-list="singleFileList"
-              class="steel-uploader"
-              drag
-              :auto-upload="false"
-              :limit="1"
-              :accept="imageAccept"
-              :on-change="handleSingleFile"
-              :on-remove="clearSingleFile"
-              :on-exceed="handleSingleExceed"
-            >
-              <el-icon class="steel-uploader__icon"><UploadFilled /></el-icon>
-              <div class="el-upload__text">{{ text.dragSingle }} <em>{{ text.clickSelect }}</em></div>
-              <template #tip>
-                <div class="el-upload__tip">{{ text.uploadTip }}</div>
-              </template>
-            </el-upload>
-
-            <el-button
-              class="detect-button"
-              type="primary"
-              size="large"
-              :icon="Aim"
-              :loading="singleLoading"
-              :disabled="!singleFile || !form.modelId"
-              @click="startSingleDetection"
-            >
-              {{ singleLoading ? text.detecting : text.startDetect }}
-            </el-button>
+            <div class="detect-upload-card">
+              <div
+                class="detect-upload-drop"
+                role="button"
+                tabindex="0"
+                @click="triggerSingleFile"
+                @keydown.enter.prevent="triggerSingleFile"
+                @keydown.space.prevent="triggerSingleFile"
+                @dragover.prevent
+                @drop.prevent="onSingleFileDrop"
+              >
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="detect-upload-cloud">
+                  <path d="M7 10V9C7 6.23858 9.23858 4 12 4C14.7614 4 17 6.23858 17 9V10C19.2091 10 21 11.7909 21 14C21 15.4806 20.1956 16.8084 19 17.5M7 10C4.79086 10 3 11.7909 3 14C3 15.4806 3.8044 16.8084 5 17.5M7 10C7.43285 10 7.84965 10.0688 8.24006 10.1959M12 12V21M12 12L15 15M12 12L9 15" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <p>{{ singleFile ? singleFile.name : text.dragSingle }}</p>
+              </div>
+              <label class="detect-upload-footer">
+                <p>{{ singleFile ? singleFile.name : text.notSelected }}</p>
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" @click.stop="clearSingleFile"><path d="M5.16565 10.1534C5.07629 8.99181 5.99473 8 7.15975 8H16.8402C18.0053 8 18.9237 8.9918 18.8344 10.1534L18.142 19.1534C18.0619 20.1954 17.193 21 16.1479 21H7.85206C6.80699 21 5.93811 20.1954 5.85795 19.1534L5.16565 10.1534Z" stroke="#1a1a1a" stroke-width="2"/><path d="M19.5 5H4.5" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/><path d="M10 3C10 2.44772 10.4477 2 11 2H13C13.5523 2 14 2.44772 14 3V5H10V3Z" stroke="#1a1a1a" stroke-width="2"/></svg>
+              </label>
+              <button
+                class="detect-upload-detect"
+                :disabled="!singleFile || !form.modelId"
+                @click="startSingleDetection"
+              >
+                <svg v-if="singleLoading" class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                <span>{{ singleLoading ? text.detecting : text.startDetect }}</span>
+              </button>
+              <input id="singleFileInput" type="file" :accept="imageAccept" @change="onSingleFileSelected" hidden />
+            </div>
           </section>
 
-          <DetectionResultPanel
+          <div class="result-square">
+            <DetectionResultPanel
             :preview-url="singlePreviewUrl"
             :result="singleResult"
             :loading="singleLoading"
           />
+        </div>
         </div>
       </el-tab-pane>
 
@@ -657,6 +612,27 @@ function revokePreview() {
   singlePreviewUrl.value = "";
 }
 
+function triggerSingleFile() {
+  document.getElementById('singleFileInput')?.click()
+}
+function onSingleFileSelected(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  if (!validateImage(file)) { e.target.value = ''; return }
+  revokePreview()
+  singleFile.value = file
+  singlePreviewUrl.value = URL.createObjectURL(file)
+  singleResult.value = null
+  e.target.value = ''
+}
+function onSingleFileDrop(e) {
+  const file = e.dataTransfer.files?.[0]
+  if (!file || !validateImage(file)) return
+  revokePreview()
+  singleFile.value = file
+  singlePreviewUrl.value = URL.createObjectURL(file)
+  singleResult.value = null
+}
 function handleSingleFile(uploadFile) {
   if (!validateImage(uploadFile.raw)) {
     singleFileList.value = [];
@@ -995,24 +971,148 @@ onBeforeUnmount(() => {
 .page-alert { margin-bottom: 16px; }
 .mode-tabs :deep(.el-tabs__header) { margin-bottom: 18px; }
 .mode-tabs :deep(.el-tabs__item) { height: 44px; font-weight: 600; }
-.detection-layout { display: grid; grid-template-columns: minmax(290px, 0.78fr) minmax(480px, 1.55fr); gap: 18px; align-items: start; }
-.control-card, .workspace-card { padding: 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); }
-.section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.detection-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; height: 100%; }
+.control-card, .workspace-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); }
+.section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .section-title h3 { margin: 0; color: #1f2937; font-size: 16px; }
-.section-title p { margin: 5px 0 0; color: $text-secondary; font-size: 12px; line-height: 1.55; }
-.section-title > .el-icon { color: #2563eb; font-size: 22px; }
+.section-title p { margin: 4px 0 0; color: $text-secondary; font-size: 11px; line-height: 1.5; }
 .section-title--inline { align-items: center; }
 .full-width { width: 100%; }
 .model-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .model-option small { color: $text-secondary; }
 .slider-label { display: flex; width: 100%; justify-content: space-between; }
 .slider-label b { color: #2563eb; }
-.steel-uploader { margin-top: 4px; }
+.detect-upload-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  max-width: 280px;
+  width: 100%;
+  margin-top: 6px;
+  border-radius: 10px;
+  box-shadow: 4px 4px 30px rgba(0,0,0,.12);
+  background: #fff;
+}
+.detect-upload-drop {
+  width: 100%;
+  min-height: 100px;
+  border: 2px dashed #2563eb;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  cursor: pointer;
+  padding: 20px 12px;
+  gap: 8px;
+  transition: border-color 0.2s;
+
+  &:hover { border-color: #1d4ed8; background: #f8faff; }
+
+  p {
+    text-align: center;
+    color: #1a1a1a;
+    font-size: 13px;
+    margin: 0;
+  }
+}
+.detect-upload-cloud { height: 50px; }
+.compact-form {
+  :deep(.el-form-item) { margin-bottom: 8px; }
+  :deep(.el-form-item__label) { padding-bottom: 2px; font-size: 12px; }
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.slider-num-full { width: 100%; margin-bottom: 6px; }
+.model-status {
+  font-size: 11px;
+  font-weight: 600;
+  &.ok { color: #059669; }
+  &.loading { color: #2563eb; }
+  &.err { color: #dc2626; }
+}
+.detect-upload-footer {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,110,255,.075);
+  border: 0;
+  color: #1a1a1a;
+  font-size: 12px;
+  gap: 8px;
+
+  svg {
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  p {
+    flex: 1;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+  }
+}
 .model-warmup-alert { margin-bottom: 14px; }
-.steel-uploader :deep(.el-upload-dragger) { padding: 26px 12px; border-radius: 11px; background: #f8fafc; }
-.steel-uploader__icon { color: #2563eb; font-size: 36px; }
 .batch-upload-actions { display: flex; justify-content: center; gap: 10px; }
-.detect-button { width: 100%; margin-top: 18px; }
+.result-square {
+  aspect-ratio: 1;
+  overflow: hidden;
+  :deep(.result-panel) {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  :deep(.result-panel__canvas) {
+    flex: 1;
+    min-height: 0;
+  }
+  :deep(.image-stage) {
+    max-height: none;
+    height: 100%;
+    background: transparent;
+  }
+  :deep(.image-stage img) {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+.detect-upload-detect {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #2563eb;
+  color: #fff;
+  border: 0;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.2s;
+
+  &:hover:not(:disabled) { background: #1d4ed8; }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .spin { animation: dash-spin 1s linear infinite; }
+}
+@keyframes dash-spin { to { transform: rotate(360deg); } }
 .workspace-card { min-height: 240px; }
 .batch-summary { display: flex; align-items: center; gap: 9px; margin: 18px 0 12px; }
 .batch-summary span { color: $text-secondary; font-size: 12px; }
