@@ -34,16 +34,25 @@ def test_dataset_archive_and_classes_accept_valid_yolo_content(tmp_path):
     _validate_dataset_classes(tmp_path)
 
 
-def test_dataset_archive_rejects_duplicate_images():
+def test_dataset_archive_accepts_duplicate_image_content_at_different_paths():
     archive_data = _archive({
         "data.yaml": "names: [crazing]\n",
         "images/a.jpg": b"same-image",
         "images/b.jpg": b"same-image",
     })
     with zipfile.ZipFile(archive_data) as archive:
-        with pytest.raises(HTTPException) as exc:
-            _validate_dataset_archive(archive)
-    assert exc.value.detail["code"] == "DUPLICATE_CONTENT"
+        _validate_dataset_archive(archive)
+
+
+def test_dataset_archive_accepts_identical_repeated_zip_member():
+    data = BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("data.yaml", "names: [crazing]\n")
+        archive.writestr("data.yaml", "names: [crazing]\n")
+        archive.writestr("images/a.jpg", b"image-a")
+    data.seek(0)
+    with zipfile.ZipFile(data) as archive:
+        _validate_dataset_archive(archive)
 
 
 def test_dataset_classes_reject_out_of_range_label(tmp_path):
