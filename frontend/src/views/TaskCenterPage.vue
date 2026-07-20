@@ -80,7 +80,7 @@
 
 <script setup>
 import { Refresh, Search } from '@element-plus/icons-vue'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { getHistoryTaskTypeLabel } from '@/api/history'
@@ -100,6 +100,7 @@ const loading = ref(false)
 const pageError = ref('')
 const lastUpdated = ref('')
 const filters = reactive({ keyword: '', category: '', status: '' })
+let refreshTimer
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Task Center', description: 'Track real training and detection tasks in one place. Active tasks refresh automatically.',
@@ -165,7 +166,15 @@ function openTask(row) {
 }
 
 watch([trainingTasks, detectionTasks], () => { lastUpdated.value = new Date().toISOString() }, { deep: true })
-onMounted(loadTasks)
+onMounted(async () => {
+  await loadTasks()
+  refreshTimer = window.setInterval(() => {
+    if (autoRefreshing.value && !loading.value) loadTasks({ silent: true })
+  }, 5000)
+})
+onBeforeUnmount(() => {
+  if (refreshTimer) window.clearInterval(refreshTimer)
+})
 </script>
 
 <style lang="scss" scoped>
