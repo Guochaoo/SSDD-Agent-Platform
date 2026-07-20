@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 import yaml
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
@@ -111,8 +111,12 @@ class ImageIndex:
 
 
 def _image_size(path: Path) -> tuple[int, int]:
-    with Image.open(path) as image:
-        width, height = image.size
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+            image.verify()
+    except (OSError, UnidentifiedImageError) as exc:
+        raise DatasetImportError("INVALID_IMAGE", f"图片无法解析: {path.name}") from exc
     if width <= 0 or height <= 0:
         raise DatasetImportError("INVALID_IMAGE", f"图片尺寸无效: {path.name}")
     return width, height

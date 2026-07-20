@@ -1466,6 +1466,9 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .training-page {
   width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0;
 }
 
 .page-alert,
