@@ -2,7 +2,6 @@
   <div class="frontend-b-page">
     <ModulePageHeader
       :title="text.title"
-      :description="text.description"
     >
       <el-button :icon="Refresh" @click="resetCurrentMode">{{ text.resetMode }}</el-button>
     </ModulePageHeader>
@@ -456,7 +455,6 @@ const cameraStatusText = computed(() => {
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Detection Workspace',
-  description: 'Upload steel surface images, choose a model and thresholds, then inspect defect locations, classes and confidence.',
   resetMode: 'Reset current mode',
   singleTab: 'Single image',
   batchTab: 'Batch',
@@ -534,7 +532,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   processing: 'Processing',
 } : {
   title: '检测工作台',
-  description: '上传钢铁表面图像，选择模型与阈值，查看缺陷位置、类别和置信度。批量、视频和摄像头模式按同一任务模型组织。',
   resetMode: '重置当前模式',
   singleTab: '单图检测',
   batchTab: '批量检测',
@@ -994,7 +991,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="scss" scoped>
-.frontend-b-page { min-height: 100%; }
+.frontend-b-page { min-height: 100%; max-width: 1200px; margin: 0 auto; padding: 0; }
 .page-alert { margin-bottom: 16px; }
 .mode-tabs :deep(.el-tabs__header) { margin-bottom: 18px; }
 .mode-tabs :deep(.el-tabs__item) { height: 44px; font-weight: 600; }

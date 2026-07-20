@@ -40,16 +40,23 @@
               <div class="footer-left">
                 <ModelSelect v-model="model" />
                 <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
-                  <Image size="16" />
+                  <img :src="addIcon" width="16" height="16" />
                 </button>
                 <input
                   ref="fileInputRef"
                   type="file"
-                  accept="image/png,image/jpeg"
+                  accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
                   multiple
                   hidden
                   @change="onFileChange"
                 />
+              </div>
+
+              <div class="footer-quick">
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
               </div>
 
               <button
@@ -83,15 +90,6 @@
           </button>
         </div>
 
-        <QuickDetectBar
-          :disabled="agentStore.isStreaming || isQuickDetecting"
-          :labels="chatText.quickDetect"
-          @single="handleQuickDetect('single')"
-          @batch="handleQuickDetect('batch')"
-          @zip="handleQuickDetect('zip')"
-          @video="handleQuickDetect('video')"
-        />
-
       </div>
     </template>
 
@@ -107,16 +105,6 @@
 
       <!-- Prompt card (sticky bottom) -->
       <div class="chat-bottom chat-composer">
-        <QuickDetectBar
-          class="chat-quick-detect"
-          :disabled="agentStore.isStreaming || isQuickDetecting"
-          :labels="chatText.quickDetect"
-          @single="handleQuickDetect('single')"
-          @batch="handleQuickDetect('batch')"
-          @zip="handleQuickDetect('zip')"
-          @video="handleQuickDetect('video')"
-        />
-
         <div :class="['prompt-card', { dragover: isDragover }]">
           <div class="prompt-primary">
             <div v-if="agentStore.imagePreviewUrls.length" class="inline-previews">
@@ -143,16 +131,23 @@
             <div class="footer-left">
               <ModelSelect v-model="model" />
               <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
-                <Image size="16" />
+                <img :src="addIcon" width="16" height="16" />
               </button>
               <input
                 ref="fileInputRef"
                 type="file"
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
                 multiple
                 hidden
                 @change="onFileChange"
               />
+            </div>
+
+            <div class="footer-quick">
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
             </div>
 
             <button
@@ -181,7 +176,8 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CloseBold, Close, UploadFilled } from '@element-plus/icons-vue'
-import { Image, ArrowUpStroke } from '@boxicons/vue'
+import { ArrowUpStroke } from '@boxicons/vue'
+import addIcon from '@/assets/icons/add-circle.svg'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
@@ -194,7 +190,6 @@ import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideo
 import { getModelsApi, getScenesApi } from '@/api/models'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
-import QuickDetectBar from '@/components/agent/QuickDetectBar.vue'
 
 const agentStore = useAgentStore()
 const settingsStore = useSettingsStore()
@@ -232,7 +227,7 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   send: 'Send',
   stop: 'Stop',
   dropToUpload: 'Release to upload image',
-  onlyImages: 'Only JPG and PNG images are supported',
+  onlyImages: 'Unsupported file type',
   imageTooLarge: 'Image size cannot exceed 10MB',
   zipDetecting: 'Running ZIP image detection...',
   videoDetecting: 'Uploading and analyzing video...',
@@ -264,7 +259,7 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   send: '发送',
   stop: '停止',
   dropToUpload: '释放以上传图片',
-  onlyImages: '仅支持 JPG 和 PNG 图片',
+  onlyImages: '不支持的文件类型',
   imageTooLarge: '图片大小不能超过 10MB',
   zipDetecting: '正在进行 ZIP 图片检测…',
   videoDetecting: '正在上传并分析视频…',
@@ -328,7 +323,7 @@ function onFileChange(e) {
 }
 
 function handleSelectedFile(file) {
-  const allowed = ['image/jpeg', 'image/png']
+  const allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp']
   if (!allowed.includes(file.type)) { ElMessage.error(chatText.value.onlyImages); return }
   if (file.size > 10 * 1024 * 1024) { ElMessage.error(chatText.value.imageTooLarge); return }
   agentStore.addSelectedImages([file])
@@ -767,16 +762,15 @@ checkAgentToolContracts()
   }
 
   &:not(.hero) {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
+    position: relative;
     overflow: hidden;
   }
 }
 
 .chat-main {
-  min-height: 0;
-  flex: 1;
+  height: 100%;
   overflow-y: auto;
+  padding-bottom: 140px;
 }
 
 /* ── Hero ── */
@@ -811,7 +805,8 @@ checkAgentToolContracts()
   grid-template-areas:
     "primary"
     "bottom";
-  background: var(--app-surface);
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(20px);
   border: 0;
   border-radius: 28px;
   padding: 9px 8px;
@@ -917,6 +912,35 @@ checkAgentToolContracts()
   gap: 4px;
 }
 
+.footer-quick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+}
+
+.quick-btn {
+  padding: 3px 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 14px;
+  background: transparent;
+  color: #52525b;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    border-color: #a1a1aa;
+    color: #18181b;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
 /* ── Buttons ── */
 .footer-btn {
   display: inline-flex;
@@ -926,7 +950,7 @@ checkAgentToolContracts()
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #737373;
+  color: #000000;
   cursor: pointer;
   transition: all 0.15s;
 
@@ -982,13 +1006,14 @@ checkAgentToolContracts()
 .quick-chips {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
+  width: 100%;
   max-width: 640px;
 }
 
 .chat-quick-detect {
-  max-width: 720px;
+  max-width: 790px;
   margin: 0 auto 8px;
   justify-content: flex-start;
 }
@@ -1015,13 +1040,14 @@ checkAgentToolContracts()
 
 /* ── Chat bottom (input area fixed at bottom via flex) ── */
 .chat-bottom {
-  position: relative;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   padding: 12px 16px 16px;
-  background: linear-gradient(to top, var(--app-bg) 80%, transparent);
-  flex-shrink: 0;
 
   .prompt-card {
-    max-width: 720px;
+    max-width: 790px;
     margin: 0 auto;
   }
 }

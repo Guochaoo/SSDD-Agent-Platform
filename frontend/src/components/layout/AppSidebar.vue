@@ -3,7 +3,7 @@
     <!-- Header: brand + toggle -->
     <div class="sidebar-header">
       <img src="/favicon.svg" alt="logo" class="brand-logo" />
-      <span class="brand-text">SSDD</span>
+      <span class="brand-text">钢铁表面缺陷检测</span>
       <button class="toggle-btn" :title="collapsed ? text.expandSidebar : text.collapseSidebar" @click="handleToggle">
         <DockLeft class="toggle-icon" />
       </button>

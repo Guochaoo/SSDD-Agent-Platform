@@ -2,7 +2,6 @@
   <div class="frontend-b-page">
     <ModulePageHeader
       :title="text.title"
-      :description="text.description"
     >
       <el-button :icon="Refresh" :loading="loading" @click="loadHistory">
         {{ text.refresh }}
@@ -228,7 +227,6 @@ const statusOptions = computed(() => [
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'History',
-  description: 'Search real detection tasks, filter by scene, type and status, then view or delete your records.',
   refresh: 'Refresh',
   reload: 'Reload',
   filterTitle: 'Filters',
@@ -285,7 +283,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   deleteFailed: 'Failed to delete history record',
 } : {
   title: '历史记录',
-  description: '查询真实检测任务，按场景、检测类型和状态筛选，并查看或删除属于当前用户的记录。',
   refresh: '刷新',
   reload: '重新加载',
   filterTitle: '记录筛选',
@@ -506,7 +503,7 @@ onMounted(async () => {
 </script>
 
 <style lang="scss" scoped>
-.frontend-b-page { min-height: 100%; }
+.frontend-b-page { min-height: 100%; max-width: 1200px; margin: 0 auto; padding: 0; }
 .page-alert { margin-bottom: 16px; }
 .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fff; }
 .filter-bar__title { display: flex; align-items: center; gap: 7px; margin-right: auto; color: #344054; font-weight: 600; }
