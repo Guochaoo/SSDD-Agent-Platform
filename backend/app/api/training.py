@@ -15,7 +15,6 @@
 """
 
 import base64
-import hashlib
 import io
 import math
 import os
@@ -93,18 +92,32 @@ def _dataset_image_count(dataset_path: Path) -> int:
 
 
 def _validate_dataset_archive(archive_file: zipfile.ZipFile) -> None:
-    """Reject unsafe, oversized, unsupported or duplicate YOLO dataset archives before extraction."""
+    """Reject unsafe, oversized or unsupported dataset archives before extraction.
+
+    ZIP producers commonly write the same metadata file more than once (for
+    example, Roboflow exports may contain three identical ``data.yaml``
+    entries).  Identical entries are harmless and ``extractall`` would simply
+    overwrite them, so they are accepted.  A repeated path with different
+    bytes is still rejected.  Images with equal bytes at different paths are
+    also allowed: real-world datasets (including NEU) can legitimately contain
+    duplicate samples under different filenames.
+    """
     total_uncompressed = 0
-    seen_paths: set[str] = set()
-    image_hashes: set[str] = set()
+    seen_paths: dict[str, tuple[int, int]] = {}
     image_count = 0
     for member in archive_file.infolist():
         if member.is_dir():
             continue
         normalized = member.filename.replace("\\", "/").strip("/")
-        if not normalized or normalized.casefold() in seen_paths:
+        if not normalized:
             raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集压缩包包含重复文件"})
-        seen_paths.add(normalized.casefold())
+        path_key = normalized.casefold()
+        previous = seen_paths.get(path_key)
+        if previous is not None:
+            if previous != (member.file_size, member.CRC):
+                raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集压缩包包含冲突的重复文件"})
+            continue
+        seen_paths[path_key] = (member.file_size, member.CRC)
         suffix = Path(normalized).suffix.lower()
         if suffix not in ALLOWED_DATASET_SUFFIXES:
             raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": f"数据集包含不支持的文件类型: {suffix or '无扩展名'}"})
@@ -113,13 +126,6 @@ def _validate_dataset_archive(archive_file: zipfile.ZipFile) -> None:
             raise HTTPException(status_code=413, detail={"code": "DATASET_TOO_LARGE", "message": "数据集解压后不能超过 2 GB"})
         if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}:
             image_count += 1
-            digest = hashlib.sha256()
-            with archive_file.open(member) as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            if digest.hexdigest() in image_hashes:
-                raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集包含内容重复的图片"})
-            image_hashes.add(digest.hexdigest())
     if image_count == 0:
         raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "数据集至少需要一张图片"})
 
