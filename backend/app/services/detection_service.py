@@ -923,9 +923,16 @@ class DetectionService:
                         total_inference_time=inference_time,
                     )
                     logger.info("Agent检测已写入结果 task_id=%s total_objects=%s", task_id, total_objects)
-                except Exception as exc:
-                    logger.exception("Agent检测写入结果失败: %s", exc)
-                    history_service.mark_failed(_db, task_id, f"Agent 检测写入失败: {exc}")
+                except Exception:
+                    logger.exception("Agent检测写入结果失败")
+                    raise
+        except Exception as exc:
+            if _db and task_id:
+                try:
+                    history_service.mark_failed(_db, task_id, f"Agent 检测失败: {exc}")
+                except Exception:
+                    logger.exception("Agent检测标记失败状态失败: task_id=%s", task_id)
+            raise
         finally:
             if _db:
                 _db.close()

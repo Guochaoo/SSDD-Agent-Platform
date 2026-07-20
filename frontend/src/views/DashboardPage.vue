@@ -366,7 +366,6 @@ function onClickOutside(e) {
 }
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
-  loadDashboard()
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onClickOutside)
@@ -379,6 +378,7 @@ const dashboard = reactive({
   sceneDistribution: [],
   updatedAt: "",
 });
+const previousTrendTotal = ref(0)
 const axisStyle = { axisLine: { lineStyle: { color: "#d0d5dd" } }, axisLabel: { color: "#667085" } };
 
 const trendTotal = computed(() => {
@@ -386,7 +386,7 @@ const trendTotal = computed(() => {
 })
 
 const trendPrevTotal = computed(() => {
-  return dashboard.dailyTrend.reduce((s, d) => s + (d.tasks || 0), 0) || 0
+  return previousTrendTotal.value
 })
 
 const trendChange = computed(() => {
@@ -484,6 +484,7 @@ function pickTrendCompareDate(day) {
   trendCompareOpen.value = false
   tcSelStart.value = null
   tcSelEnd.value = null
+  loadDashboard()
 }
 
 function toggleTrendCompareCal() {
@@ -590,6 +591,20 @@ async function loadDashboard() {
       endDate: filters.dateRange?.[1],
     });
     Object.assign(dashboard, data);
+    const previous = trendPrevRange.value
+    if (previous.start && previous.end) {
+      try {
+        const previousData = await getDashboardApi({
+          startDate: previous.start,
+          endDate: previous.end,
+        })
+        previousTrendTotal.value = previousData.dailyTrend.reduce((sum, item) => sum + item.tasks, 0)
+      } catch {
+        previousTrendTotal.value = 0
+      }
+    } else {
+      previousTrendTotal.value = 0
+    }
   } catch (error) {
     pageError.value = getApiErrorMessage(error, text.value.loadFailed);
   } finally {
