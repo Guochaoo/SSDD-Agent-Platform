@@ -106,6 +106,7 @@ def test_runtime_training_yaml_uses_dataset_root_without_mutating_source(tmp_pat
 def test_every_dataset_marked_builtin_is_read_only():
     assert _is_builtin_dataset(TrainingDataset(path="another-shipped-dataset", is_builtin=True))
     assert _is_builtin_dataset_path("NEU-DET.v9i.yolov11")
+    assert _is_builtin_dataset_path(".")
 
 
 def test_training_defaults_to_cpu_when_device_is_omitted():

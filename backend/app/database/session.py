@@ -15,7 +15,9 @@ engine = create_engine(
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
-    echo=settings.DEBUG,  # DEBUG 模式下打印 SQL 语句
+    # SQL text is never emitted in normal application logs.  Use database
+    # tooling/explicit diagnostics when a query trace is needed.
+    echo=False,
 )
 
 # 会话工厂

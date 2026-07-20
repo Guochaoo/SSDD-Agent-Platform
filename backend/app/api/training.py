@@ -62,7 +62,10 @@ def _is_builtin_dataset(record: TrainingDataset | None) -> bool:
 
 
 def _is_builtin_dataset_path(dataset_path: str, record: TrainingDataset | None = None) -> bool:
-    return dataset_path == BUILTIN_DATASET_PATH or _is_builtin_dataset(record)
+    # The dataset list exposes the root dataset as ``.``.  Treat that stable
+    # relative alias exactly like the shipped dataset name so starting a task
+    # does not fail the ownership lookup with RESOURCE_NOT_FOUND.
+    return dataset_path in {".", BUILTIN_DATASET_PATH} or _is_builtin_dataset(record)
 
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
 
@@ -356,8 +359,14 @@ async def upload_dataset(
     }
 
 
-def _check_task_access(db: Session, task_id: int, current_user):
-    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+def _resolve_training_task(db: Session, identifier: str | int):
+    value = str(identifier).strip()
+    task = db.query(TrainingTask).filter(TrainingTask.id == int(value)).first() if value.isdigit() else None
+    return task or db.query(TrainingTask).filter(TrainingTask.task_uuid == value).first()
+
+
+def _check_task_access(db: Session, task_id: str | int, current_user):
+    task = _resolve_training_task(db, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="训练任务不存在")
     if task.user_id != current_user.id and not current_user.is_superuser:
@@ -465,13 +474,13 @@ async def list_training_tasks(
 
 @router.delete("/tasks/{task_id}")
 async def delete_training_task(
-    task_id: int,
+    task_id: str,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """删除已结束的训练历史及其指标，保留已发布的模型版本。"""
-    _check_task_access(db, task_id, current_user)
-    result = training_service.delete_training_task(db, task_id)
+    task = _check_task_access(db, task_id, current_user)
+    result = training_service.delete_training_task(db, task.id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
@@ -514,13 +523,13 @@ async def get_training_metrics(
 
 @router.post("/stop/{task_id}")
 async def stop_training(
-    task_id: int,
+    task_id: str,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """停止正在运行的训练任务"""
-    _check_task_access(db, task_id, current_user)
-    result = training_service.stop_training(db, task_id)
+    task = _check_task_access(db, task_id, current_user)
+    result = training_service.stop_training(db, task.id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result

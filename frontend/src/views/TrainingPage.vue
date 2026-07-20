@@ -86,7 +86,7 @@
               size="small"
               type="danger"
               text
-              @click.stop="stopTask(row.id)"
+              @click.stop="stopTask(taskIdentifier(row))"
             >
               {{ text.stop }}
             </el-button>
@@ -719,6 +719,12 @@ const mapChartRef = ref(null)
 let lossChart = null
 let mapChart = null
 let pollTimer = null
+let monitorSelectionVersion = 0
+// Keep the active task identifier rather than a global boolean. A user can
+// select a second task while the first task's request is pending; blocking the
+// second request would leave the new monitor empty after the stale response is
+// discarded below.
+let metricsRequestInFlight = null
 
 const confusionChartRef = ref(null)
 const prChartRef = ref(null)
@@ -908,6 +914,10 @@ function isDeletable(task) {
   return task && !RUNNING_STATUSES.has(task.status)
 }
 
+function taskIdentifier(task) {
+  return task?.id ?? task?.task_id ?? task?.taskId ?? task?.task_uuid ?? task?.taskUuid
+}
+
 function formatMetric(value) {
   return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : '-'
 }
@@ -980,6 +990,11 @@ async function fetchTasks() {
     const selected = taskList.value.find((task) => task.id === selectedTask.value?.id)
       || taskStore.selectedTrainingTask
     if (selectedTask.value && selected) selectedTask.value = { ...selectedTask.value, ...selected }
+    else if (selectedTask.value && !selected) {
+      stopPolling()
+      selectedTask.value = null
+      taskStore.clearSelectedTrainingTask()
+    }
     return selected
   } catch (error) {
     console.error('获取训练任务列表失败', error)
@@ -1046,6 +1061,7 @@ async function handleDatasetUpload(uploadFile) {
 
 async function selectTask(task) {
   stopPolling()
+  const selectionVersion = ++monitorSelectionVersion
   selectedTask.value = { ...task }
   taskStore.selectTrainingTask(task.id)
   evalReport.value = null
@@ -1053,7 +1069,7 @@ async function selectTask(task) {
 
   await nextTick()
   initCharts()
-  await fetchMetrics()
+  await fetchMetrics(selectionVersion)
 
   if (RUNNING_STATUSES.has(selectedTask.value?.status)) {
     startPolling()
@@ -1068,15 +1084,19 @@ function initCharts() {
   updateCharts([])
 }
 
-async function fetchMetrics() {
+async function fetchMetrics(selectionVersion = monitorSelectionVersion) {
   if (!selectedTask.value) return
-  const taskId = selectedTask.value.id
+  const taskId = taskIdentifier(selectedTask.value)
+  if (taskId === undefined || taskId === null || taskId === '') return
+  if (metricsRequestInFlight === taskId) return
+  metricsRequestInFlight = taskId
 
   try {
     const [metricsResponse, statusResponse] = await Promise.all([
       getTrainingMetrics(taskId),
       getTrainingStatus(taskId),
     ])
+    if (selectionVersion !== monitorSelectionVersion || taskIdentifier(selectedTask.value) !== taskId) return
     const metrics = metricsResponse.metrics || []
     const taskStatus = normalizeTaskStatusResponse(statusResponse)
 
@@ -1093,7 +1113,18 @@ async function fetchMetrics() {
     monitorError.value = null
   } catch (error) {
     console.error('获取训练监控数据失败', error)
+    if (error?.response?.status === 404) {
+      stopPolling()
+      if (taskIdentifier(selectedTask.value) === taskId) {
+        selectedTask.value = null
+        taskStore.clearSelectedTrainingTask()
+      }
+      monitorError.value = null
+      return
+    }
     reportMonitorError(error, '训练监控数据加载失败')
+  } finally {
+    if (metricsRequestInFlight === taskId) metricsRequestInFlight = null
   }
 }
 
@@ -1249,8 +1280,9 @@ async function deleteTask(task) {
       text.value.delete,
       { type: 'warning' },
     )
-    await deleteTrainingTask(task.id)
-    if (selectedTask.value?.id === task.id) {
+    const identifier = taskIdentifier(task)
+    await deleteTrainingTask(identifier)
+    if (taskIdentifier(selectedTask.value) === identifier) {
       stopPolling()
       selectedTask.value = null
       taskStore.clearSelectedTrainingTask()
@@ -1448,7 +1480,10 @@ onMounted(() => {
   fetchTasks().then((restoredTask) => {
     const requestedTask = taskList.value.find((task) => String(task.id) === String(route.query.task || ''))
     if (requestedTask) selectTask(requestedTask)
-    else if (restoredTask && !selectedTask.value) selectTask(restoredTask)
+    else {
+      const initialTask = restoredTask || taskList.value[0]
+      if (initialTask && !selectedTask.value) selectTask(initialTask)
+    }
   })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)
