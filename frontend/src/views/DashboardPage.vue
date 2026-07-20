@@ -79,9 +79,10 @@
             <span class="chart-pill blue-light">{{ trendPrevTotal }} 次</span>
           </div>
           <div class="chart-compare-row">
-            <span class="chart-compare-label">vs prev.</span>
+            <span class="chart-compare-label">vs </span>
             <span class="chart-compare-date" ref="trendCompareRef" @click.stop="toggleTrendCompareCal">
               {{ trendDateLabel }}
+              <svg class="cal-arrow" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="m12 15.41 5.71-5.7-1.42-1.42-4.29 4.3-4.29-4.3-1.42 1.42z"/></svg>
             </span>
             <Teleport to="body">
               <div v-if="trendCompareOpen" class="period-overlay" @click="trendCompareOpen = false" />
@@ -233,6 +234,39 @@
       <EChartPanel :title="text.classTitle" :option="classOption" :loading="loading" :empty="dashboard.classDistribution.length === 0" height="220px" />
       <EChartPanel title="每日训练趋势" :option="trainingTrendOption" :loading="loading" :empty="dashboard.trainingDailyTrend.length === 0" height="220px" />
       <EChartPanel :title="text.sceneTitle" :option="sceneOption" :loading="loading" :empty="dashboard.sceneDistribution.length === 0" height="220px" />
+      <div class="card detect-time-card">
+        <div class="dt-header">
+          <span class="dt-title">检测耗时</span>
+        </div>
+        <div class="dt-range">
+          <span class="dt-range-val">{{ dtMin }}-{{ dtMax }}</span>
+          <span class="dt-range-unit">ms</span>
+        </div>
+        <div class="dt-date-row">
+          <span class="dt-date">{{ dtDateLabel }}</span>
+          <span class="dt-avg-label">Avg. {{ dtAvg }}</span>
+        </div>
+        <div class="dt-chart-wrap">
+          <div class="dt-avg-line" />
+          <div class="dt-chart">
+            <div v-for="day in dtBars" :key="day.label" class="dt-bar-wrap">
+              <div class="dt-bar-container">
+                <div :class="['dt-bar', day.high ? 'high' : '']" :style="{ height: day.hPx + 'px' }">
+                  <div v-if="day.dotTop" class="dt-dot top" />
+                  <div v-if="day.dotBottom" class="dt-dot bottom" />
+                </div>
+              </div>
+              <div class="dt-day">{{ day.label }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="dt-readings">
+          <div v-for="r in dtReadings" :key="r.label" class="dt-reading">
+            <span class="dt-reading-time">{{ r.label }}</span>
+            <span class="dt-reading-val">{{ r.value }}ms</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -403,6 +437,7 @@ const dashboard = reactive({
   totals: { totalTasks: 0, totalImages: 0, totalObjects: 0, avgInferenceTimeMs: 0, trainingTasks: 0 },
   classDistribution: [],
   dailyTrend: [],
+  dailyInferenceTime: [],
   trainingDailyTrend: [],
   sceneDistribution: [],
   updatedAt: "",
@@ -629,6 +664,47 @@ const trainingTrendOption = computed(() => ({
   series: [{ name: '训练任务', type: 'bar', data: dashboard.trainingDailyTrend.map((item) => item.tasks) }],
 }));
 
+// Detection time bar chart data (real per-day inference time from DB)
+const dtBars = computed(() => {
+  const data = dashboard.dailyInferenceTime?.length ? dashboard.dailyInferenceTime : []
+  if (!data.length) return []
+  const globalMax = Math.max(...data.map(d => d.max || 0), 1)
+  return data.slice(-7).map((d, i) => ({
+    label: ['日','一','二','三','四','五','六'][new Date(d.date + 'T00:00:00').getDay()] || d.date.slice(5),
+    min: d.min || 0,
+    max: d.max || 0,
+    avg: d.avg || 0,
+    hPx: Math.max(8, ((d.max || 0) / globalMax) * 50),
+    high: (d.max || 0) >= globalMax * 0.7,
+    dotTop: i === 1 || i === 6,
+    dotBottom: i === 2 || i === 4,
+    date: d.date,
+  }))
+})
+
+const dtMin = computed(() => {
+  const active = dtBars.value.filter(d => d.max > 0 || d.avg > 0 || d.min > 0)
+  return active.length ? Math.round(Math.min(...active.map(d => d.min))) : 0
+})
+const dtMax = computed(() => Math.round(Math.max(...dtBars.value.map(d => d.max), 0)))
+const dtAvg = computed(() => {
+  if (!dtBars.value.length) return 0
+  const active = dtBars.value.filter(d => d.max > 0 || d.avg > 0 || d.min > 0)
+  return active.length ? Math.round(active.reduce((s, d) => s + d.avg, 0) / active.length) : 0
+})
+const dtDateLabel = computed(() => {
+  const bars = dtBars.value
+  if (!bars.length) return ''
+  return `${bars[0].date} — ${bars[bars.length - 1].date}`
+})
+
+const dtReadings = computed(() => {
+  if (!dtBars.value.length) return []
+  return dtBars.value.slice(-2).map(d => ({
+    label: d.date,
+    value: Math.round(d.avg || 0),
+  }))
+})
 const sceneOption = computed(() => ({
   tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
   color: ["#B8F7B7"],
@@ -995,10 +1071,15 @@ onMounted(() => {
   font-size: 12px;
   color: #52525b;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 
   &:hover { color: #18181b; }
+}
+
+.cal-arrow {
+  flex-shrink: 0;
 }
 
 .side-left {
@@ -1244,7 +1325,7 @@ onMounted(() => {
 /* bottom charts row */
 .dash-grid-bottom {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 0;
 
@@ -1302,6 +1383,161 @@ onMounted(() => {
   50%  { transform: translate(-100%, -100%) translate3d(100%, 100%, 0); }
   75%  { transform: translate(-100%, -100%) translate3d(0, 100%, 0); }
   100% { transform: translate(-100%, -100%) translate3d(0, 0, 0); }
+}
+
+/* detection time card */
+.detect-time-card {
+  padding: 16px 18px;
+}
+
+.dt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.dt-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.dt-range {
+  margin-bottom: 2px;
+}
+
+.dt-range-val {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1a1a;
+  letter-spacing: -0.5px;
+}
+
+.dt-range-unit {
+  font-size: 24px;
+  font-weight: 300;
+  color: #b0b0b0;
+  margin-left: 4px;
+}
+
+.dt-date-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.dt-date {
+  font-size: 11px;
+  color: #999;
+}
+
+.dt-chart-wrap {
+  position: relative;
+  height: 80px;
+  margin-bottom: 16px;
+}
+
+.dt-avg-line {
+  position: absolute;
+  left: 0; right: 0;
+  top: 45%;
+  height: 1.5px;
+  background: #e0e0e0;
+}
+
+.dt-avg-label {
+  background: #1a1a1a;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dt-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  height: 100%;
+  padding: 0 10px;
+}
+
+.dt-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.dt-bar-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.dt-bar {
+  width: 16px;
+  background: linear-gradient(to bottom, #ff5a76, #ff8fa3);
+  border-radius: 8px;
+  position: relative;
+  transition: height 0.3s ease;
+  min-height: 4px;
+
+  &:hover { transform: scale(1.05); }
+
+  &.high {
+    background: linear-gradient(to bottom, #ff2d55, #ff5a76);
+  }
+}
+
+.dt-dot {
+  width: 7px;
+  height: 7px;
+  background: #fff;
+  border: 1.5px solid #ff5a76;
+  border-radius: 50%;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+
+  &.top { top: -4px; }
+  &.bottom { bottom: -4px; }
+}
+
+.dt-day {
+  font-size: 9px;
+  color: #999;
+  font-weight: 500;
+}
+
+.dt-readings {
+  border-top: 1.5px solid #f0f0f0;
+  padding-top: 10px;
+}
+
+.dt-reading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1.5px solid #f0f0f0;
+
+  &:last-child { border-bottom: none; }
+}
+
+.dt-reading-time {
+  font-size: 10px;
+  color: #999;
+}
+
+.dt-reading-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a1a1a;
 }
 
 @media (max-width: 980px) {

@@ -583,6 +583,7 @@ function handleAgentEvent(event) {
       name: normalized.tool_name,
       status: 'running',
       input: normalized.input,
+      agent: normalized.agent || '',
       agentLabel: _currentAgentLabel || normalized.agent || '',
       task_id: normalized.task_id,
       model_id: normalized.model_id,
@@ -1021,8 +1022,13 @@ checkAgentToolContracts()
 
 /* ── Chat bottom (input area fixed at bottom via flex) ── */
 .chat-bottom {
-  position: relative;
-  flex-shrink: 0;
+  /* Keep the latest dev composer positioning so the input bar overlays the
+     message stream consistently with the rest of the application shell. */
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
   padding: 12px 16px 16px;
   background:
     linear-gradient(to top, var(--app-bg) 76%, color-mix(in srgb, var(--app-bg) 0%, transparent));

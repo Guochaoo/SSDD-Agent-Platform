@@ -309,6 +309,13 @@
                 :disabled="!dataset.ready"
               />
             </el-select>
+            <el-select v-model="datasetUpload.dataset_format" style="width: 130px" :disabled="uploadingDataset">
+              <el-option :label="bilingual('自动识别', 'Auto detect')" value="auto" />
+              <el-option label="YOLO" value="yolo" />
+              <el-option label="VOC" value="voc" />
+              <el-option label="COCO" value="coco" />
+              <el-option label="LabelMe" value="labelme" />
+            </el-select>
             <el-upload
               :show-file-list="false"
               accept=".zip"
@@ -318,7 +325,15 @@
               <el-button :loading="uploadingDataset" :icon="UploadFilled">{{ bilingual('上传 ZIP', 'Upload ZIP') }}</el-button>
             </el-upload>
           </div>
-          <span class="form-hint">{{ bilingual('ZIP 根目录必须包含 data.yaml', 'The ZIP root must contain data.yaml') }}</span>
+          <span class="form-hint">{{ bilingual('支持任意目录名；通过标注内容引用图片，无法唯一配对时会明确报错', 'Directory names are ignored; images are resolved from annotation references') }}</span>
+        </el-form-item>
+        <el-form-item :label="bilingual('自动划分', 'Auto split')">
+          <el-space wrap>
+            <span>Train</span><el-input-number v-model="datasetUpload.train_ratio" :min="0.05" :max="0.95" :step="0.05" :precision="2" size="small" />
+            <span>Val</span><el-input-number v-model="datasetUpload.val_ratio" :min="0.05" :max="0.9" :step="0.05" :precision="2" size="small" />
+            <span>Test</span><el-input-number v-model="datasetUpload.test_ratio" :min="0" :max="0.9" :step="0.05" :precision="2" size="small" />
+          </el-space>
+          <span class="form-hint">{{ bilingual('仅在源数据没有显式划分元数据时使用，三项之和必须为 1', 'Used only without explicit split metadata; values must total 1') }}</span>
         </el-form-item>
         <el-form-item :label="bilingual('检测场景', 'Detection scene')">
           <el-select v-model="trainForm.scene_id" class="full-width" :placeholder="bilingual('选择场景', 'Select a scene')">
@@ -368,9 +383,13 @@
 
         <el-form-item :label="bilingual('优化器', 'Optimizer')">
           <el-select v-model="trainForm.optimizer" class="full-width">
+            <el-option label="Auto" value="auto" />
             <el-option label="SGD（推荐）" value="SGD" />
             <el-option label="Adam" value="Adam" />
             <el-option label="AdamW" value="AdamW" />
+            <el-option label="NAdam" value="NAdam" />
+            <el-option label="RAdam" value="RAdam" />
+            <el-option label="RMSProp" value="RMSProp" />
           </el-select>
         </el-form-item>
 
@@ -383,6 +402,36 @@
             :precision="4"
           />
         </el-form-item>
+
+        <el-collapse class="advanced-settings">
+          <el-collapse-item :title="bilingual('高级设置', 'Advanced settings')" name="advanced">
+            <el-row :gutter="16">
+              <el-col :span="12"><el-form-item label="LRF"><el-input-number v-model="trainForm.train_config.lrf" :min="0" :max="1" :step="0.01" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item :label="bilingual('动量', 'Momentum')"><el-input-number v-model="trainForm.train_config.momentum" :min="0" :max="1" :step="0.01" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item :label="bilingual('权重衰减', 'Weight decay')"><el-input-number v-model="trainForm.train_config.weight_decay" :min="0" :max="0.1" :step="0.0001" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item :label="bilingual('耐心轮数', 'Patience')"><el-input-number v-model="trainForm.train_config.patience" :min="0" :max="500" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Warmup epochs"><el-input-number v-model="trainForm.train_config.warmup_epochs" :min="0" :max="20" :step="0.5" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Workers"><el-input-number v-model="trainForm.train_config.workers" :min="0" :max="64" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Seed"><el-input-number v-model="trainForm.train_config.seed" :min="0" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Close mosaic"><el-input-number v-model="trainForm.train_config.close_mosaic" :min="0" :max="500" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Mosaic"><el-slider v-model="trainForm.train_config.mosaic" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="MixUp"><el-slider v-model="trainForm.train_config.mixup" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Flip LR"><el-slider v-model="trainForm.train_config.fliplr" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Flip UD"><el-slider v-model="trainForm.train_config.flipud" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Scale"><el-slider v-model="trainForm.train_config.scale" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Translate"><el-slider v-model="trainForm.train_config.translate" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Dropout"><el-slider v-model="trainForm.train_config.dropout" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Erasing"><el-slider v-model="trainForm.train_config.erasing" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Label smoothing"><el-slider v-model="trainForm.train_config.label_smoothing" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Cos LR"><el-switch v-model="trainForm.train_config.cos_lr" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="AMP"><el-switch v-model="trainForm.train_config.amp" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item :label="bilingual('确定性', 'Deterministic')"><el-switch v-model="trainForm.train_config.deterministic" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Cache"><el-switch v-model="trainForm.train_config.cache" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Rect"><el-switch v-model="trainForm.train_config.rect" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Multi-scale"><el-switch v-model="trainForm.train_config.multi_scale" /></el-form-item></el-col>
+            </el-row>
+          </el-collapse-item>
+        </el-collapse>
       </el-form>
 
       <template #footer>
@@ -518,12 +567,13 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
 import { useTaskStore } from '@/stores/tasks'
 import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import {
   downloadTrainingModel,
   deleteTrainingTask,
@@ -538,12 +588,14 @@ import {
   deleteTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
+
 import { getScenesApi } from '@/api/models'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
 import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import { getApiErrorInfo } from '@/utils/apiError'
 
+const route = useRoute()
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 const settingsStore = useSettingsStore()
@@ -707,11 +759,53 @@ const trainForm = ref({
   device: 'cpu',
   optimizer: 'SGD',
   lr0: 0.01,
+  train_config: {
+    lrf: 0.01,
+    momentum: 0.937,
+    weight_decay: 0.0005,
+    warmup_epochs: 3,
+    warmup_momentum: 0.8,
+    warmup_bias_lr: 0.1,
+    patience: 100,
+    cos_lr: false,
+    amp: true,
+    pretrained: true,
+    deterministic: true,
+    seed: 0,
+    workers: 8,
+    cache: false,
+    rect: false,
+    multi_scale: false,
+    close_mosaic: 10,
+    save_period: -1,
+    mosaic: 1,
+    mixup: 0,
+    fliplr: 0.5,
+    flipud: 0,
+    scale: 0.3,
+    degrees: 0,
+    translate: 0.1,
+    shear: 0,
+    perspective: 0,
+    hsv_h: 0.015,
+    hsv_s: 0.7,
+    hsv_v: 0.4,
+    erasing: 0,
+    label_smoothing: 0.1,
+    dropout: 0.1,
+  },
 })
 const scenes = ref([])
 const datasets = ref([])
 const uploadingDataset = ref(false)
 const loadingDatasets = ref(false)
+const datasetUpload = ref({
+  dataset_format: 'auto',
+  train_ratio: 0.8,
+  val_ratio: 0.1,
+  test_ratio: 0.1,
+  split_seed: 42,
+})
 
 const metricCards = computed(() => {
   const task = selectedTask.value
@@ -935,10 +1029,13 @@ async function handleDatasetUpload(uploadFile) {
   uploadingDataset.value = true
   pageError.value = null
   try {
-    const dataset = await uploadTrainingDataset(uploadFile.raw)
+    const dataset = await uploadTrainingDataset(uploadFile.raw, datasetUpload.value)
     await fetchDatasets()
     trainForm.value.dataset_path = dataset.path
-    ElMessage.success('数据集上传并校验通过')
+    const summary = dataset.conversion
+    ElMessage.success(summary
+      ? `已转换 ${summary.images} 张图片，识别 ${summary.classes.length} 个类别`
+      : '数据集上传并校验通过')
   } catch (error) {
     console.error('上传训练数据集失败', error)
     reportPageError(error, '训练数据集上传失败', () => handleDatasetUpload(uploadFile))
@@ -1114,6 +1211,7 @@ async function retryTask(task) {
       optimizer: task.optimizer || 'SGD',
       lr0: task.lr0 || 0.01,
       augment_config: task.augment_config || null,
+      train_config: task.train_config || {},
     })
     ElMessage.success(`训练任务已重新创建：${response.task_uuid}`)
     await fetchTasks()
@@ -1348,7 +1446,9 @@ function resizeCharts() {
 
 onMounted(() => {
   fetchTasks().then((restoredTask) => {
-    if (restoredTask && !selectedTask.value) selectTask(restoredTask)
+    const requestedTask = taskList.value.find((task) => String(task.id) === String(route.query.task || ''))
+    if (requestedTask) selectTask(requestedTask)
+    else if (restoredTask && !selectedTask.value) selectTask(restoredTask)
   })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)

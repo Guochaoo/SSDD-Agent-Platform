@@ -94,6 +94,27 @@ def test_statistics_matches_actual_data(db_session):
     assert stats["total_images"] == 1
     assert stats["total_objects"] == 2
     assert stats["class_distribution"] == {"scratches": 1, "crazing": 1}
+    assert stats["daily_inference_time"][-1]["min"] == 100
+    assert stats["daily_inference_time"][-1]["max"] == 100
+    assert stats["daily_inference_time"][-1]["avg"] == 100
+
+
+def test_daily_inference_time_includes_completed_tasks_without_results(db_session):
+    user = _make_user(db_session, "alice")
+    scene = _make_scene(db_session)
+
+    task = history_service.create_task(db_session, user.id, scene.id, task_type="single")
+    history_service.mark_completed(
+        db_session, task.id, total_images=1, total_objects=0, total_inference_time=42.5
+    )
+
+    stats = history_service.get_statistics(db_session, user_id=user.id)
+    assert stats["daily_inference_time"][-1] == {
+        "date": stats["daily_inference_time"][-1]["date"],
+        "min": 42.5,
+        "max": 42.5,
+        "avg": 42.5,
+    }
 
 
 def test_statistics_uses_the_same_period_and_status_contract(db_session):

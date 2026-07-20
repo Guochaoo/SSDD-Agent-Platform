@@ -20,6 +20,7 @@ import {
   startTraining,
   stopTraining,
   validateTrainingModel,
+  uploadTrainingDataset,
 } from '@/api/training'
 import { startTrainingApi } from '@/api/training'
 
@@ -90,5 +91,24 @@ describe('training api', () => {
     expect(request.post).toHaveBeenCalledWith('/training/start', expect.objectContaining({
       device: 'cpu',
     }))
+  })
+
+  it('sends dataset format and deterministic split options with an upload', async () => {
+    const file = new File(['archive'], 'dataset.zip', { type: 'application/zip' })
+
+    await uploadTrainingDataset(file, {
+      dataset_format: 'voc',
+      train_ratio: 0.7,
+      val_ratio: 0.2,
+      test_ratio: 0.1,
+      split_seed: 19,
+    })
+
+    const formData = request.post.mock.calls[0][1]
+    expect(request.post.mock.calls[0][0]).toBe('/training/datasets/upload')
+    expect(formData.get('file')).toBe(file)
+    expect(formData.get('dataset_format')).toBe('voc')
+    expect(formData.get('train_ratio')).toBe('0.7')
+    expect(formData.get('split_seed')).toBe('19')
   })
 })

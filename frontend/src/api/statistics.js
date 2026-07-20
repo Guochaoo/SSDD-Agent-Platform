@@ -34,6 +34,12 @@ export function normalizeDashboardResponse(payload) {
       })),
     confidenceDistribution:
       data.confidenceDistribution ?? data.confidence_distribution ?? [],
+    dailyInferenceTime: (data.dailyInferenceTime ?? data.daily_inference_time ?? []).map((item) => ({
+      date: item.date,
+      min: Number(item.min ?? 0),
+      max: Number(item.max ?? 0),
+      avg: Number(item.avg ?? 0),
+    })),
     modelMetrics: data.modelMetrics ?? data.model_metrics ?? [],
     updatedAt: data.updatedAt ?? data.updated_at ?? "",
   };

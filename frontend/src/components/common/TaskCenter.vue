@@ -26,7 +26,7 @@ import StatusTag from '@/components/common/StatusTag.vue'
 import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
 import { useTaskStore } from '@/stores/tasks'
 const visible = ref(false); const router = useRouter(); const taskStore = useTaskStore(); const { trainingTasks, loadingTrainingTasks, detectionTasks, loadingDetectionTasks } = storeToRefs(taskStore)
-const allTasks = computed(() => [...trainingTasks.value.map((task) => ({ ...task, kind: 'training' })), ...detectionTasks.value.map((task) => ({ ...task, kind: 'detection', progress: task.status === 'completed' ? 100 : 0, error_message: task.errorMessage }))])
+const allTasks = computed(() => [...trainingTasks.value.map((task) => ({ ...task, kind: 'training' })), ...detectionTasks.value.map((task) => ({ ...task, kind: 'detection', progress: task.status === 'completed' ? 100 : (task.progress || 0), error_message: task.errorMessage }))])
 const loading = computed(() => loadingTrainingTasks.value || loadingDetectionTasks.value)
 const error = ref('')
 const activeTasks = computed(() => allTasks.value.filter((task) => ['pending', 'running', 'processing'].includes(task.status)))
