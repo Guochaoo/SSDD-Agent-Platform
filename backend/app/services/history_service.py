@@ -235,6 +235,22 @@ class HistoryService:
                        for offset in range((end_date - start_date).days + 1)
                        for day in [start_date + timedelta(days=offset)]]
 
+        # 每天检测耗时：基于 DetectionResult.inference_time 按天聚合
+        time_query = HistoryService._apply_task_filters(
+            db.query(func.date(DetectionTask.created_at),
+                     func.min(DetectionResult.inference_time),
+                     func.max(DetectionResult.inference_time),
+                     func.avg(DetectionResult.inference_time)).join(
+                DetectionResult, DetectionResult.task_id == DetectionTask.id
+            ),
+            user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
+        )
+        time_rows = time_query.group_by(func.date(DetectionTask.created_at)).order_by(func.date(DetectionTask.created_at)).all()
+        time_map = {str(d): {"min": float(mn or 0), "max": float(mx or 0), "avg": float(av or 0)} for d, mn, mx, av in time_rows}
+        daily_inference_time = [{"date": str(day), **time_map.get(str(day), {"min": 0, "max": 0, "avg": 0})}
+                                for offset in range((end_date - start_date).days + 1)
+                                for day in [start_date + timedelta(days=offset)]]
+
         # 场景分布
         scene_query = query.join(DetectionScene, DetectionTask.scene_id == DetectionScene.id).with_entities(
             DetectionScene.display_name, func.count(DetectionTask.id)
@@ -262,6 +278,7 @@ class HistoryService:
             "scene_distribution": scene_distribution,
             "training_total_tasks": training_query.count(),
             "training_daily_trend": training_daily_trend,
+            "daily_inference_time": daily_inference_time,
         }
 
 
