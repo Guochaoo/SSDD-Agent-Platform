@@ -15,7 +15,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config.detection import (
     ALLOWED_IMAGE_TYPES,
@@ -793,11 +793,17 @@ class DetectionService:
         try:
             model_version = (
                 db.query(ModelVersion)
+                .options(joinedload(ModelVersion.scene))
                 .filter(ModelVersion.status == "active", ModelVersion.is_default == True)
                 .first()
             )
             if not model_version:
-                model_version = db.query(ModelVersion).filter(ModelVersion.status == "active").first()
+                model_version = (
+                    db.query(ModelVersion)
+                    .options(joinedload(ModelVersion.scene))
+                    .filter(ModelVersion.status == "active")
+                    .first()
+                )
             if not model_version:
                 raise RuntimeError("数据库中没有可用的模型版本，请先注册模型")
             return self._get_model(model_version), model_version
@@ -810,6 +816,7 @@ class DetectionService:
     ) -> dict:
         """同步检测本地图片文件（供 Agent Tool 调用）。user_id 不为 None 时写入 DetectionTask。"""
         model, model_version = self._get_default_model()
+        class_names_cn = (model_version.scene.class_names_cn or {}) if model_version.scene else {}
 
         # ── 创建 DetectionTask（Agent 调用时） ──
         task_id = None
@@ -848,17 +855,20 @@ class DetectionService:
                 for box in result.boxes:
                     cls_id = int(box.cls.item())
                     cls_name = model.names.get(cls_id, f"class_{cls_id}")
+                    cls_name_cn = class_names_cn.get(cls_name, cls_name)
                     confidence = float(box.conf.item())
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
 
                     detections.append({
                         "class_name": cls_name,
+                        "class_name_cn": cls_name_cn,
                         "class_id": cls_id,
                         "confidence": round(confidence, 4),
                         "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
                     })
                     total_objects += 1
-                    class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+                    display_name = cls_name_cn or cls_name
+                    class_counts[display_name] = class_counts.get(display_name, 0) + 1
 
             inference_time = round(float(result.speed.get("inference", 0)), 2)
             artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
@@ -898,6 +908,7 @@ class DetectionService:
                             "original_object_key": original_object_key,
                             "annotated_object_key": annotated_object_key,
                             "class_name": d["class_name"],
+                            "class_name_cn": d.get("class_name_cn") or d["class_name"],
                             "class_id": d["class_id"],
                             "confidence": d["confidence"],
                             "bbox": d["bbox"],
@@ -912,8 +923,9 @@ class DetectionService:
                             "annotated_image_url": annotated_url,
                             "original_object_key": original_object_key,
                             "annotated_object_key": annotated_object_key,
-                            "class_name": "", "class_id": 0, "confidence": 0.0,
-                            "bbox": [0, 0, 0, 0], "inference_time": inference_time,
+                            "class_name": "", "class_name_cn": None, "class_id": 0,
+                            "confidence": 0.0, "bbox": [0, 0, 0, 0],
+                            "inference_time": inference_time,
                             "image_width": image_width, "image_height": image_height,
                         }
                     ]
