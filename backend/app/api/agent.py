@@ -11,7 +11,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -190,14 +190,20 @@ async def cached_models():
 
 @router.get("/sessions")
 def list_chat_sessions(
-    search: str | None = Query(default=None, max_length=200),
-    page: int | None = Query(default=None, ge=1),
-    page_size: int | None = Query(default=None, ge=1, le=100),
+    search: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
     archived: bool | None = None,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Return the user's sessions, or every user's sessions for administrators."""
+    if search is not None and len(search) > 200:
+        raise HTTPException(status_code=422, detail="Search query is too long")
+    if page is not None and page < 1:
+        raise HTTPException(status_code=422, detail="Page must be at least 1")
+    if page_size is not None and not 1 <= page_size <= 100:
+        raise HTTPException(status_code=422, detail="Page size must be between 1 and 100")
     query = db.query(ChatSession)
     if not current_user.is_superuser:
         query = query.filter(ChatSession.user_id == current_user.id)
