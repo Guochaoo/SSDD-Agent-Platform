@@ -518,12 +518,13 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
 import { useTaskStore } from '@/stores/tasks'
 import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import {
   downloadTrainingModel,
   deleteTrainingTask,
@@ -538,12 +539,14 @@ import {
   deleteTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
+
 import { getScenesApi } from '@/api/models'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
 import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import { getApiErrorInfo } from '@/utils/apiError'
 
+const route = useRoute()
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 const settingsStore = useSettingsStore()
@@ -1348,7 +1351,9 @@ function resizeCharts() {
 
 onMounted(() => {
   fetchTasks().then((restoredTask) => {
-    if (restoredTask && !selectedTask.value) selectTask(restoredTask)
+    const requestedTask = taskList.value.find((task) => String(task.id) === String(route.query.task || ''))
+    if (requestedTask) selectTask(requestedTask)
+    else if (restoredTask && !selectedTask.value) selectTask(restoredTask)
   })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)

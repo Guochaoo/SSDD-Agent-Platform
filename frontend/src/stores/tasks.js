@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { getTrainingTasks } from '@/api/training'
 import { getHistoryApi } from '@/api/history'
+import { getVideoStatusApi } from '@/api/detection'
 
 const SELECTED_TRAINING_TASK_KEY = 'ssdd_selected_training_task_id'
 
@@ -43,7 +44,26 @@ export const useTaskStore = defineStore('tasks', {
       this.loadingDetectionTasks = true
       try {
         const response = await getHistoryApi({ page: 1, pageSize: 100 })
-        this.detectionTasks = response.items || []
+        const tasks = response.items || []
+        const activeVideos = tasks.filter(
+          (task) => task.taskType === 'video' && ['pending', 'processing'].includes(task.status),
+        )
+        const progressResults = await Promise.allSettled(activeVideos.map(async (task) => ({
+          id: task.id,
+          data: await getVideoStatusApi(task.id),
+        })))
+        const progressMap = new Map(progressResults
+          .filter((result) => result.status === 'fulfilled')
+          .map((result) => [result.value.id, result.value.data]))
+        this.detectionTasks = tasks.map((task) => {
+          const current = progressMap.get(task.id)
+          return current ? {
+            ...task,
+            status: current.status ?? task.status,
+            progress: current.progress ?? 0,
+            errorMessage: current.status === 'failed' ? (current.message || task.errorMessage) : task.errorMessage,
+          } : task
+        })
         return this.detectionTasks
       } finally {
         this.loadingDetectionTasks = false

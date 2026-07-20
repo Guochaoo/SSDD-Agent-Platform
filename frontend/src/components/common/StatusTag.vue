@@ -16,7 +16,7 @@ const props = defineProps({
 
 const type = computed(() => ({
   completed: 'success', success: 'success', ready: 'success',
-  running: 'warning', pending: 'info', queued: 'info',
+  running: 'warning', processing: 'warning', pending: 'info', queued: 'info',
   failed: 'danger', error: 'danger', cancelled: 'info',
 })[props.status] || 'info')
 </script>

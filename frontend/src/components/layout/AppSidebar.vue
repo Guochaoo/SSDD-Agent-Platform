@@ -120,7 +120,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
-import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield } from '@boxicons/vue'
+import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield, ClipboardCheck } from '@boxicons/vue'
 import { ElMessageBox } from 'element-plus'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 
@@ -212,6 +212,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   chat: 'Chat',
   detection: 'Detection',
   training: 'Training',
+  tasks: 'Task Center',
   files: 'Files',
   history: 'History',
   dashboard: 'Dashboard',
@@ -232,6 +233,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   chat: '智能对话',
   detection: '检测工作台',
   training: '模型训练',
+  tasks: '任务中心',
   files: '文件查看',
   history: '历史记录',
   dashboard: '数据看板',
@@ -252,6 +254,7 @@ const menuItems = computed(() => [
   { path: '/chat', title: text.value.chat, icon: MessageCircleDetail },
   { path: '/detection', title: text.value.detection, icon: Capture },
   { path: '/training', title: text.value.training, icon: Computer },
+  { path: '/tasks', title: text.value.tasks, icon: ClipboardCheck },
   { path: '/files', title: text.value.files, icon: Folder },
   { path: '/history', title: text.value.history, icon: History },
   { path: '/dashboard', title: text.value.dashboard, icon: ChartTrend },
