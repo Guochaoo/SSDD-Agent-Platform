@@ -44,8 +44,12 @@ def setup_logging() -> None:
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
 
-    for noisy_logger in ("uvicorn", "uvicorn.access", "sqlalchemy", "minio", "httpx"):
+    for noisy_logger in (
+        "uvicorn", "uvicorn.access", "sqlalchemy", "sqlalchemy.engine",
+        "sqlalchemy.pool", "sqlalchemy.orm", "minio", "httpx",
+    ):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").disabled = True
 
     _initialized = True
 

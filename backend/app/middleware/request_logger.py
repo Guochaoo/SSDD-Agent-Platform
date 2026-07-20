@@ -23,7 +23,11 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         finally:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             status_code = response.status_code if response is not None else 500
-            logger.info(
+            # Monitoring polls are expected high-frequency traffic. Keep
+            # their diagnostics available at DEBUG without flooding normal
+            # backend logs every few seconds.
+            log = logger.debug if request.url.path.startswith("/api/training/status/") or request.url.path.startswith("/api/training/metrics/") else logger.info
+            log(
                 "request_id=%s %s %s status=%s duration=%.2fms client=%s",
                 request_id,
                 request.method,

@@ -180,10 +180,16 @@ class TrainingService:
         # ── 创建独立的数据库会话（后台线程不能复用请求级会话）──
         db = SessionLocal()
         runtime_data_yaml = None
+        original_cwd = os.getcwd()
         try:
             task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
             if not task:
                 logger.error("训练任务不存在：task_id=%d", task_id)
+                return
+
+            # Stop may arrive while the worker is still loading.  Do not turn
+            # a durably cancelled task into running after that request.
+            if task.status == "cancelled":
                 return
 
             # ── 更新状态为 running ──
@@ -212,7 +218,6 @@ class TrainingService:
             if not os.path.exists(data_yaml):
                 raise FileNotFoundError(f"data.yaml 不存在：{data_yaml}")
 
-            original_cwd = os.getcwd()
             runtime_data_yaml = _create_runtime_data_yaml(data_yaml)
             logger.info("创建训练运行时 data.yaml：%s", runtime_data_yaml)
 
@@ -301,6 +306,19 @@ class TrainingService:
                     logger.warning("训练回调异常（不影响训练）：%s", str(e))
                     db.rollback()
 
+            def on_train_batch_end(trainer):
+                """Persist coarse batch progress so the monitor moves during long epochs."""
+                try:
+                    total_batches = max(int(getattr(trainer, "nb", 0) or 0), 1)
+                    batch_index = int(getattr(trainer, "batch_i", 0) or 0) + 1
+                    epoch = int(getattr(trainer, "epoch", 0) or 0)
+                    task.progress = min(99, int((epoch + batch_index / total_batches) * 100 / max(task.epochs, 1)))
+                    if batch_index == 1 or batch_index % 10 == 0:
+                        db.commit()
+                except Exception:
+                    db.rollback()
+
+            model.add_callback("on_train_batch_end", on_train_batch_end)
             # 添加回调
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
@@ -591,7 +609,9 @@ class TrainingService:
         if not task:
             return {"error": "训练任务不存在"}
 
-        if task.status != "running":
+        if task.status not in {"pending", "running"}:
+            if task.status == "cancelled":
+                return {"message": "训练任务已停止", "task_id": task.id}
             return {"error": f"任务当前状态为 {task.status}，无法停止"}
 
         with _running_lock:
