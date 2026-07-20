@@ -218,12 +218,12 @@ class HistoryService:
 
         # 类别分布：基于 detection_results 按 class_name 聚合
         result_query = HistoryService._apply_task_filters(
-            db.query(DetectionResult.class_name, func.count(DetectionResult.id)).join(
+            db.query(func.coalesce(DetectionResult.class_name_cn, DetectionResult.class_name).label('display_name'), func.count(DetectionResult.id)).join(
                 DetectionTask, DetectionResult.task_id == DetectionTask.id
-            ),
+            ).filter(DetectionResult.class_name != ""),
             user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
         )
-        class_distribution = dict(result_query.group_by(DetectionResult.class_name).all())
+        class_distribution = {name: int(cnt) for name, cnt in result_query.group_by('display_name').all()}
 
         daily_query = HistoryService._apply_task_filters(
             db.query(func.date(DetectionTask.created_at), func.count(DetectionTask.id)),
