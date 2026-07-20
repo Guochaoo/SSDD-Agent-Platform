@@ -188,6 +188,7 @@ import {
 } from '@/api/agent'
 import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
+import { normalizeAgentError, normalizeAgentEvent } from '@/utils/agentCards'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
 
@@ -345,7 +346,7 @@ function autoResizeChat() {
 
 function handleHeroSend() {
   if (agentStore.isStreaming) {
-    agentStore.stopStreaming()
+    agentStore.cancelCurrentRun()
     return
   }
   const text = heroInput.value.trim()
@@ -356,7 +357,7 @@ function handleHeroSend() {
 
 function handleChatSend() {
   if (agentStore.isStreaming) {
-    agentStore.stopStreaming()
+    agentStore.cancelCurrentRun()
     return
   }
   const text = chatInput.value.trim()
@@ -547,6 +548,11 @@ async function runVideoDetect(file, options) {
       annotatedVideoUrl: result.annotated_video_url || '',
     }
     agentStore.setToolCall({ name: 'detect_video', status: 'success', result })
+    agentStore.addToolResultCard(assistantMessage.videoResult, 'detect_video', {
+      type: 'video_result',
+      task_id: task.task_id,
+      model_id: options.modelId,
+    })
   } catch (error) {
     assistantMessage.content = chatText.value.videoFailed
     agentStore.setToolCall({ name: 'detect_video', status: 'error', error: error?.message || chatText.value.videoFailed })
@@ -559,119 +565,88 @@ async function runVideoDetect(file, options) {
 let _currentAgentLabel = ''
 
 function handleAgentEvent(event) {
-  if (event.type === 'agent_switch') {
-    _currentAgentLabel = event.label || ''
+  const normalized = normalizeAgentEvent(event)
+  if (normalized.type === 'agent_switch') {
+    _currentAgentLabel = normalized.label || ''
     return
   }
-  if (event.type === 'text_delta' || event.type === 'text_chunk') {
-    const content = event.content || ''
+  if (normalized.type === 'run_start') {
+    agentStore.activeRunId = normalized.run_id || normalized.runId || normalized.id || agentStore.activeRunId
+  }
+  if (normalized.type === 'text_delta' || normalized.type === 'text_chunk') {
+    const content = normalized.content || ''
     agentStore.appendAssistantContent(content)
   }
-  if (event.type === 'tool_start') {
+  if (normalized.type === 'tool_start') {
     agentStore.setToolCall({
-      id: event.tool_call_id || event.tool_name,
-      name: event.tool_name,
+      id: normalized.tool_call_id || normalized.tool_name,
+      name: normalized.tool_name,
       status: 'running',
-      input: event.input,
-      agent: event.agent || '',
-      agentLabel: _currentAgentLabel || event.agent || '',
+      input: normalized.input,
+      agent: normalized.agent || '',
+      agentLabel: _currentAgentLabel || normalized.agent || '',
+      task_id: normalized.task_id,
+      model_id: normalized.model_id,
+      file_id: normalized.file_id,
+      knowledge_document_id: normalized.knowledge_document_id,
     })
   }
-  if (event.type === 'tool_result') {
+  if (normalized.type === 'tool_delta') {
     agentStore.setToolCall({
-      id: event.tool_call_id || event.tool_name,
-      name: event.tool_name,
-      status: 'success',
-      result: event.result,
-      agent: event.agent || '',
-      agentLabel: _currentAgentLabel || event.agent || '',
+      id: normalized.tool_call_id || normalized.tool_name,
+      name: normalized.tool_name,
+      status: 'running',
+      progress: normalized.progress,
+      input: normalized.input,
+      agentLabel: _currentAgentLabel || normalized.agent || '',
     })
-    void attachToolResultCard(event.result, event.tool_name)
   }
-  if (event.type === 'message_end') {
+  if (normalized.type === 'tool_result') {
+    agentStore.setToolCall({
+      id: normalized.tool_call_id || normalized.tool_name,
+      name: normalized.tool_name,
+      status: 'success',
+      result: normalized.result,
+      agentLabel: _currentAgentLabel || normalized.agent || '',
+      task_id: normalized.task_id,
+      model_id: normalized.model_id,
+      file_id: normalized.file_id,
+      knowledge_document_id: normalized.knowledge_document_id,
+    })
+    agentStore.addToolResultCard(normalized.result, normalized.tool_name, {
+      id: normalized.tool_call_id,
+      task_id: normalized.task_id,
+      model_id: normalized.model_id,
+      file_id: normalized.file_id,
+      knowledge_document_id: normalized.knowledge_document_id,
+      references: normalized.references,
+      snapshot: normalized.snapshot,
+    })
+  }
+  if (normalized.type === 'message_end') {
     agentStore.isStreaming = false
     agentStore.setConnectionStatus('idle')
+    agentStore.activeRunId = ''
     const lastMsg = agentStore.messages[agentStore.messages.length - 1]
     if (lastMsg?.role === 'assistant') lastMsg.status = 'done'
     saveCurrentSession()
     _currentAgentLabel = ''
   }
-  if (event.type === 'error') {
-    agentStore.errorMessage = event.message || chatText.value.agentFailed
+  if (normalized.type === 'cancelled') {
+    agentStore.stopStreaming()
+    agentStore.activeRunId = ''
+    _currentAgentLabel = ''
+  }
+  if (normalized.type === 'error') {
+    const mapped = normalizeAgentError(normalized.error || normalized, chatText.value.agentFailed)
+    agentStore.errorMessage = mapped.code ? `[${mapped.code}] ${mapped.message}` : mapped.message
     agentStore.isStreaming = false
     agentStore.setConnectionStatus('error')
+    agentStore.activeRunId = ''
     agentStore.markLastAssistantError(agentStore.errorMessage)
     ElMessage.error(agentStore.errorMessage)
     _currentAgentLabel = ''
   }
-}
-
-async function attachToolResultCard(rawResult, toolName = '') {
-  let payload = rawResult
-  if (typeof payload === 'string') {
-    try { payload = JSON.parse(payload) } catch { return }
-  }
-  const result = payload?.result || payload
-  if (!result || result.error) return
-  const assistantMessage = [...agentStore.messages].reverse().find((message) => message.role === 'assistant')
-  const userMessage = [...agentStore.messages].reverse().find((message) => message.role === 'user')
-  if (!assistantMessage) return
-
-  const cardType = {
-    get_detection_statistics: 'statistics',
-    query_detection_history: 'history',
-    search_knowledge: 'knowledge_citations',
-  }[toolName] || 'detection_result'
-  if (cardType !== 'detection_result') {
-    assistantMessage.toolResultCards = assistantMessage.toolResultCards || []
-    assistantMessage.toolResultCards.push({
-      id: `${toolName}-${Date.now()}`,
-      type: cardType,
-      result,
-    })
-    saveCurrentSession()
-    return
-  }
-
-  const normalizeObjects = (detections = []) => detections.map((item, index) => ({
-      id: String(index),
-      className: item.class_name || item.className || 'unknown',
-      classNameCn: item.class_name_cn || item.classNameCn || item.class_name || 'unknown',
-      confidence: Number(item.confidence || 0),
-      bbox: Array.isArray(item.bbox) ? item.bbox.map(Number) : [0, 0, 0, 0],
-      bboxPercent: null,
-  }))
-
-  if (Array.isArray(result.results)) {
-    assistantMessage.detectionResult = {
-      taskId: `agent-${Date.now()}`,
-      totalImages: result.total_images ?? result.results.length,
-      totalObjects: result.total_objects ?? 0,
-      items: result.results.map((item) => ({
-        fileName: item.filename || item.file_name || '',
-        annotatedImageUrl: item.annotated_image_url || item.annotatedImageUrl || '',
-        totalObjects: item.total_objects ?? item.detections?.length ?? 0,
-        inferenceTimeMs: Number(item.inference_time || 0),
-        objects: normalizeObjects(item.detections),
-        error: item.error || null,
-      })),
-    }
-  } else {
-    const detections = result.detections || []
-    assistantMessage.detectionResult = {
-      taskId: `agent-${Date.now()}`,
-      fileName: result.filename || '',
-      originalImageUrl: result.image_url || result.originalImageUrl || '',
-      annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '',
-      totalObjects: result.total_objects ?? result.totalObjects ?? detections.length,
-      totalImages: result.total_images ?? 1,
-      inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0),
-      objects: normalizeObjects(detections),
-    }
-  }
-  assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || ''
-  await agentStore.hydrateDetectionImages(assistantMessage)
-  saveCurrentSession()
 }
 
 function doSend(text) {
@@ -680,6 +655,7 @@ function doSend(text) {
   agentStore.setConnectionStatus('connecting')
   agentStore.currentToolCall = null
   agentStore.errorMessage = ''
+  agentStore.activeRunId = ''
 
   const formData = new FormData()
   formData.append('message', text)
@@ -701,6 +677,7 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('idle')
       agentStore.abortController = null
+      agentStore.activeRunId = ''
       agentStore.clearImages()
       saveCurrentSession()
     },
@@ -708,7 +685,9 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('error')
       agentStore.abortController = null
-      const detail = error?.code ? `[${error.code}] ${error.message || chatText.value.agentUnavailable}${error.requestId ? ` (Request ID: ${error.requestId})` : ''}` : (error?.message || chatText.value.agentUnavailable)
+      agentStore.activeRunId = ''
+      const mapped = normalizeAgentError(error, chatText.value.agentUnavailable)
+      const detail = mapped.code ? `[${mapped.code}] ${mapped.message}${mapped.requestId ? ` (Request ID: ${mapped.requestId})` : ''}` : mapped.message
       agentStore.markLastAssistantError(detail)
       ElMessage.error(detail)
     },
@@ -764,15 +743,15 @@ checkAgentToolContracts()
   }
 
   &:not(.hero) {
-    position: relative;
     overflow: hidden;
   }
 }
 
 .chat-main {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding-bottom: 140px;
+  padding-bottom: 16px;
 }
 
 /* ── Hero ── */
@@ -807,7 +786,7 @@ checkAgentToolContracts()
   grid-template-areas:
     "primary"
     "bottom";
-  background: rgba(255, 255, 255, 0.5);
+  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
   backdrop-filter: blur(20px);
   border: 0;
   border-radius: 28px;
@@ -923,18 +902,19 @@ checkAgentToolContracts()
 
 .quick-btn {
   padding: 3px 10px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--app-border);
   border-radius: 14px;
   background: transparent;
-  color: #52525b;
+  color: var(--app-muted);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
 
   &:hover:not(:disabled) {
-    border-color: #a1a1aa;
-    color: #18181b;
+    border-color: #8f8ab0;
+    color: var(--app-text);
+    background: var(--app-hover);
   }
 
   &:disabled {
@@ -952,7 +932,7 @@ checkAgentToolContracts()
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #000000;
+  color: var(--app-text);
   cursor: pointer;
   transition: all 0.15s;
 
@@ -976,7 +956,7 @@ checkAgentToolContracts()
   &:disabled { opacity: 0.3; cursor: not-allowed; }
 }
 
-:root[data-theme='dark'] .send-btn {
+:global(:root[data-theme='dark']) .send-btn {
   background: #3f3f46;
   color: #f4f4f5;
 
@@ -1042,16 +1022,39 @@ checkAgentToolContracts()
 
 /* ── Chat bottom (input area fixed at bottom via flex) ── */
 .chat-bottom {
+  /* Keep the latest dev composer positioning so the input bar overlays the
+     message stream consistently with the rest of the application shell. */
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   z-index: 10;
   padding: 12px 16px 16px;
+  background:
+    linear-gradient(to top, var(--app-bg) 76%, color-mix(in srgb, var(--app-bg) 0%, transparent));
+  border-top: 1px solid var(--app-border);
 
   .prompt-card {
     max-width: 790px;
     margin: 0 auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .card-footer {
+    height: auto;
+    flex-wrap: wrap;
+  }
+
+  .footer-quick {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding-top: 4px;
+  }
+
+  .chat-bottom {
+    padding-inline: 10px;
   }
 }
 </style>
