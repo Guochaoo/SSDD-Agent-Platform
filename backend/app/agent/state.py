@@ -28,8 +28,8 @@ AGENT_TRAINING = "training"
 AGENT_FINISH = "FINISH"
 
 AGENT_LABELS = {
-    AGENT_DETECTION:   "🔍 检测 Agent",
-    AGENT_DATA:        "📊 数据 Agent",
-    AGENT_GENERAL:     "💬 通用 Agent",
-    AGENT_TRAINING:    "🏋️ 训练 Agent",
+    AGENT_DETECTION:   "检测 Agent",
+    AGENT_DATA:        "数据 Agent",
+    AGENT_GENERAL:     "通用 Agent",
+    AGENT_TRAINING:    "训练 Agent",
 }

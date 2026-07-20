@@ -10,14 +10,17 @@
         :alt="text.uploadAlt"
       />
     </div>
-    <span class="user-text">{{ message.content }}</span>
+    <span v-if="message.content" class="user-text">{{ message.content }}</span>
   </div>
 
   <!-- Assistant message: centered, prominent, no avatar -->
   <div v-else class="assistant-msg">
     <div class="assistant-content">
       <div v-if="message.toolCalls?.length" class="message-tool-header">
-        <div v-if="agentLabel" class="agent-label">{{ agentLabel }}</div>
+        <div v-if="agentLabel" class="agent-label">
+          <span v-if="agentIcon" class="agent-icon" v-html="agentIcon" />
+          <span>{{ agentLabel }}</span>
+        </div>
         <div class="tool-trace">
           <div
             v-for="tool in message.toolCalls"
@@ -110,6 +113,13 @@ import { computed, ref } from 'vue'
 import { DocumentCopy, Check, Refresh } from '@element-plus/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { renderMarkdown } from '@/utils/markdown'
+import { AGENT_ICON_BY_NAME } from '@/stores/agent'
+const AGENT_LABEL_BY_NAME = {
+  detection: '检测 Agent',
+  data: '数据 Agent',
+  general: '通用 Agent',
+  training: '训练 Agent',
+}
 import DetectionResultCard from './DetectionResultCard.vue'
 
 const props = defineProps({
@@ -163,9 +173,17 @@ const renderedContent = computed(() => {
   return renderMarkdown(props.message.content || '')
 })
 
+const agentName = computed(() => {
+  return props.message.toolCalls?.find(t => t.agent)?.agent || ''
+})
+
 const agentLabel = computed(() => {
-  const tool = props.message.toolCalls?.find(t => t.agentLabel || t.agent)
-  return tool?.agentLabel || tool?.agent || ''
+  if (agentName.value) return AGENT_LABEL_BY_NAME?.[agentName.value] || agentName.value
+  return props.message.toolCalls?.find(t => t.agentLabel)?.agentLabel || ''
+})
+
+const agentIcon = computed(() => {
+  return AGENT_ICON_BY_NAME[agentName.value] || ''
 })
 
 const formattedTime = computed(() => {
@@ -418,11 +436,19 @@ function getCardTitle(type) {
 }
 
 .agent-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   margin: 0 0 6px 2px;
   color: #8F8AB0;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.3px;
+}
+
+.agent-icon {
+  display: inline-flex;
+  align-items: center;
 }
 
 .tool-trace-item {
