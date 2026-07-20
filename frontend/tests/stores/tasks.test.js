@@ -3,7 +3,9 @@ import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/api/training', () => ({ getTrainingTasks: vi.fn() }))
 vi.mock('@/api/history', () => ({ getHistoryApi: vi.fn() }))
+vi.mock('@/api/detection', () => ({ getVideoStatusApi: vi.fn() }))
 
+import { getVideoStatusApi } from '@/api/detection'
 import { getHistoryApi } from '@/api/history'
 import { getTrainingTasks } from '@/api/training'
 import { useTaskStore } from '@/stores/tasks'
@@ -16,12 +18,14 @@ describe('task store recovery', () => {
 
   it('loads up to the API maximum of persisted detection tasks for recovery', async () => {
     getHistoryApi.mockResolvedValueOnce({ items: [{ id: 1, taskType: 'video', status: 'processing' }] })
+    getVideoStatusApi.mockResolvedValueOnce({ status: 'processing', progress: 42 })
     const store = useTaskStore()
 
     await store.fetchDetectionTasks()
 
     expect(getHistoryApi).toHaveBeenCalledWith({ page: 1, pageSize: 100 })
-    expect(store.detectionTasks).toEqual([{ id: 1, taskType: 'video', status: 'processing' }])
+    expect(getVideoStatusApi).toHaveBeenCalledWith(1)
+    expect(store.detectionTasks).toEqual([{ id: 1, taskType: 'video', status: 'processing', progress: 42, errorMessage: undefined }])
   })
 
   it('refreshes training tasks from the server instead of relying on page-local polling', async () => {
