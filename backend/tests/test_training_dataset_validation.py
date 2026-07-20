@@ -4,11 +4,13 @@ import zipfile
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.training import _is_builtin_dataset, _is_builtin_dataset_path, _validate_dataset_archive, _validate_dataset_classes
 from app.entity.db_models import TrainingDataset
 from app.entity.schemas import TrainingTaskCreate
 from app.training.training_service import _create_runtime_data_yaml
+from app.training.training_service import training_service
 
 
 def _archive(entries):
@@ -86,3 +88,32 @@ def test_every_dataset_marked_builtin_is_read_only():
 
 def test_training_defaults_to_cpu_when_device_is_omitted():
     assert TrainingTaskCreate(scene_id=1).device == "cpu"
+
+
+def test_advanced_training_config_accepts_cloud_script_options():
+    request = TrainingTaskCreate(
+        scene_id=1,
+        train_config={
+            "mosaic": 0.8,
+            "mixup": 0.1,
+            "fliplr": 0.4,
+            "scale": 0.3,
+            "cos_lr": True,
+            "erasing": 0.0,
+            "label_smoothing": 0.1,
+            "dropout": 0.1,
+        },
+    )
+
+    assert request.train_config.scale == 0.3
+    assert request.train_config.cos_lr is True
+    assert request.train_config.label_smoothing == 0.1
+
+
+def test_advanced_training_config_rejects_unknown_or_out_of_range_options():
+    with pytest.raises(ValidationError):
+        TrainingTaskCreate(scene_id=1, train_config={"project": "/tmp/override"})
+    with pytest.raises(ValidationError):
+        TrainingTaskCreate(scene_id=1, train_config={"mosaic": 1.1})
+    with pytest.raises(ValidationError):
+        training_service.start_training(None, 1, 1, {"train_config": {"project": "/tmp/override"}})
