@@ -17,8 +17,8 @@
   <div v-else class="assistant-msg">
     <div class="assistant-content">
       <div v-if="message.toolCalls?.length" class="message-tool-header">
-        <div v-if="agentName" class="agent-label">
-          <span class="agent-icon" v-html="agentIcon" />
+        <div v-if="agentLabel" class="agent-label">
+          <span v-if="agentIcon" class="agent-icon" v-html="agentIcon" />
           <span>{{ agentLabel }}</span>
         </div>
         <div class="tool-trace">
@@ -118,6 +118,7 @@ const AGENT_LABEL_BY_NAME = {
   detection: '检测 Agent',
   data: '数据 Agent',
   general: '通用 Agent',
+  training: '训练 Agent',
 }
 import DetectionResultCard from './DetectionResultCard.vue'
 
