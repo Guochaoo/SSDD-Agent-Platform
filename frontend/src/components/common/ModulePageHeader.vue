@@ -1,8 +1,8 @@
 <template>
   <header class="module-header">
     <div>
-      <h1 v-if="title">{{ title }}</h1>
-      <p>{{ description }}</p>
+      <span v-if="title" class="module-header__title">{{ title }}</span>
+      <p v-if="description" class="module-header__desc">{{ description }}</p>
     </div>
     <div class="module-header__actions">
       <slot />
@@ -20,31 +20,31 @@ defineProps({
 <style lang="scss" scoped>
 .module-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: $spacing-lg;
-  margin-bottom: $spacing-lg;
+  gap: 12px;
+  margin-bottom: 12px;
+}
 
-  h1 {
-    margin: 3px 0 8px;
-    color: #172033;
-    font-size: 28px;
-    line-height: 1.25;
-  }
+.module-header__title {
+  font-size: 40px;
+  font-weight: 600;
+  color: #000000;
+  letter-spacing: -0.3px;
+}
 
-  p {
-    max-width: 760px;
-    margin: 0;
-    color: $text-secondary;
-    line-height: 1.65;
-  }
+.module-header__desc {
+  margin: 4px 0 0;
+  max-width: 640px;
+  color: #98a2b3;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .module-header__actions {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
-  padding-top: 4px;
+  gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -52,11 +52,11 @@ defineProps({
 @media (max-width: 780px) {
   .module-header {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .module-header__actions {
     justify-content: flex-start;
-    padding-top: 0;
   }
 }
 </style>
