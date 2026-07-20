@@ -134,14 +134,14 @@
 
       <div class="card card-dark">
         <p class="card-eyebrow">主要指标</p>
-        <h4>检测任务完成率</h4>
+        <h4>已完成检测任务</h4>
         <div class="progress-wrap">
           <div class="progress-row">
-            <span class="progress-val">{{ completionRate }}%</span>
-            <span class="progress-target">目标 100%</span>
+            <span class="progress-val">{{ dashboard.totals.totalTasks }}<small> 次</small></span>
+            <span class="progress-target">当前周期</span>
           </div>
           <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: completionRate + '%' }" />
+            <div class="progress-fill" :style="{ width: dashboard.totals.totalTasks ? '100%' : '0%' }" />
           </div>
         </div>
       </div>
@@ -511,12 +511,6 @@ function openTrendDatePicker() {
   calSelStart.value = filters.dateRange[0] || null
   calSelEnd.value = filters.dateRange[1] || null
 }
-
-const completionRate = computed(() => {
-  const total = dashboard.totals.totalTasks
-  if (!total) return 0
-  return Math.round((total / Math.max(total, 1)) * 100)
-})
 
 const text = computed(() => settingsStore.isEnglish ? {
   refresh: 'Refresh',
