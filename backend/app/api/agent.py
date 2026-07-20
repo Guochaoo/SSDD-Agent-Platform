@@ -13,6 +13,7 @@ from uuid import uuid4
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.agent.supervisor import supervisor_agent
@@ -30,6 +31,11 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/bmp", "image/tiff", "im
 
 logger = get_logger(__name__)
 MAX_HISTORY_MESSAGES = 20
+
+
+class AgentSessionUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    archived: Optional[bool] = None
 
 
 def _card_type_for_tool(tool_name: str) -> str:
@@ -184,17 +190,35 @@ async def cached_models():
 
 @router.get("/sessions")
 def list_chat_sessions(
+    search: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    archived: bool | None = None,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Return the user's sessions, or every user's sessions for administrators."""
+    if search is not None and len(search) > 200:
+        raise HTTPException(status_code=422, detail="Search query is too long")
+    if page is not None and page < 1:
+        raise HTTPException(status_code=422, detail="Page must be at least 1")
+    if page_size is not None and not 1 <= page_size <= 100:
+        raise HTTPException(status_code=422, detail="Page size must be between 1 and 100")
     query = db.query(ChatSession)
     if not current_user.is_superuser:
         query = query.filter(ChatSession.user_id == current_user.id)
-    sessions = query.order_by(
+    if archived is not None:
+        query = query.filter(ChatSession.status == ("archived" if archived else "active"))
+    if search:
+        query = query.filter(ChatSession.title.ilike(f"%{search.strip()}%"))
+    query = query.order_by(
         ChatSession.last_message_at.desc(), ChatSession.created_at.desc()
-    ).all()
-    return [
+    )
+    total = query.count()
+    if page is not None and page_size is not None:
+        query = query.offset((page - 1) * page_size).limit(page_size)
+    sessions = query.all()
+    items = [
         {
             "id": session.session_uuid,
             "owner_id": session.user_id,
@@ -203,9 +227,13 @@ def list_chat_sessions(
             "message_count": session.message_count or 0,
             "created_at": session.created_at,
             "updated_at": session.last_message_at or session.created_at,
+            "archived": session.status == "archived",
         }
         for session in sessions
     ]
+    if page is None and page_size is None and search is None and archived is None:
+        return items
+    return {"items": items, "total": total, "page": page or 1, "page_size": page_size or total}
 
 
 def _get_owned_session(db: Session, session_id: str, user_id: int) -> ChatSession | None:
@@ -261,6 +289,35 @@ def get_chat_session(
             }
             for message in messages
         ],
+    }
+
+
+@router.patch("/sessions/{session_id}")
+def update_chat_session(
+    session_id: str,
+    payload: AgentSessionUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update owner-controlled session metadata without changing messages."""
+    session = _get_owned_session(db, session_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session does not exist")
+    if payload.title is not None:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=422, detail="Session title cannot be empty")
+        session.title = title
+    if payload.archived is not None:
+        session.status = "archived" if payload.archived else "active"
+    session.updated_at = datetime.now()
+    db.commit()
+    db.refresh(session)
+    return {
+        "id": session.session_uuid,
+        "title": session.title or "New chat",
+        "archived": session.status == "archived",
+        "updated_at": session.updated_at,
     }
 
 
@@ -332,6 +389,16 @@ def delete_chat_session(
 # ══════════════════════════════════════════════════════════════
 # Image upload
 # ══════════════════════════════════════════════════════════════
+
+@router.post("/runs/{run_id}/cancel")
+def cancel_agent_run(run_id: str, current_user=Depends(get_current_user)):
+    raise HTTPException(status_code=501, detail="Agent run remote cancellation is not implemented")
+
+
+@router.post("/runs/{run_id}/tools/{tool_call_id}/cancel")
+def cancel_agent_tool(run_id: str, tool_call_id: str, current_user=Depends(get_current_user)):
+    raise HTTPException(status_code=501, detail="Agent tool remote cancellation is not implemented")
+
 
 @router.post("/upload")
 async def upload_image(

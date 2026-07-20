@@ -23,26 +23,9 @@
 
 <script setup>
 import { Loading } from "@element-plus/icons-vue";
-import { BarChart, LineChart, PieChart } from "echarts/charts";
-import {
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-} from "echarts/components";
-import * as echarts from "echarts/core";
-import { SVGRenderer } from "echarts/renderers";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useSettingsStore } from '@/stores/settings'
-
-echarts.use([
-  BarChart,
-  LineChart,
-  PieChart,
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-  SVGRenderer,
-]);
+import echarts from '@/utils/echarts'
 
 const props = defineProps({
   title: { type: String, default: "" },
@@ -72,7 +55,7 @@ async function renderChart() {
   if (props.loading || props.empty || !chartRef.value) return;
   await nextTick();
   if (!chart) {
-    chart = echarts.init(chartRef.value, null, { renderer: "svg" });
+    chart = echarts.init(chartRef.value, null, { renderer: "canvas" });
   }
   chart.setOption(props.option, { notMerge: true, lazyUpdate: true });
   chart.resize();

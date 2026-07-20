@@ -83,3 +83,16 @@ def test_one_based_ultralytics_csv_does_not_create_epoch_n_plus_one(tmp_path):
     metrics = TrainingService.parse_results_csv(str(csv_path))
 
     assert [metric["epoch"] for metric in metrics] == [1, 2]
+
+
+def test_stop_training_cancels_pending_task_idempotently(db_session):
+    task = _task(db_session, task_uuid="pending-stop")
+    task.status = "pending"
+    db_session.commit()
+
+    first = TrainingService.stop_training(db_session, task.id)
+    second = TrainingService.stop_training(db_session, task.id)
+
+    assert first["task_id"] == task.id
+    assert second["task_id"] == task.id
+    assert db_session.get(TrainingTask, task.id).status == "cancelled"

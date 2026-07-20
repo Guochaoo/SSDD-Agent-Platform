@@ -15,10 +15,10 @@
 """
 
 import base64
-import hashlib
 import io
 import math
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -44,6 +44,7 @@ from app.entity.schemas import (
     TrainingTaskResponse,
 )
 from app.training.training_service import training_service
+from app.training.dataset_importer import DatasetImportError, import_dataset
 
 logger = get_logger(__name__)
 
@@ -52,7 +53,7 @@ MAX_DATASET_ARCHIVE_BYTES = 500 * 1024 * 1024
 MAX_DATASET_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
 ALLOWED_DATASET_SUFFIXES = {
     ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff",
-    ".txt", ".yaml", ".yml",
+    ".txt", ".yaml", ".yml", ".xml", ".json",
 }
 
 
@@ -91,18 +92,32 @@ def _dataset_image_count(dataset_path: Path) -> int:
 
 
 def _validate_dataset_archive(archive_file: zipfile.ZipFile) -> None:
-    """Reject unsafe, oversized, unsupported or duplicate YOLO dataset archives before extraction."""
+    """Reject unsafe, oversized or unsupported dataset archives before extraction.
+
+    ZIP producers commonly write the same metadata file more than once (for
+    example, Roboflow exports may contain three identical ``data.yaml``
+    entries).  Identical entries are harmless and ``extractall`` would simply
+    overwrite them, so they are accepted.  A repeated path with different
+    bytes is still rejected.  Images with equal bytes at different paths are
+    also allowed: real-world datasets (including NEU) can legitimately contain
+    duplicate samples under different filenames.
+    """
     total_uncompressed = 0
-    seen_paths: set[str] = set()
-    image_hashes: set[str] = set()
+    seen_paths: dict[str, tuple[int, int]] = {}
     image_count = 0
     for member in archive_file.infolist():
         if member.is_dir():
             continue
         normalized = member.filename.replace("\\", "/").strip("/")
-        if not normalized or normalized.casefold() in seen_paths:
+        if not normalized:
             raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集压缩包包含重复文件"})
-        seen_paths.add(normalized.casefold())
+        path_key = normalized.casefold()
+        previous = seen_paths.get(path_key)
+        if previous is not None:
+            if previous != (member.file_size, member.CRC):
+                raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集压缩包包含冲突的重复文件"})
+            continue
+        seen_paths[path_key] = (member.file_size, member.CRC)
         suffix = Path(normalized).suffix.lower()
         if suffix not in ALLOWED_DATASET_SUFFIXES:
             raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": f"数据集包含不支持的文件类型: {suffix or '无扩展名'}"})
@@ -111,13 +126,6 @@ def _validate_dataset_archive(archive_file: zipfile.ZipFile) -> None:
             raise HTTPException(status_code=413, detail={"code": "DATASET_TOO_LARGE", "message": "数据集解压后不能超过 2 GB"})
         if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}:
             image_count += 1
-            digest = hashlib.sha256()
-            with archive_file.open(member) as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            if digest.hexdigest() in image_hashes:
-                raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集包含内容重复的图片"})
-            image_hashes.add(digest.hexdigest())
     if image_count == 0:
         raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "数据集至少需要一张图片"})
 
@@ -278,12 +286,19 @@ async def delete_dataset(
 @router.post("/datasets/upload")
 async def upload_dataset(
     file: UploadFile = File(...),
+    dataset_format: str = Form("auto"),
+    train_ratio: float = Form(0.8),
+    val_ratio: float = Form(0.1),
+    test_ratio: float = Form(0.1),
+    split_seed: int = Form(42),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="数据集必须是 ZIP 文件")
-    dataset_name = Path(file.filename).stem.replace(" ", "_")
+    dataset_name = re.sub(r"[^\w.-]+", "_", Path(file.filename).stem, flags=re.UNICODE).strip("._-")[:120]
+    if not dataset_name:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": "数据集文件名无效"})
     target = _safe_dataset_path(dataset_name)
     existing = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_name).first()
     if existing or target.exists():
@@ -291,27 +306,57 @@ async def upload_dataset(
     archive = await file.read()
     if len(archive) > MAX_DATASET_ARCHIVE_BYTES:
         raise HTTPException(status_code=413, detail={"code": "DATASET_TOO_LARGE", "message": "数据集压缩包不能超过 500 MB"})
+    dataset_root = _dataset_root()
+    dataset_root.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(tempfile.mkdtemp(prefix=".dataset-upload-", dir=dataset_root))
+    extracted = staging_root / "source"
+    prepared = staging_root / "prepared"
+    extracted.mkdir()
+    conversion_report = None
     try:
-        target.mkdir(parents=True, exist_ok=False)
         with zipfile.ZipFile(io.BytesIO(archive)) as archive_file:
             for member in archive_file.infolist():
-                member_path = (target / member.filename).resolve()
-                if target not in member_path.parents and member_path != target:
+                member_path = (extracted / member.filename).resolve()
+                if extracted not in member_path.parents and member_path != extracted:
                     raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": "数据集压缩包包含非法路径"})
             _validate_dataset_archive(archive_file)
-            archive_file.extractall(target)
-        if not (target / "data.yaml").is_file():
-            raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "数据集压缩包根目录必须包含 data.yaml"})
-        _validate_dataset_classes(target)
+            archive_file.extractall(extracted)
+        conversion_report = import_dataset(
+            source=extracted,
+            target=prepared,
+            dataset_format=dataset_format,
+            split_ratios=(train_ratio, val_ratio, test_ratio),
+            seed=split_seed,
+        )
+        _validate_dataset_classes(prepared)
+        prepared.rename(target)
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": "数据集压缩包无法解析"})
+    except DatasetImportError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
     except HTTPException:
-        shutil.rmtree(target, ignore_errors=True)
         raise
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
     record = TrainingDataset(path=dataset_name, owner_id=current_user.id, is_builtin=False)
     db.add(record)
-    db.commit()
-    return {"name": target.name, "path": target.name, "ready": True, "owner_id": current_user.id, "is_builtin": False}
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+    return {
+        "name": target.name,
+        "path": target.name,
+        "ready": True,
+        "owner_id": current_user.id,
+        "is_builtin": False,
+        "conversion": conversion_report,
+    }
 
 
 def _resolve_training_task(db: Session, identifier: str | int):
@@ -357,6 +402,7 @@ async def start_training(
         "optimizer": request.optimizer,
         "lr0": request.lr0,
         "augment_config": request.augment_config,
+        "train_config": request.train_config.model_dump(exclude_none=True) if request.train_config else {},
     }
 
     # ── 从场景获取数据集路径 ──
