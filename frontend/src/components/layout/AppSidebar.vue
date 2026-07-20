@@ -63,35 +63,46 @@
 
     <!-- Footer: user menu -->
     <div class="sidebar-footer" ref="footerRef">
-      <div class="user-btn" @click="menuOpen = !menuOpen">
+      <button
+        type="button"
+        class="user-btn"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
+        @click="menuOpen = !menuOpen"
+        @keydown.esc.stop="menuOpen = false"
+      >
         <el-avatar :size="24" :src="userStore.avatar || undefined" class="user-avatar">
           {{ userStore.username?.charAt(0)?.toUpperCase() }}
         </el-avatar>
         <span v-show="!collapsed" class="user-name">{{ userStore.username }}</span>
         <ChevronsUpDown v-show="!collapsed" class="user-chevron" />
-      </div>
+      </button>
       <Teleport to="body">
         <div v-if="menuOpen" class="user-menu-overlay" @click="menuOpen = false" />
         <transition name="menu-fade">
-          <div v-if="menuOpen" class="user-menu-card" :style="menuStyle">
+          <div v-if="menuOpen" class="user-menu-card" :style="menuStyle" role="menu">
             <ul class="user-menu-list">
-              <li class="user-menu-item" @click="handleMenuCommand('settings')">
+              <li>
+                <button type="button" class="user-menu-item" role="menuitem" @click="handleMenuCommand('settings')">
                 <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
                   <circle r="3" cy="12" cx="12" />
                 </svg>
                 <span class="user-menu-label">{{ text.settings }}</span>
+                </button>
               </li>
             </ul>
             <div class="user-menu-sep" />
             <ul class="user-menu-list">
-              <li class="user-menu-item danger" @click="handleMenuCommand('logout')">
+              <li>
+                <button type="button" class="user-menu-item danger" role="menuitem" @click="handleMenuCommand('logout')">
                 <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                   <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
                   <line y2="17" y1="11" x2="10" x1="10" /><line y2="17" y1="11" x2="14" x1="14" />
                 </svg>
                 <span class="user-menu-label">{{ text.logout }}</span>
+                </button>
               </li>
             </ul>
           </div>
@@ -597,6 +608,11 @@ async function handleDeleteSession(id) {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.15s;
@@ -668,6 +684,11 @@ async function handleDeleteSession(id) {
   cursor: pointer;
   font-size: 14px;
   transition: all 0.25s ease-out;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
 
   svg {
     width: 16px;

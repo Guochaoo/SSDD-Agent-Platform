@@ -2,7 +2,7 @@
   <div class="dashboard-page">
     <!-- header bar -->
     <div class="dash-header">
-      <span class="dash-title">数据看板</span>
+      <span class="dash-title">Dash Board</span>
       <div class="dash-header-right">
         <div class="period-wrap" ref="periodRef">
         <button class="period-trigger" @click="menuOpen = !menuOpen">
@@ -148,14 +148,14 @@
       <div class="side-right">
         <div class="card card-dark">
           <p class="card-eyebrow">主要指标</p>
-          <h4>检测任务完成率</h4>
+          <h4>已完成检测任务</h4>
           <div class="progress-wrap">
             <div class="progress-row">
-              <span class="progress-val">{{ completionRate }}%</span>
-              <span class="progress-target">目标 100%</span>
+              <span class="progress-val">{{ dashboard.totals.totalTasks }}</span>
+              <span class="progress-target">当前周期</span>
             </div>
             <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: completionRate + '%' }" />
+              <div class="progress-fill" :style="{ width: dashboard.totals.totalTasks ? '100%' : '0%' }" />
             </div>
           </div>
         </div>
@@ -395,7 +395,6 @@ function onClickOutside(e) {
 }
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
-  loadDashboard()
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onClickOutside)
@@ -415,7 +414,7 @@ const trendTotal = computed(() => {
 })
 
 const trendPrevTotal = computed(() => {
-  return dashboard.dailyTrend.reduce((s, d) => s + (d.tasks || 0), 0) || 0
+  return prevDashboard.dailyTrend.reduce((s, d) => s + (d.tasks || 0), 0) || 0
 })
 
 const trendChange = computed(() => {
@@ -513,6 +512,7 @@ function pickTrendCompareDate(day) {
   trendCompareOpen.value = false
   tcSelStart.value = null
   tcSelEnd.value = null
+  loadDashboard()
 }
 
 function toggleTrendCompareCal() {
@@ -570,12 +570,6 @@ const kpiMax = computed(() => Math.max(
 ))
 
 const kpiMaxTime = computed(() => Math.max(Number(dashboard.totals.avgInferenceTimeMs || 0), 1))
-
-const completionRate = computed(() => {
-  const total = dashboard.totals.totalTasks
-  if (!total) return 0
-  return Math.round((total / Math.max(total, 1)) * 100)
-})
 
 const text = computed(() => settingsStore.isEnglish ? {
   refresh: 'Refresh',
@@ -660,6 +654,9 @@ async function loadDashboard() {
         const prevData = await getDashboardApi({ startDate: ps, endDate: pe })
         Object.assign(prevDashboard, prevData)
       } catch { /* prev period data is best-effort */ }
+    } else {
+      prevDashboard.totals = { totalTasks: 0, totalImages: 0, totalObjects: 0, avgInferenceTimeMs: 0, trainingTasks: 0 }
+      prevDashboard.dailyTrend = []
     }
   } catch (error) {
     pageError.value = getApiErrorMessage(error, text.value.loadFailed);
@@ -690,7 +687,7 @@ onMounted(() => {
 .dash-title {
   font-size: 40px;
   font-weight: 600;
-  color: #000000;
+  color: #8b8b94;
   letter-spacing: -0.3px;
 }
 

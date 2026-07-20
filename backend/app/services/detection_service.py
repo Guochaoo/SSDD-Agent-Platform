@@ -15,7 +15,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config.detection import (
     ALLOWED_IMAGE_TYPES,
@@ -793,11 +793,17 @@ class DetectionService:
         try:
             model_version = (
                 db.query(ModelVersion)
+                .options(joinedload(ModelVersion.scene))
                 .filter(ModelVersion.status == "active", ModelVersion.is_default == True)
                 .first()
             )
             if not model_version:
-                model_version = db.query(ModelVersion).filter(ModelVersion.status == "active").first()
+                model_version = (
+                    db.query(ModelVersion)
+                    .options(joinedload(ModelVersion.scene))
+                    .filter(ModelVersion.status == "active")
+                    .first()
+                )
             if not model_version:
                 raise RuntimeError("数据库中没有可用的模型版本，请先注册模型")
             # Access scene within the session to avoid detached lazy-load
@@ -902,7 +908,7 @@ class DetectionService:
                             "annotated_image_url": annotated_url,
                             "original_object_key": original_object_key,
                             "annotated_object_key": annotated_object_key,
-                            "class_name": d.get("class_name_cn") or d["class_name"],
+                            "class_name": d["class_name"],
                             "class_name_cn": d.get("class_name_cn") or d["class_name"],
                             "class_id": d["class_id"],
                             "confidence": d["confidence"],
@@ -912,6 +918,17 @@ class DetectionService:
                             "image_height": image_height,
                         }
                         for d in detections
+                    ] or [
+                        {
+                            "image_path": image_url,
+                            "annotated_image_url": annotated_url,
+                            "original_object_key": original_object_key,
+                            "annotated_object_key": annotated_object_key,
+                            "class_name": "", "class_name_cn": None, "class_id": 0,
+                            "confidence": 0.0, "bbox": [0, 0, 0, 0],
+                            "inference_time": inference_time,
+                            "image_width": image_width, "image_height": image_height,
+                        }
                     ]
                     history_service.add_results(_db, task_id, db_results)
                     history_service.mark_completed(
@@ -919,9 +936,16 @@ class DetectionService:
                         total_inference_time=inference_time,
                     )
                     logger.info("Agent检测已写入结果 task_id=%s total_objects=%s", task_id, total_objects)
-                except Exception as exc:
-                    logger.exception("Agent检测写入结果失败: %s", exc)
-                    history_service.mark_failed(_db, task_id, f"Agent 检测写入失败: {exc}")
+                except Exception:
+                    logger.exception("Agent检测写入结果失败")
+                    raise
+        except Exception as exc:
+            if _db and task_id:
+                try:
+                    history_service.mark_failed(_db, task_id, f"Agent 检测失败: {exc}")
+                except Exception:
+                    logger.exception("Agent检测标记失败状态失败: task_id=%s", task_id)
+            raise
         finally:
             if _db:
                 _db.close()

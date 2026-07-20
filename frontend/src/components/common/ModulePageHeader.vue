@@ -1,7 +1,7 @@
 <template>
   <header class="module-header">
     <div>
-      <span v-if="title" class="module-header__title">{{ title }}</span>
+      <h1 v-if="title" class="module-header__title">{{ title }}</h1>
       <p v-if="description" class="module-header__desc">{{ description }}</p>
     </div>
     <div class="module-header__actions">
@@ -27,6 +27,7 @@ defineProps({
 }
 
 .module-header__title {
+  margin: 0;
   font-size: 40px;
   font-weight: 600;
   color: #000000;

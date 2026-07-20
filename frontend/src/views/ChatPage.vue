@@ -53,10 +53,10 @@
               </div>
 
               <div class="footer-quick">
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">单图</button>
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">批量</button>
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">ZIP</button>
-                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">视频</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
               </div>
 
               <button
@@ -136,7 +136,7 @@
               <input
                 ref="fileInputRef"
                 type="file"
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
                 multiple
                 hidden
                 @change="onFileChange"
@@ -144,10 +144,10 @@
             </div>
 
             <div class="footer-quick">
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">单图</button>
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">批量</button>
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">ZIP</button>
-              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">视频</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
             </div>
 
             <button
