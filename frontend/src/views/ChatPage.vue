@@ -251,10 +251,6 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   batchDone: (images, count) => `Batch detection completed. Processed ${images} images and found ${count} possible defects.`,
   singleFailed: 'Single-image detection failed. Please try again later.',
   batchFailed: 'Batch detection failed. Please try again later.',
-  analyzing: 'Analyzing the steel surface image...',
-  detectFailed: 'Detection failed. Check the backend service, model and authentication, then try again.',
-  noDefect: 'No obvious defect detected. Review the threshold with the production context before rechecking.',
-  unknownDefect: 'Unknown defect',
   quickDetect: { single: 'Single image', batch: 'Batch images', zip: 'ZIP', video: 'Video' },
   chips: [
     'Analyze defects in this steel surface',
@@ -287,10 +283,6 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   batchDone: (images, count) => `批量检测完成，共处理 ${images} 张图片，发现 ${count} 个疑似缺陷。`,
   singleFailed: '单图检测失败，请稍后重试。',
   batchFailed: '批量检测失败，请稍后重试。',
-  analyzing: '正在分析钢铁表面图像……',
-  detectFailed: '检测失败，请检查后端服务、模型和鉴权状态后重试。',
-  noDefect: '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。',
-  unknownDefect: '未知缺陷',
   quickDetect: { single: '单图检测', batch: '批量图片检测', zip: 'ZIP 检测', video: '视频检测' },
   chips: [
     '分析这张钢铁表面的缺陷',
@@ -313,30 +305,6 @@ const quickChips = computed(() => chatText.value.chips.map((label) => ({ label }
 const quickDetectOptions = {
   confThreshold: 0.25,
   iouThreshold: 0.45,
-}
-
-function summarizeDetectionResult(result) {
-  const objects = result?.objects || []
-  if (!objects.length) {
-    return chatText.value.noDefect
-  }
-
-  const statMap = new Map()
-  let maxConfidence = 0
-  for (const item of objects) {
-    const key = item.classNameCn || item.className || chatText.value.unknownDefect
-    statMap.set(key, (statMap.get(key) || 0) + 1)
-    maxConfidence = Math.max(maxConfidence, Number(item.confidence || 0))
-  }
-
-  const summary = Array.from(statMap.entries())
-    .map(([name, count]) => `${name} ${count} 处`)
-    .join('，')
-
-  if (settingsStore.isEnglish) {
-    return `Detection completed. Found ${objects.length} possible defects (${summary}); highest confidence ${(maxConfidence * 100).toFixed(1)}%.\n\n`
-  }
-  return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。\n\n`
 }
 
 function onDragEnter() { dragCounter++; isDragover.value = true }
@@ -602,8 +570,6 @@ function handleAgentEvent(event) {
   }
   if (event.type === 'text_delta' || event.type === 'text_chunk') {
     const content = event.content || ''
-    const lastMsg = agentStore.messages[agentStore.messages.length - 1]
-    if (lastMsg?.detectionResult && isStaleMockDetectionText(content)) return
     agentStore.appendAssistantContent(content)
   }
   if (event.type === 'tool_start') {
@@ -708,12 +674,7 @@ async function attachToolResultCard(rawResult, toolName = '') {
   }
   assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || ''
   await agentStore.hydrateDetectionImages(assistantMessage)
-  assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)
   saveCurrentSession()
-}
-
-function isStaleMockDetectionText(content) {
-  return /检测到\s*1\s*处疑似划痕缺陷|置信度约为\s*91|建议进一步检查该区域/.test(content)
 }
 
 function doSend(text) {
@@ -730,6 +691,7 @@ function doSend(text) {
     formData.append('model', model.value)
   }
   agentStore.selectedImages.forEach(file => formData.append('image', file))
+  agentStore.clearImages()
 
   agentStore.abortController = streamAgentChat(formData, {
     onMessage: handleAgentEvent,
@@ -761,31 +723,6 @@ function handleSend(text) {
   const imgUrls = agentStore.selectedImages.map(f => URL.createObjectURL(f))
   agentStore.addMessage({ role: 'user', content: text, imagePreviewUrls: imgUrls })
   doSend(text)
-}
-
-async function runSingleDetectInChat(file, previewUrl) {
-  agentStore.addMessage({
-    role: 'assistant',
-    content: chatText.value.analyzing,
-  })
-  agentStore.setToolCall({ name: 'detect_single', status: 'running', input: { fileName: file.name } })
-
-  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
-  try {
-    const options = await getQuickDetectOptions()
-    const result = await detectSingleApi(file, options)
-    assistantMessage.content = summarizeDetectionResult(result)
-    assistantMessage.detectionResult = result
-    assistantMessage.detectionPreviewUrl = previewUrl
-    agentStore.setToolCall({ name: 'detect_single', status: 'success', result })
-  } catch (error) {
-    assistantMessage.content = chatText.value.detectFailed
-    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || chatText.value.detectFailed })
-    ElMessage.error(error?.response?.data?.detail || chatText.value.detectFailed)
-  } finally {
-    agentStore.clearImages()
-    saveCurrentSession()
-  }
 }
 
 async function checkAgentToolContracts() {

@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.agent.supervisor import supervisor_agent
+from app.agent.state import AGENT_LABELS
 from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.core.artifact_access import artifact_owner_id, can_read_artifact, unregister_artifact
@@ -466,6 +467,7 @@ async def chat_stream(
                 elif event_type == "agent_switch":
                     yield f"data: {json.dumps({'type': 'agent_switch', 'agent': event['agent'], 'label': event['label']}, ensure_ascii=False)}\n\n"
                 elif event_type == "tool_call":
+                    tool_agent = event.get("agent", "")
                     tool_call = {
                         "id": uuid4().hex,
                         "name": event["tool"],
@@ -474,6 +476,8 @@ async def chat_stream(
                         "card_type": _card_type_for_tool(event["tool"]),
                         "display_order": len(tool_calls),
                         "created_at": datetime.now().isoformat(),
+                        "agent": tool_agent,
+                        "agentLabel": AGENT_LABELS.get(tool_agent, ""),
                     }
                     tool_calls.append(tool_call)
                     yield f"data: {json.dumps({'type': 'tool_start', 'tool_call_id': tool_call['id'], 'tool_name': event['tool'], 'input': event.get('input', {}), 'agent': event.get('agent', '')}, ensure_ascii=False)}\n\n"

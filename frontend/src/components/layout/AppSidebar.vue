@@ -62,26 +62,52 @@
     </div>
 
     <!-- Footer: user menu -->
-    <div class="sidebar-footer">
-      <el-dropdown trigger="click" placement="top-start" :offset="0" :hide-timeout="0" popper-class="user-dropdown" @command="handleCommand">
-        <div class="user-btn">
-          <el-avatar :size="24" :src="userStore.avatar || undefined" class="user-avatar">
-            {{ userStore.username?.charAt(0)?.toUpperCase() }}
-          </el-avatar>
-          <span v-show="!collapsed" class="user-name">{{ userStore.username }}</span>
-          <ChevronsUpDown v-show="!collapsed" class="user-chevron" />
-        </div>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="settings">
-              <el-icon><Setting /></el-icon>{{ text.settings }}
-            </el-dropdown-item>
-            <el-dropdown-item command="logout">
-              <el-icon><SwitchButton /></el-icon>{{ text.logout }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+    <div class="sidebar-footer" ref="footerRef">
+      <button
+        type="button"
+        class="user-btn"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
+        @click="menuOpen = !menuOpen"
+        @keydown.esc.stop="menuOpen = false"
+      >
+        <el-avatar :size="24" :src="userStore.avatar || undefined" class="user-avatar">
+          {{ userStore.username?.charAt(0)?.toUpperCase() }}
+        </el-avatar>
+        <span v-show="!collapsed" class="user-name">{{ userStore.username }}</span>
+        <ChevronsUpDown v-show="!collapsed" class="user-chevron" />
+      </button>
+      <Teleport to="body">
+        <div v-if="menuOpen" class="user-menu-overlay" @click="menuOpen = false" />
+        <transition name="menu-fade">
+          <div v-if="menuOpen" class="user-menu-card" :style="menuStyle" role="menu">
+            <ul class="user-menu-list">
+              <li>
+                <button type="button" class="user-menu-item" role="menuitem" @click="handleMenuCommand('settings')">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                  <circle r="3" cy="12" cx="12" />
+                </svg>
+                <span class="user-menu-label">{{ text.settings }}</span>
+                </button>
+              </li>
+            </ul>
+            <div class="user-menu-sep" />
+            <ul class="user-menu-list">
+              <li>
+                <button type="button" class="user-menu-item danger" role="menuitem" @click="handleMenuCommand('logout')">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                  <line y2="17" y1="11" x2="10" x1="10" /><line y2="17" y1="11" x2="14" x1="14" />
+                </svg>
+                <span class="user-menu-label">{{ text.logout }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </transition>
+      </Teleport>
     </div>
 
     <SettingsModal v-model="settingsVisible" @closed="restoreSettingsFocus" />
@@ -89,12 +115,11 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
-import { Setting, SwitchButton } from '@element-plus/icons-vue'
 import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield } from '@boxicons/vue'
 import { ElMessageBox } from 'element-plus'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
@@ -108,7 +133,20 @@ const emit = defineEmits(['update:collapsed'])
 const hoverLocked = ref(false)
 const settingsVisible = ref(false)
 const settingsReturnTarget = ref(null)
+const menuOpen = ref(false)
+const footerRef = ref(null)
 let hoverLockTimer = null
+
+const menuStyle = computed(() => {
+  if (!footerRef.value) return {}
+  const rect = footerRef.value.getBoundingClientRect()
+  return {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    bottom: `${window.innerHeight - rect.top + 8}px`,
+    minWidth: `${Math.max(rect.width, 180)}px`,
+  }
+})
 
 function handleToggle() {
   emit('update:collapsed', !props.collapsed)
@@ -116,6 +154,45 @@ function handleToggle() {
   clearTimeout(hoverLockTimer)
   hoverLockTimer = setTimeout(() => { hoverLocked.value = false }, 300)
 }
+
+function handleMenuCommand(command) {
+  menuOpen.value = false
+  if (command === 'settings') {
+    settingsReturnTarget.value = document.activeElement
+    settingsVisible.value = true
+    return
+  }
+  if (command === 'logout') {
+    ElMessageBox.confirm(text.value.logoutMessage, text.value.logoutTitle, {
+      confirmButtonText: text.value.confirm, cancelButtonText: text.value.cancel, type: 'warning',
+    }).then(() => {
+      agentStore.clearUserScope()
+      userStore.logout()
+      router.push('/login')
+    }).catch(() => {})
+  }
+}
+
+function restoreSettingsFocus() {
+  nextTick(() => {
+    settingsReturnTarget.value?.focus?.()
+    settingsReturnTarget.value = null
+  })
+}
+
+function closeMenuOnClick(e) {
+  if (footerRef.value && !footerRef.value.contains(e.target)) {
+    menuOpen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', closeMenuOnClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMenuOnClick)
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -201,30 +278,6 @@ async function handleDeleteSession(id) {
   }
 }
 
-function handleCommand(command) {
-  if (command === 'settings') {
-    settingsReturnTarget.value = document.activeElement
-    settingsVisible.value = true
-    return
-  }
-
-  if (command === 'logout') {
-    ElMessageBox.confirm(text.value.logoutMessage, text.value.logoutTitle, {
-      confirmButtonText: text.value.confirm, cancelButtonText: text.value.cancel, type: 'warning',
-    }).then(() => {
-      agentStore.clearUserScope()
-      userStore.logout()
-      router.push('/login')
-    }).catch(() => {})
-  }
-}
-
-function restoreSettingsFocus() {
-  nextTick(() => {
-    settingsReturnTarget.value?.focus?.()
-    settingsReturnTarget.value = null
-  })
-}
 </script>
 
 <style lang="scss" scoped>
@@ -555,6 +608,11 @@ function restoreSettingsFocus() {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.15s;
@@ -587,62 +645,105 @@ function restoreSettingsFocus() {
 
 </style>
 
-<!-- Dropdown popper styles (must be unscoped — rendered outside component) -->
+<!-- User menu (teleported to body, unscoped) -->
 <style lang="scss">
-.user-dropdown {
-  min-width: 0;
-  width: calc($sidebar-width - 20px);
-  padding: 8px;
-  border-radius: 12px;
-  border: 1px solid var(--app-border);
-  background: var(--app-surface);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-
-  .el-dropdown-menu {
-    background: transparent;
-  }
-
-  .el-dropdown-menu__item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-radius: 10px;
-    font-size: 14px;
-    color: var(--app-text);
-    transition: background 0.1s;
-
-    &:hover {
-      background: var(--app-hover);
-      color: var(--app-text);
-    }
-
-    .el-icon {
-      color: currentColor;
-    }
-  }
+.user-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1999;
 }
 
-:root[data-theme='dark'] {
-  .user-dropdown.el-popper.is-light {
-    background: var(--app-surface);
-    border-color: var(--app-border);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.38);
+.user-menu-card {
+  z-index: 2000;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
+.user-menu-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  margin: 0;
+}
+
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.25s ease-out;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    transition: all 0.25s ease-out;
   }
 
-  .user-dropdown {
-    .el-dropdown-menu__item {
-      color: var(--app-text);
+  &:hover {
+    background-color: #5353ff;
+    color: #ffffff;
+    transform: translate(1px, -1px);
 
-      &:not(.is-disabled):focus {
-        background: var(--app-hover);
-        color: var(--app-text);
+    svg {
+      stroke: #ffffff;
+    }
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
+
+  &.danger {
+    &:hover {
+      background-color: #8e2a2a;
+      color: #ffffff;
+
+      svg {
+        stroke: #ffffff;
       }
     }
   }
 }
 
-.el-popper.is-light .el-popper__arrow::before {
-  display: none;
+.user-menu-label {
+  font-weight: 400;
+}
+
+.user-menu-sep {
+  border-top: 1px solid var(--app-border);
+  margin: 0;
+}
+
+.menu-fade-enter-active {
+  transition: all 0.2s ease-out;
+}
+.menu-fade-leave-active {
+  transition: all 0.15s ease-in;
+}
+.menu-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.menu-fade-leave-to {
+  opacity: 0;
+  transform: translateY(3px);
 }
 </style>

@@ -1,8 +1,7 @@
 <template>
   <header class="module-header">
     <div>
-      <div class="module-header__eyebrow">STEEL DEFECT AI PLATFORM</div>
-      <h1>{{ title }}</h1>
+      <h1 v-if="title">{{ title }}</h1>
       <p>{{ description }}</p>
     </div>
     <div class="module-header__actions">
@@ -39,13 +38,6 @@ defineProps({
     color: $text-secondary;
     line-height: 1.65;
   }
-}
-
-.module-header__eyebrow {
-  color: #667085;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
 }
 
 .module-header__actions {
