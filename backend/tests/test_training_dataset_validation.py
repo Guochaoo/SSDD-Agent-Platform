@@ -55,6 +55,19 @@ def test_dataset_archive_accepts_identical_repeated_zip_member():
         _validate_dataset_archive(archive)
 
 
+def test_dataset_archive_rejects_conflicting_repeated_zip_member():
+    data = BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("data.yaml", "names: [crazing]\n")
+        archive.writestr("data.yaml", "names: [scratches]\n")
+        archive.writestr("images/a.jpg", b"image-a")
+    data.seek(0)
+    with zipfile.ZipFile(data) as archive:
+        with pytest.raises(HTTPException) as exc:
+            _validate_dataset_archive(archive)
+    assert exc.value.detail["code"] == "DUPLICATE_CONTENT"
+
+
 def test_dataset_classes_reject_out_of_range_label(tmp_path):
     (tmp_path / "labels" / "train").mkdir(parents=True)
     (tmp_path / "data.yaml").write_text("nc: 1\nnames: [crazing]\n", encoding="utf-8")
