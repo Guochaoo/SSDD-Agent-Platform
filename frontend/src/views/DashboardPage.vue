@@ -233,6 +233,7 @@
     <div class="dash-grid-bottom">
       <EChartPanel :title="text.classTitle" :option="classOption" :loading="loading" :empty="dashboard.classDistribution.length === 0" height="220px" />
       <EChartPanel title="每日训练趋势" :option="trainingTrendOption" :loading="loading" :empty="dashboard.trainingDailyTrend.length === 0" height="220px" />
+      <EChartPanel :title="text.sceneTitle" :option="sceneOption" :loading="loading" :empty="dashboard.sceneDistribution.length === 0" height="220px" />
       <div class="card detect-time-card">
         <div class="dt-header">
           <span class="dt-title">检测耗时</span>
@@ -681,11 +682,15 @@ const dtBars = computed(() => {
   }))
 })
 
-const dtMin = computed(() => Math.round(Math.min(...dtBars.value.map(d => d.min), Infinity)))
+const dtMin = computed(() => {
+  const active = dtBars.value.filter(d => d.max > 0 || d.avg > 0 || d.min > 0)
+  return active.length ? Math.round(Math.min(...active.map(d => d.min))) : 0
+})
 const dtMax = computed(() => Math.round(Math.max(...dtBars.value.map(d => d.max), 0)))
 const dtAvg = computed(() => {
   if (!dtBars.value.length) return 0
-  return Math.round(dtBars.value.reduce((s, d) => s + (d.avg || 0), 0) / dtBars.value.length)
+  const active = dtBars.value.filter(d => d.max > 0 || d.avg > 0 || d.min > 0)
+  return active.length ? Math.round(active.reduce((s, d) => s + d.avg, 0) / active.length) : 0
 })
 const dtDateLabel = computed(() => {
   const bars = dtBars.value
@@ -1320,7 +1325,7 @@ onMounted(() => {
 /* bottom charts row */
 .dash-grid-bottom {
   display: grid;
-  grid-template-columns: 1fr 1fr 0.7fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 0;
 

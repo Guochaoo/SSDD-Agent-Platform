@@ -235,14 +235,14 @@ class HistoryService:
                        for offset in range((end_date - start_date).days + 1)
                        for day in [start_date + timedelta(days=offset)]]
 
-        # 每天检测耗时：基于 DetectionResult.inference_time 按天聚合
+        # 每天检测耗时：按已持久化的任务总耗时聚合。
+        # DetectionResult 是“每个缺陷一行”，不能作为图片/任务样本：
+        # 无缺陷图片没有结果行，批量任务还会因多个缺陷重复计数。
         time_query = HistoryService._apply_task_filters(
             db.query(func.date(DetectionTask.created_at),
-                     func.min(DetectionResult.inference_time),
-                     func.max(DetectionResult.inference_time),
-                     func.avg(DetectionResult.inference_time)).join(
-                DetectionResult, DetectionResult.task_id == DetectionTask.id
-            ),
+                     func.min(DetectionTask.total_inference_time),
+                     func.max(DetectionTask.total_inference_time),
+                     func.avg(DetectionTask.total_inference_time)),
             user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
         )
         time_rows = time_query.group_by(func.date(DetectionTask.created_at)).order_by(func.date(DetectionTask.created_at)).all()
