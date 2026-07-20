@@ -19,7 +19,7 @@
       <div v-if="message.toolCalls?.length" class="message-tool-header">
         <div v-if="agentLabel" class="agent-label">
           <span v-if="agentIcon" class="agent-icon" v-html="agentIcon" />
-          <span>{{ displayAgentLabel(agentLabel) }}</span>
+          <span>{{ agentLabel }}</span>
         </div>
         <div class="tool-trace">
           <div
@@ -40,11 +40,49 @@
       />
       <div class="markdown-body" v-html="renderedContent" />
 
-      <AgentResultCard
-        v-for="card in message.toolResultCards || []"
-        :key="card.id"
-        :card="card"
-      />
+      <div v-for="card in message.toolResultCards || []" :key="card.id" class="tool-result-card">
+        <strong>{{ getCardTitle(card.type) }}</strong>
+        <template v-if="card.type === 'statistics'">
+          <div class="tool-result-tags">
+            <el-tag>任务 {{ card.result.total_tasks || 0 }}</el-tag>
+            <el-tag>图片 {{ card.result.total_images || 0 }}</el-tag>
+            <el-tag type="success">缺陷 {{ card.result.total_objects || 0 }}</el-tag>
+          </div>
+        </template>
+        <template v-else-if="card.type === 'history'">
+          <div v-for="task in card.result.tasks || []" :key="task.id" class="tool-result-row">
+            #{{ task.id }} · {{ task.scene_name || task.task_type }} · {{ task.status }}
+          </div>
+          <span v-if="!(card.result.tasks || []).length">暂无检测记录</span>
+        </template>
+        <template v-else-if="card.type === 'knowledge_citations'">
+          <div v-for="(item, index) in card.result.results || []" :key="index" class="tool-result-row">
+            <b>{{ item.document_title || '知识库文档' }}</b>：{{ item.content }}
+          </div>
+          <span v-if="!card.result.found">{{ card.result.message || '未找到相关知识' }}</span>
+        </template>
+        <span v-else>{{ card.result.message || '工具调用已完成' }}</span>
+      </div>
+
+      <div v-if="message.videoResult" class="video-result-card">
+        <video
+          v-if="message.videoResult.annotatedVideoUrl"
+          :src="message.videoResult.annotatedVideoUrl"
+          class="result-video"
+          controls
+          preload="metadata"
+        />
+        <div class="video-result-meta">
+          <span>{{ message.videoResult.processedFrames }} {{ text.frames }}</span>
+          <span>{{ message.videoResult.totalObjects }} {{ text.objects }}</span>
+          <span v-if="message.videoResult.durationSeconds">{{ message.videoResult.durationSeconds }}s</span>
+        </div>
+        <div v-if="Object.keys(message.videoResult.classCounts || {}).length" class="video-class-counts">
+          <el-tag v-for="(count, name) in message.videoResult.classCounts" :key="name" effect="plain">
+            {{ name }} · {{ count }}
+          </el-tag>
+        </div>
+      </div>
 
       <el-alert
         v-if="message.status === 'error'"
@@ -75,7 +113,6 @@ import { computed, ref } from 'vue'
 import { DocumentCopy, Check, Refresh } from '@element-plus/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { renderMarkdown } from '@/utils/markdown'
-import AgentResultCard from './AgentResultCard.vue'
 import { AGENT_ICON_BY_NAME } from '@/stores/agent'
 const AGENT_LABEL_BY_NAME = {
   detection: '检测 Agent',
@@ -108,11 +145,11 @@ const text = computed(() => settingsStore.isEnglish ? {
   error: 'Failed',
   singleTool: 'Single-image detection tool',
   batchTool: 'Batch detection tool',
-  zipTool: 'ZIP detection tool',
-  videoTool: 'Video detection tool',
   detectionTool: 'Defect detection tool',
   historyTool: 'Detection history tool',
   knowledgeTool: 'Knowledge search tool',
+  frames: 'key frames',
+  objects: 'defects',
 } : {
   uploadAlt: '上传图片',
   agentError: '智能体响应失败，请重试',
@@ -125,11 +162,11 @@ const text = computed(() => settingsStore.isEnglish ? {
   error: '失败',
   singleTool: '单图检测工具',
   batchTool: '批量检测工具',
-  zipTool: 'ZIP 检测工具',
-  videoTool: '视频检测工具',
   detectionTool: '缺陷检测工具',
   historyTool: '检测历史工具',
   knowledgeTool: '知识库检索工具',
+  frames: '个关键帧',
+  objects: '个缺陷',
 })
 
 const renderedContent = computed(() => {
@@ -148,23 +185,6 @@ const agentLabel = computed(() => {
 const agentIcon = computed(() => {
   return AGENT_ICON_BY_NAME[agentName.value] || ''
 })
-
-function displayAgentLabel(label) {
-  const zhToEn = {
-    '🔍 检测 Agent': 'Detection Agent',
-    '📊 数据 Agent': 'Data Agent',
-    '💬 通用 Agent': 'General Agent',
-    detection: 'Detection Agent',
-    data: 'Data Agent',
-    general: 'General Agent',
-  }
-  const enToZh = {
-    detection: '检测 Agent',
-    data: '数据 Agent',
-    general: '通用 Agent',
-  }
-  return settingsStore.isEnglish ? (zhToEn[label] || label) : (enToZh[label] || label)
-}
 
 const formattedTime = computed(() => {
   if (!props.message.createdAt) return ''
@@ -187,8 +207,8 @@ function getToolName(tool) {
   const map = {
     detect_single: text.value.singleTool,
     detect_batch: text.value.batchTool,
-    detect_zip: text.value.zipTool,
-    detect_video: text.value.videoTool,
+    detect_zip: 'ZIP 检测工具',
+    detect_video: '视频检测工具',
     detection_tool: text.value.detectionTool,
     history_query: text.value.historyTool,
     knowledge_search: text.value.knowledgeTool,
@@ -211,6 +231,13 @@ function getToolTag(tool) {
   return 'warning'
 }
 
+function getCardTitle(type) {
+  return {
+    statistics: '检测统计',
+    history: '检测历史',
+    knowledge_citations: '知识库引用',
+  }[type] || '工具结果'
+}
 </script>
 
 <style lang="scss" scoped>
@@ -252,6 +279,29 @@ function getToolTag(tool) {
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-result-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 13px;
+}
+
+.tool-result-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tool-result-row {
+  margin-top: 8px;
+  line-height: 1.5;
   word-break: break-word;
 }
 
@@ -417,4 +467,35 @@ function getToolTag(tool) {
   margin-top: 12px;
 }
 
+.video-result-card {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-surface);
+}
+
+.result-video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  border-radius: 9px;
+  background: #000;
+}
+
+.video-result-meta,
+.video-class-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.video-result-meta span {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--app-subtle);
+  color: var(--app-muted);
+  font-size: 12px;
+}
 </style>

@@ -35,15 +35,6 @@
             <Plus />
           </button>
         </div>
-        <div class="sessions-tools">
-          <input
-            v-model="sessionQuery"
-            class="session-search"
-            :placeholder="text.searchSessions"
-            @keydown.enter="handleSearchSessions"
-          />
-          <button class="session-tool-btn" type="button" @click="handleSearchSessions">{{ text.search }}</button>
-        </div>
         <div class="sessions-list">
           <div v-if="!agentStore.sessions.length" class="sessions-empty">
             {{ text.noSessions }}
@@ -54,33 +45,18 @@
             :class="['session-item', { active: session.id === agentStore.currentSessionId && activeMenu === '/chat' }]"
             @click="handleSwitchSession(session.id)"
           >
-            <input
-              v-if="editingSessionId === session.id"
-              v-model="editingTitle"
-              class="session-title-input"
-              @click.stop
-              @keydown.enter.stop.prevent="commitRename(session)"
-              @keydown.esc.stop.prevent="cancelRename"
-            />
-            <span v-else class="session-title">
+            <span class="session-title">
               <template v-if="userStore.isSuperuser && session.ownerUsername">[{{ session.ownerUsername }}] </template>{{ session.title || text.newChat }}
             </span>
-            <div
+            <span
               v-if="!userStore.isSuperuser || session.ownerId === userStore.user?.id"
-              class="session-actions"
+              class="session-delete"
+              :title="text.delete"
+              @click.stop="handleDeleteSession(session.id)"
             >
-              <button class="session-action" :title="text.rename" @click.stop="startRename(session)">✎</button>
-              <button class="session-action" :title="text.archive" @click.stop="handleArchiveSession(session.id)">⌂</button>
-              <button class="session-action danger" :title="text.delete" @click.stop="handleDeleteSession(session.id)">
-                <Trash />
-              </button>
-            </div>
+              <Trash />
+            </span>
           </div>
-        </div>
-        <div class="sessions-pager">
-          <button :disabled="agentStore.sessionPage <= 1" @click="changeSessionPage(-1)">{{ text.prev }}</button>
-          <span>{{ agentStore.sessionPage }}</span>
-          <button :disabled="agentStore.sessions.length < agentStore.sessionPageSize" @click="changeSessionPage(1)">{{ text.next }}</button>
         </div>
       </div>
     </div>
@@ -145,7 +121,7 @@ import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield, ClipboardCheck } from '@boxicons/vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 
 const props = defineProps({
@@ -159,9 +135,6 @@ const settingsVisible = ref(false)
 const settingsReturnTarget = ref(null)
 const menuOpen = ref(false)
 const footerRef = ref(null)
-const sessionQuery = ref('')
-const editingSessionId = ref('')
-const editingTitle = ref('')
 let hoverLockTimer = null
 
 const menuStyle = computed(() => {
@@ -248,15 +221,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   newChat: 'New chat',
   noSessions: 'No chats',
   delete: 'Delete',
-  rename: 'Rename',
-  archive: 'Archive',
-  search: 'Search',
-  searchSessions: 'Search chats',
-  prev: 'Prev',
-  next: 'Next',
-  renameFailed: 'Failed to rename chat',
-  archiveFailed: 'Failed to archive chat',
-  restoreFailed: 'Failed to restore chat',
   settings: 'Settings',
   logout: 'Log out',
   logoutTitle: 'Confirm',
@@ -278,15 +242,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   newChat: '新对话',
   noSessions: '暂无会话',
   delete: '删除',
-  rename: '重命名',
-  archive: '归档',
-  search: '搜索',
-  searchSessions: '搜索会话',
-  prev: '上一页',
-  next: '下一页',
-  renameFailed: '会话重命名失败',
-  archiveFailed: '会话归档失败',
-  restoreFailed: '会话恢复失败',
   settings: '设置',
   logout: '退出登录',
   logoutTitle: '提示',
@@ -314,9 +269,7 @@ function handleNewChat() {
 
 function handleSwitchSession(id) {
   agentStore.saveSession()
-  agentStore.loadSession(id).catch((error) => {
-    ElMessage.error(error?.response?.data?.detail || error?.message || text.value.restoreFailed)
-  })
+  agentStore.loadSession(id)
   if (route.path !== '/chat') router.push('/chat')
 }
 
@@ -325,43 +278,6 @@ async function handleDeleteSession(id) {
     await agentStore.deleteSession(id)
   } catch {
     agentStore.fetchSessions().catch(() => {})
-  }
-}
-
-function handleSearchSessions() {
-  agentStore.sessionSearch = sessionQuery.value.trim()
-  agentStore.fetchSessions({ userId: userStore.user?.id, search: agentStore.sessionSearch, page: 1 }).catch(() => {})
-}
-
-function changeSessionPage(delta) {
-  const nextPage = Math.max(1, agentStore.sessionPage + delta)
-  agentStore.fetchSessions({ userId: userStore.user?.id, search: agentStore.sessionSearch, page: nextPage }).catch(() => {})
-}
-
-function startRename(session) {
-  editingSessionId.value = session.id
-  editingTitle.value = session.title || text.value.newChat
-}
-
-function cancelRename() {
-  editingSessionId.value = ''
-  editingTitle.value = ''
-}
-
-async function commitRename(session) {
-  try {
-    await agentStore.renameSession(session.id, editingTitle.value)
-    cancelRename()
-  } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || error?.message || text.value.renameFailed)
-  }
-}
-
-async function handleArchiveSession(id) {
-  try {
-    await agentStore.archiveSession(id, true)
-  } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || error?.message || text.value.archiveFailed)
   }
 }
 
@@ -599,51 +515,6 @@ async function handleArchiveSession(id) {
   }
 }
 
-.sessions-tools {
-  display: flex;
-  gap: 6px;
-  padding: 0 8px 8px;
-}
-
-.session-search {
-  min-width: 0;
-  flex: 1;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-surface);
-  color: var(--app-text);
-  font: inherit;
-  font-size: 12px;
-  outline: 0;
-
-  &:focus {
-    border-color: #8f8ab0;
-  }
-}
-
-.session-tool-btn,
-.sessions-pager button {
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-surface);
-  color: var(--app-text);
-  font-size: 12px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: var(--app-hover);
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
-  }
-}
-
 .sessions-list {
   flex: 1;
   overflow-y: auto;
@@ -694,32 +565,7 @@ async function handleArchiveSession(id) {
   text-overflow: ellipsis;
 }
 
-.session-title-input {
-  min-width: 0;
-  flex: 1;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid #8f8ab0;
-  border-radius: 6px;
-  background: var(--app-surface);
-  color: var(--app-text);
-  font: inherit;
-  outline: 0;
-}
-
-.session-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.session-item:hover .session-actions {
-  opacity: 1;
-}
-
-.session-action {
+.session-delete {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -727,36 +573,25 @@ async function handleArchiveSession(id) {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--app-muted);
+  color: rgba(0,0,0,0.15);
   cursor: pointer;
   flex-shrink: 0;
+  opacity: 0;
   transition: all 0.15s;
   padding: 0;
-  font-size: 12px;
 
   svg {
     width: 12px; height: 12px;
   }
 
-  &:hover {
-    color: var(--app-text);
-    background: var(--app-hover);
+  .session-item:hover & {
+    opacity: 1;
   }
 
-  &.danger:hover {
+  &:hover {
     color: #f56c6c;
     background: rgba(245,108,108,0.15);
   }
-}
-
-.sessions-pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 4px 0;
-  color: var(--app-muted);
-  font-size: 12px;
 }
 
 /* ── Footer ── */
