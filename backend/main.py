@@ -153,7 +153,10 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        # Training runs in a background thread and keeps an in-process model
+        # registry for stop requests. Auto-reload would move the HTTP request
+        # to a new process and make that registry invisible.
+        reload=False,
         reload_dirs=[str(Path(__file__).parent / "app")],
         reload_excludes=["**/__pycache__/**", "**/*.pyc"],
         reload_delay=0.5,
