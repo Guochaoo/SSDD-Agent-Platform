@@ -52,6 +52,23 @@ _stop_requested: set[str] = set()
 _running_lock = threading.Lock()
 
 
+class TrainingCancelled(RuntimeError):
+    """Controlled exception used to leave Ultralytics' batch loop immediately."""
+
+
+def _ensure_training_not_cancelled(db, task: TrainingTask, task_uuid: str) -> None:
+    """Raise when cancellation was requested in this or another API process."""
+    with _running_lock:
+        requested_in_process = task_uuid in _stop_requested
+    try:
+        db.refresh(task, attribute_names=["status"])
+    except Exception:
+        db.rollback()
+        raise
+    if requested_in_process or task.status == "cancelled":
+        raise TrainingCancelled(task_uuid)
+
+
 def _create_runtime_data_yaml(source_path: str) -> str:
     """Create an isolated training config with paths rooted at its dataset.
 
@@ -197,11 +214,6 @@ class TrainingService:
             if task.status == "cancelled":
                 return
 
-            # Stop may arrive while the worker is still loading.  Do not turn
-            # a durably cancelled task into running after that request.
-            if task.status == "cancelled":
-                return
-
             # ── 更新状态为 running ──
             task.status = "running"
             task.started_at = datetime.now()
@@ -325,10 +337,8 @@ class TrainingService:
 
             def on_train_batch_end(trainer):
                 """Persist coarse batch progress so the monitor moves during long epochs."""
+                _ensure_training_not_cancelled(db, task, task_uuid)
                 try:
-                    with _running_lock:
-                        if task_uuid in _stop_requested:
-                            trainer.stop = True
                     total_batches = max(int(getattr(trainer, "nb", 0) or 0), 1)
                     batch_index = int(getattr(trainer, "batch_i", 0) or 0) + 1
                     epoch = int(getattr(trainer, "epoch", 0) or 0)
@@ -362,6 +372,15 @@ class TrainingService:
             TrainingService._parse_final_results(db, task_id, task_uuid, config, project_path)
 
             logger.info("训练完成：task_id=%d, uuid=%s", task_id, task_uuid)
+
+        except TrainingCancelled:
+            db.rollback()
+            task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+            if task:
+                task.status = "cancelled"
+                task.completed_at = task.completed_at or datetime.now()
+                db.commit()
+            logger.info("训练线程已终止：task_id=%d, uuid=%s", task_id, task_uuid)
 
         except FileNotFoundError as e:
             logger.error("训练文件缺失：task_id=%d, error=%s", task_id, str(e))
