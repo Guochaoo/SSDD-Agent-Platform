@@ -48,6 +48,7 @@ logger = get_logger(__name__)
 # 存储正在运行的训练任务的 model 引用，用于中途停止训练
 # key: task_uuid, value: YOLO model 实例
 _running_tasks: dict = {}
+_stop_requested: set[str] = set()
 _running_lock = threading.Lock()
 
 
@@ -193,6 +194,8 @@ class TrainingService:
             if not task:
                 logger.error("训练任务不存在：task_id=%d", task_id)
                 return
+            if task.status == "cancelled":
+                return
 
             # Stop may arrive while the worker is still loading.  Do not turn
             # a durably cancelled task into running after that request.
@@ -215,6 +218,9 @@ class TrainingService:
             # ── 注册到运行中任务表（用于中途停止）──
             with _running_lock:
                 _running_tasks[task_uuid] = model
+                stop_requested = task_uuid in _stop_requested
+            if stop_requested:
+                return
 
             # ── 确定 data.yaml 路径 ──
             data_yaml = config.get("data_yaml", "")
@@ -320,6 +326,9 @@ class TrainingService:
             def on_train_batch_end(trainer):
                 """Persist coarse batch progress so the monitor moves during long epochs."""
                 try:
+                    with _running_lock:
+                        if task_uuid in _stop_requested:
+                            trainer.stop = True
                     total_batches = max(int(getattr(trainer, "nb", 0) or 0), 1)
                     batch_index = int(getattr(trainer, "batch_i", 0) or 0) + 1
                     epoch = int(getattr(trainer, "epoch", 0) or 0)
@@ -388,6 +397,7 @@ class TrainingService:
 
             with _running_lock:
                 _running_tasks.pop(task_uuid, None)
+                _stop_requested.discard(task_uuid)
             db.close()
 
     @staticmethod
@@ -630,6 +640,7 @@ class TrainingService:
             return {"error": f"任务当前状态为 {task.status}，无法停止"}
 
         with _running_lock:
+            _stop_requested.add(task.task_uuid)
             model = _running_tasks.get(task.task_uuid)
             if model:
                 # ultralytics 支持通过设置 model.train 的 interrupt 来停止

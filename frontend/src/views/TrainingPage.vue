@@ -720,6 +720,7 @@ let mapChart = null
 let pollTimer = null
 let monitorSelectionVersion = 0
 let metricsRequestInFlight = false
+let hasExplicitTaskSelection = false
 
 const confusionChartRef = ref(null)
 const prChartRef = ref(null)
@@ -1056,6 +1057,7 @@ async function handleDatasetUpload(uploadFile) {
 
 async function selectTask(task) {
   stopPolling()
+  hasExplicitTaskSelection = true
   const selectionVersion = ++monitorSelectionVersion
   selectedTask.value = { ...task }
   taskStore.selectTrainingTask(task.id)
@@ -1474,7 +1476,7 @@ function resizeCharts() {
 onMounted(() => {
   fetchTasks().then((restoredTask) => {
     const initialTask = restoredTask || taskList.value[0]
-    if (initialTask && !selectedTask.value) selectTask(initialTask)
+    if (initialTask && !selectedTask.value && !hasExplicitTaskSelection) selectTask(initialTask)
   })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)
