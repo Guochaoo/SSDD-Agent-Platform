@@ -2,7 +2,7 @@
   <div class="dashboard-page">
     <!-- header bar -->
     <div class="dash-header">
-      <span class="dash-title">Dash Board</span>
+      <span class="dash-title">数据看板</span>
       <div class="dash-header-right">
         <div class="period-wrap" ref="periodRef">
         <button class="period-trigger" @click="menuOpen = !menuOpen">
@@ -763,7 +763,7 @@ onMounted(() => {
 .dash-title {
   font-size: 40px;
   font-weight: 600;
-  color: #8b8b94;
+  color: #000000;
   letter-spacing: -0.3px;
 }
 
@@ -1325,7 +1325,7 @@ onMounted(() => {
 /* bottom charts row */
 .dash-grid-bottom {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 1.2fr 1fr 1fr 1fr;
   gap: 12px;
   margin-bottom: 0;
 

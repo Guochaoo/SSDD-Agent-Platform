@@ -3,7 +3,10 @@
     <ModulePageHeader
       :title="text.title"
     >
-      <el-button :icon="Refresh" @click="resetCurrentMode">{{ text.resetMode }}</el-button>
+      <button class="period-trigger refresh-btn" @click="resetCurrentMode">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        <span class="period-val">{{ text.resetMode }}</span>
+      </button>
     </ModulePageHeader>
 
     <PageErrorAlert
@@ -336,7 +339,6 @@ import {
   Aim,
   Files,
   FolderAdd,
-  Refresh,
   Setting,
   UploadFilled,
   VideoCamera,
@@ -972,7 +974,8 @@ onBeforeUnmount(() => {
 .mode-tabs :deep(.el-tabs__header) { margin-bottom: 18px; }
 .mode-tabs :deep(.el-tabs__item) { height: 44px; font-weight: 600; }
 .detection-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; height: 100%; }
-.control-card, .workspace-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); }
+.control-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); display: flex; flex-direction: column; }
+.workspace-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); }
 .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .section-title h3 { margin: 0; color: #1f2937; font-size: 16px; }
 .section-title p { margin: 4px 0 0; color: $text-secondary; font-size: 11px; line-height: 1.5; }
@@ -988,15 +991,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 12px;
-  max-width: 280px;
   width: 100%;
+  flex: 1;
+  min-height: 0;
   margin-top: 6px;
-  border-radius: 10px;
-  box-shadow: 4px 4px 30px rgba(0,0,0,.12);
-  background: #fff;
 }
 .detect-upload-drop {
   width: 100%;
+  flex: 1;
   min-height: 100px;
   border: 2px dashed #2563eb;
   border-radius: 10px;
@@ -1018,7 +1020,7 @@ onBeforeUnmount(() => {
     margin: 0;
   }
 }
-.detect-upload-cloud { height: 50px; }
+.detect-upload-cloud { height: 70px; }
 .compact-form {
   :deep(.el-form-item) { margin-bottom: 8px; }
   :deep(.el-form-item__label) { padding-bottom: 2px; font-size: 12px; }
