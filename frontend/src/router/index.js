@@ -40,6 +40,12 @@ const routes = [
         meta: { title: '模型训练', icon: 'Cpu' },
       },
       {
+        path: 'tasks',
+        name: 'TaskCenter',
+        component: () => import('@/views/TaskCenterPage.vue'),
+        meta: { title: '任务中心', icon: 'List' },
+      },
+      {
         path: 'files',
         name: 'Files',
         redirect: '/training',

@@ -9,7 +9,7 @@ DEFAULT_IMAGE_SIZE = 640
 # existing UI, while WebP is useful for modern browser uploads.
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/bmp", "image/tiff", "image/webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
-MAX_BATCH_SIZE = 100
+MAX_BATCH_SIZE = 20
 
 MAX_ZIP_SIZE = 50 * 1024 * 1024
 MAX_ZIP_EXTRACTED_SIZE = 200 * 1024 * 1024

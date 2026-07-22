@@ -1,6 +1,6 @@
 import request from "@/utils/request";
 
-export const MAX_BATCH_IMAGES = 100;
+export const MAX_BATCH_IMAGES = 20;
 export const MAX_VIDEO_FRAMES = 1000;
 export const MAX_ZIP_SIZE_BYTES = 50 * 1024 * 1024;
 

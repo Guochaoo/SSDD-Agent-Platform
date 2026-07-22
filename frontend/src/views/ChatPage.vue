@@ -47,7 +47,7 @@
                 <input
                   ref="fileInputRef"
                   type="file"
-                  accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
+                  accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/x-ms-wmv,video/x-flv"
                   multiple
                   hidden
                   @change="onFileChange"
@@ -140,7 +140,7 @@
               <input
                 ref="fileInputRef"
                 type="file"
-                accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp"
+                accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/x-ms-wmv,video/x-flv"
                 multiple
                 hidden
                 @change="onFileChange"
@@ -330,9 +330,17 @@ function onFileChange(e) {
 }
 
 function handleSelectedFile(file) {
-  const allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp']
+  const allowed = [
+    'image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp',
+    'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska',
+    'video/x-ms-wmv', 'video/x-flv',
+  ]
   if (!allowed.includes(file.type)) { ElMessage.error(chatText.value.onlyImages); return }
-  if (file.size > 10 * 1024 * 1024) { ElMessage.error(chatText.value.imageTooLarge); return }
+  const maxBytes = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024
+  if (file.size > maxBytes) {
+    ElMessage.error(file.type.startsWith('video/') ? '视频大小不能超过 50MB' : chatText.value.imageTooLarge)
+    return
+  }
   agentStore.addSelectedImages([file])
 }
 
@@ -717,7 +725,7 @@ function doSend(text) {
   if (model.value && model.value !== DEFAULT_LLM_MODEL_VALUE) {
     formData.append('model', model.value)
   }
-  agentStore.selectedImages.forEach(file => formData.append('image', file))
+  agentStore.selectedImages.forEach(file => formData.append('attachment', file))
   agentStore.clearImages()
 
   agentStore.abortController = streamAgentChat(formData, {

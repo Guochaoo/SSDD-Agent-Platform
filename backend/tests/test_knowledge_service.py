@@ -110,6 +110,10 @@ def test_download_requires_document_visibility_and_uses_object_key(db_session, m
         knowledge, "MinIOClient",
         lambda: type("Stub", (), {"get_presigned_url": staticmethod(lambda key: f"http://minio/{key}")})(),
     )
+    monkeypatch.setattr(
+        "app.services.knowledge_service.MinIOClient",
+        lambda: type("Stub", (), {"get_presigned_url": staticmethod(lambda key: f"http://minio/{key}")})(),
+    )
 
     response = knowledge.download_document(doc.id, current_user=alice, db=db_session)
     assert response.status_code == 307
