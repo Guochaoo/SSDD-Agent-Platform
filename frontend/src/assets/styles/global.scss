@@ -343,15 +343,15 @@ body {
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
-  border: 1px solid #d4d4d8;
+  border: 1px solid var(--app-border);
   border-radius: 8px;
-  background: #fff;
-  color: #18181b;
+  background: var(--app-surface);
+  color: var(--app-text);
   font-size: 13px;
   cursor: pointer;
   transition: border-color 0.15s;
 
-  &:hover { border-color: #a1a1aa; }
+  &:hover { border-color: var(--app-muted); }
   &:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 

@@ -84,14 +84,14 @@ const currentLabel = computed(() => {
   border: 0;
   border-radius: 18px;
   background: transparent;
-  color: #000000;
+  color: var(--app-muted);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
     background: rgba(0,0,0,0.06);
-    color: #000000;
+    color: var(--app-text);
   }
 }
 

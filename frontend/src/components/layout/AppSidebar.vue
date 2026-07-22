@@ -957,7 +957,7 @@ async function handleArchiveSession(id) {
   margin: auto;
   width: 300px;
   height: fit-content;
-  background: rgb(255, 255, 255);
+  background: var(--app-surface);
   border-radius: 20px;
   display: flex;
   flex-direction: column;
@@ -1000,13 +1000,13 @@ async function handleArchiveSession(id) {
 .logout-card-heading {
   font-size: 20px;
   font-weight: 700;
-  color: rgb(27, 27, 27);
+  color: var(--app-text);
   margin: 0;
 }
 
 .logout-card-description {
   font-weight: 400;
-  color: rgb(102, 102, 102);
+  color: var(--app-muted);
   margin: 0;
   font-size: 14px;
 }
@@ -1039,12 +1039,12 @@ async function handleArchiveSession(id) {
 }
 
 .logout-btn.secondary {
-  background-color: #ddd;
-  color: rgb(27, 27, 27);
+  background-color: var(--app-hover);
+  color: var(--app-text);
 }
 
 .logout-btn.secondary:hover {
-  background-color: rgb(197, 197, 197);
+  background-color: var(--app-border);
 }
 
 .logout-card-fade-enter-active {

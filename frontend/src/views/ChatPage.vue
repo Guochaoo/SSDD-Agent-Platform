@@ -809,7 +809,7 @@ checkAgentToolContracts()
   grid-template-areas:
     "primary"
     "bottom";
-  background: rgba(255, 255, 255, 0.6);
+  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
   backdrop-filter: blur(20px);
   border: 0;
   border-radius: 28px;
@@ -928,7 +928,7 @@ checkAgentToolContracts()
   border: 1px solid var(--app-border);
   border-radius: 14px;
   background: transparent;
-  color: #000000;
+  color: var(--app-muted);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -959,7 +959,7 @@ checkAgentToolContracts()
   cursor: pointer;
   transition: all 0.15s;
 
-  &:hover { background: rgba(0,0,0,0.06); color: var(--app-text); }
+  &:hover { background: var(--app-hover); color: var(--app-text); }
 }
 
 .send-btn {
@@ -1053,6 +1053,9 @@ checkAgentToolContracts()
   right: 0;
   z-index: 10;
   padding: 12px 16px 16px;
+  background:
+    linear-gradient(to top, var(--app-bg) 76%, color-mix(in srgb, var(--app-bg) 0%, transparent));
+  border-top: 1px solid var(--app-border);
   .prompt-card {
     max-width: 790px;
     margin: 0 auto;
