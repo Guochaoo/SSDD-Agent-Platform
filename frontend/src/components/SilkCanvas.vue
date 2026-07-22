@@ -17,7 +17,7 @@ const props = defineProps({
 const containerRef = ref(null)
 
 let renderer, scene, camera, mesh, animationId
-let timer = new THREE.Timer()
+let lastTime = 0
 
 const disposeScene = () => {
   cancelAnimationFrame(animationId)
@@ -32,6 +32,7 @@ const disposeScene = () => {
   }
   scene = null
   camera = null
+  lastTime = 0
 }
 
 const hexToNormalizedRGB = (hex) => {
@@ -143,10 +144,14 @@ const resize = () => {
 
 const animate = () => {
   animationId = requestAnimationFrame(animate)
+  const now = performance.now() / 1000
+  if (lastTime === 0) lastTime = now
+  const delta = now - lastTime
+  lastTime = now
   if (mesh) {
-    mesh.material.uniforms.uTime.value += 0.1 * timer.getDelta()
+    mesh.material.uniforms.uTime.value += 0.1 * delta
   }
-  renderer.render(scene, camera)
+  if (renderer) renderer.render(scene, camera)
 }
 
 onMounted(() => {
@@ -177,7 +182,7 @@ onMounted(() => {
     el.appendChild(renderer.domElement)
 
     window.addEventListener('resize', resize)
-    timer = new THREE.Timer()
+    lastTime = 0
     animate()
   } catch {
     // The login form must remain usable on browsers without WebGL support.

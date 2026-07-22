@@ -10,14 +10,17 @@
         :alt="text.uploadAlt"
       />
     </div>
-    <span class="user-text">{{ message.content }}</span>
+    <span v-if="message.content" class="user-text">{{ message.content }}</span>
   </div>
 
   <!-- Assistant message: centered, prominent, no avatar -->
   <div v-else class="assistant-msg">
     <div class="assistant-content">
       <div v-if="message.toolCalls?.length" class="message-tool-header">
-        <div v-if="agentLabel" class="agent-label">{{ agentLabel }}</div>
+        <div v-if="agentLabel" class="agent-label">
+          <span v-if="agentIcon" class="agent-icon" v-html="agentIcon" />
+          <span>{{ displayAgentLabel(agentLabel) }}</span>
+        </div>
         <div class="tool-trace">
           <div
             v-for="tool in message.toolCalls"
@@ -30,32 +33,17 @@
         </div>
       </div>
 
-      <div class="markdown-body" v-html="renderedContent" />
       <DetectionResultCard
         v-if="message.detectionResult"
         :result="message.detectionResult"
         :preview-url="message.detectionPreviewUrl"
       />
-
-      <div v-if="message.videoResult" class="video-result-card">
-        <video
-          v-if="message.videoResult.annotatedVideoUrl"
-          :src="message.videoResult.annotatedVideoUrl"
-          class="result-video"
-          controls
-          preload="metadata"
-        />
-        <div class="video-result-meta">
-          <span>{{ message.videoResult.processedFrames }} {{ text.frames }}</span>
-          <span>{{ message.videoResult.totalObjects }} {{ text.objects }}</span>
-          <span v-if="message.videoResult.durationSeconds">{{ message.videoResult.durationSeconds }}s</span>
-        </div>
-        <div v-if="Object.keys(message.videoResult.classCounts || {}).length" class="video-class-counts">
-          <el-tag v-for="(count, name) in message.videoResult.classCounts" :key="name" effect="plain">
-            {{ name }} · {{ count }}
-          </el-tag>
-        </div>
-      </div>
+      <AgentResultCard
+        v-for="card in message.toolResultCards || []"
+        :key="card.id"
+        :card="card"
+      />
+      <div class="markdown-body" v-html="renderedContent" />
 
       <el-alert
         v-if="message.status === 'error'"
@@ -86,6 +74,14 @@ import { computed, ref } from 'vue'
 import { DocumentCopy, Check, Refresh } from '@element-plus/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { renderMarkdown } from '@/utils/markdown'
+import AgentResultCard from './AgentResultCard.vue'
+import { AGENT_ICON_BY_NAME } from '@/stores/agent'
+const AGENT_LABEL_BY_NAME = {
+  detection: '检测 Agent',
+  data: '数据 Agent',
+  general: '通用 Agent',
+  training: '训练 Agent',
+}
 import DetectionResultCard from './DetectionResultCard.vue'
 
 const props = defineProps({
@@ -111,11 +107,11 @@ const text = computed(() => settingsStore.isEnglish ? {
   error: 'Failed',
   singleTool: 'Single-image detection tool',
   batchTool: 'Batch detection tool',
+  zipTool: 'ZIP detection tool',
+  videoTool: 'Video detection tool',
   detectionTool: 'Defect detection tool',
   historyTool: 'Detection history tool',
   knowledgeTool: 'Knowledge search tool',
-  frames: 'key frames',
-  objects: 'defects',
 } : {
   uploadAlt: '上传图片',
   agentError: '智能体响应失败，请重试',
@@ -128,20 +124,46 @@ const text = computed(() => settingsStore.isEnglish ? {
   error: '失败',
   singleTool: '单图检测工具',
   batchTool: '批量检测工具',
+  zipTool: 'ZIP 检测工具',
+  videoTool: '视频检测工具',
   detectionTool: '缺陷检测工具',
   historyTool: '检测历史工具',
   knowledgeTool: '知识库检索工具',
-  frames: '个关键帧',
-  objects: '个缺陷',
 })
 
 const renderedContent = computed(() => {
   return renderMarkdown(props.message.content || '')
 })
 
-const agentLabel = computed(() => {
-  return props.message.toolCalls?.find(tool => tool.agentLabel)?.agentLabel || ''
+const agentName = computed(() => {
+  return props.message.toolCalls?.find(t => t.agent)?.agent || ''
 })
+
+const agentLabel = computed(() => {
+  if (agentName.value) return AGENT_LABEL_BY_NAME?.[agentName.value] || agentName.value
+  return props.message.toolCalls?.find(t => t.agentLabel)?.agentLabel || ''
+})
+
+const agentIcon = computed(() => {
+  return AGENT_ICON_BY_NAME[agentName.value] || ''
+})
+
+function displayAgentLabel(label) {
+  const zhToEn = {
+    '🔍 检测 Agent': 'Detection Agent',
+    '📊 数据 Agent': 'Data Agent',
+    '💬 通用 Agent': 'General Agent',
+    detection: 'Detection Agent',
+    data: 'Data Agent',
+    general: 'General Agent',
+  }
+  const enToZh = {
+    detection: '检测 Agent',
+    data: '数据 Agent',
+    general: '通用 Agent',
+  }
+  return settingsStore.isEnglish ? (zhToEn[label] || label) : (enToZh[label] || label)
+}
 
 const formattedTime = computed(() => {
   if (!props.message.createdAt) return ''
@@ -164,8 +186,8 @@ function getToolName(tool) {
   const map = {
     detect_single: text.value.singleTool,
     detect_batch: text.value.batchTool,
-    detect_zip: 'ZIP 检测工具',
-    detect_video: '视频检测工具',
+    detect_zip: text.value.zipTool,
+    detect_video: text.value.videoTool,
     detection_tool: text.value.detectionTool,
     history_query: text.value.historyTool,
     knowledge_search: text.value.knowledgeTool,
@@ -187,6 +209,7 @@ function getToolTag(tool) {
   if (tool.status === 'error') return 'danger'
   return 'warning'
 }
+
 </script>
 
 <style lang="scss" scoped>
@@ -362,11 +385,19 @@ function getToolTag(tool) {
 }
 
 .agent-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   margin: 0 0 6px 2px;
   color: #8F8AB0;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.3px;
+}
+
+.agent-icon {
+  display: inline-flex;
+  align-items: center;
 }
 
 .tool-trace-item {
@@ -385,35 +416,4 @@ function getToolTag(tool) {
   margin-top: 12px;
 }
 
-.video-result-card {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--app-border);
-  border-radius: 12px;
-  background: var(--app-surface);
-}
-
-.result-video {
-  display: block;
-  width: 100%;
-  max-height: 420px;
-  border-radius: 9px;
-  background: #000;
-}
-
-.video-result-meta,
-.video-class-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.video-result-meta span {
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: var(--app-subtle);
-  color: var(--app-muted);
-  font-size: 12px;
-}
 </style>

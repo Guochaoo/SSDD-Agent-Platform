@@ -315,8 +315,12 @@ async def camera_detection(websocket: WebSocket):
                 if mode not in {"cpu", "gpu"}:
                     await websocket.send_json({"type": "error", "message": "mode 必须是 cpu 或 gpu"})
                     continue
-                conf = float(message.get("conf", DEFAULT_CONF_THRESHOLD))
-                iou = float(message.get("iou", DEFAULT_IOU_THRESHOLD))
+                try:
+                    conf = float(message.get("conf", DEFAULT_CONF_THRESHOLD))
+                    iou = float(message.get("iou", DEFAULT_IOU_THRESHOLD))
+                except (TypeError, ValueError):
+                    await websocket.send_json({"type": "error", "message": "conf 和 iou 必须是数值"})
+                    continue
                 if not 0 <= conf <= 1 or not 0 <= iou <= 1:
                     await websocket.send_json({"type": "error", "message": "conf 和 iou 必须在 0-1 之间"})
                     continue

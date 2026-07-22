@@ -76,17 +76,68 @@ class SceneService:
         """Return every user-visible model version for a scene.
 
         Detection clients must be able to choose an older active version as well
-        as the current default.  ``deleted`` records are intentionally hidden,
-        while archived records remain visible for asset traceability.
+        as the current default. Deleted records stay hidden unless object cleanup
+        is pending, in which case their owner needs a recovery entry point.
         """
         SceneService.get_scene(db, scene_id)
         query = db.query(ModelVersion).filter(
             ModelVersion.scene_id == scene_id,
-            ModelVersion.status != "deleted",
+            or_(ModelVersion.status != "deleted", ModelVersion.cleanup_pending.is_(True)),
         )
         if user_id is not None and not is_superuser:
             query = query.filter(or_(ModelVersion.is_builtin.is_(True), ModelVersion.owner_id == user_id))
         return query.order_by(ModelVersion.is_default.desc(), ModelVersion.created_at.desc()).all()
+
+    @staticmethod
+    def retry_model_cleanup(
+        db: Session, scene_id: int, model_version_id: int, user_id: int, is_superuser: bool = False,
+    ) -> ModelVersion:
+        """Retry deleting a previously failed model object without reviving the model."""
+        model = db.query(ModelVersion).filter(
+            ModelVersion.id == model_version_id,
+            ModelVersion.scene_id == scene_id,
+            ModelVersion.cleanup_pending.is_(True),
+        ).first()
+        if not model:
+            raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "没有待清理的模型资源"})
+        if model.owner_id != user_id and not is_superuser:
+            raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "无权重试该模型清理"})
+        errors = SceneService._cleanup_model_files(model)
+        if not errors:
+            model.cleanup_pending = False
+            model.cleanup_error = None
+            db.commit()
+            db.refresh(model)
+            return model
+        model.cleanup_retry_count = (model.cleanup_retry_count or 0) + 1
+        model.cleanup_error = "; ".join(errors)
+        db.commit()
+        raise HTTPException(status_code=503, detail={"code": "CLEANUP_RETRY", "message": "模型文件清理仍未成功，请稍后重试"})
+
+    @staticmethod
+    def _cleanup_model_files(model: ModelVersion) -> list[str]:
+        """Delete both local and object-store model copies, returning recoverable errors."""
+        from pathlib import Path
+
+        errors = []
+        local_path = Path(model.model_path)
+        if not local_path.is_absolute():
+            local_path = Path(__file__).resolve().parents[3] / local_path
+        try:
+            local_path.unlink(missing_ok=True)
+        except OSError as exc:
+            errors.append(f"local file: {exc}")
+        if model.object_key or model.minio_url:
+            try:
+                from app.storage.minio_client import MinIOClient
+                client = MinIOClient()
+                if model.object_key:
+                    client.delete_file(model.object_key)
+                else:
+                    client.delete_by_url(model.minio_url)
+            except Exception as exc:
+                errors.append(f"object storage: {exc}")
+        return errors
 
     @staticmethod
     def set_default_model(
@@ -154,6 +205,7 @@ class SceneService:
     def create_uploaded_model(
         db: Session, scene_id: int, owner_id: int, version: str, model_name: str,
         model_type: str, model_path: str, file_size: int, description: str | None = None,
+        object_key: str | None = None, minio_url: str | None = None,
     ) -> ModelVersion:
         SceneService.get_scene(db, scene_id)
         model = ModelVersion(
@@ -165,6 +217,8 @@ class SceneService:
             model_path=model_path,
             file_size=file_size,
             description=description,
+            object_key=object_key,
+            minio_url=minio_url,
             is_builtin=False,
         )
         try:
@@ -203,6 +257,13 @@ class SceneService:
             model.resource_version += 1
             db.commit()
             db.refresh(model)
+            errors = SceneService._cleanup_model_files(model)
+            if errors:
+                model.cleanup_pending = True
+                model.cleanup_error = "; ".join(errors)
+                model.cleanup_retry_count = (model.cleanup_retry_count or 0) + 1
+                db.commit()
+                raise HTTPException(status_code=503, detail={"code": "CLEANUP_RETRY", "message": "模型已软删除，但文件清理失败，请重试"})
             return model
         except Exception:
             db.rollback()

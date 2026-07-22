@@ -89,6 +89,18 @@ class UserService:
             raise HTTPException(status_code=404, detail="用户不存在")
         return user
 
+    @staticmethod
+    def list_users(db: Session, page: int = 1, page_size: int = 20) -> tuple[list[User], int]:
+        query = db.query(User)
+        total = query.count()
+        users = (
+            query.order_by(User.created_at.desc(), User.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return users, total
+
     # ── 资料 / 密码管理 ──────────────────────────────────
 
     @staticmethod

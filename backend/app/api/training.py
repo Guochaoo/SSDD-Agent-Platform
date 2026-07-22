@@ -16,7 +16,9 @@
 
 import base64
 import io
+import math
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -38,6 +40,7 @@ from app.entity.schemas import (
     ModelExportRequest,
     ModelValidateRequest,
     TrainingMetricResponse,
+    TrainingDatasetMetadataUpdate,
     TrainingTaskCreate,
     TrainingTaskResponse,
 )
@@ -46,6 +49,25 @@ from app.services.authorization_service import authorization_service
 from app.services.resource_lifecycle_service import resource_lifecycle_service
 
 logger = get_logger(__name__)
+
+BUILTIN_DATASET_PATH = "NEU-DET.v9i.yolov11"
+MAX_DATASET_ARCHIVE_BYTES = 500 * 1024 * 1024
+MAX_DATASET_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
+ALLOWED_DATASET_SUFFIXES = {
+    ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff",
+    ".txt", ".yaml", ".yml", ".xml", ".json",
+}
+
+
+def _is_builtin_dataset(record: TrainingDataset | None) -> bool:
+    return bool(record and record.is_builtin)
+
+
+def _is_builtin_dataset_path(dataset_path: str, record: TrainingDataset | None = None) -> bool:
+    # The dataset list exposes the root dataset as ``.``.  Treat that stable
+    # relative alias exactly like the shipped dataset name so starting a task
+    # does not fail the ownership lookup with RESOURCE_NOT_FOUND.
+    return dataset_path in {".", BUILTIN_DATASET_PATH} or _is_builtin_dataset(record)
 
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
 
@@ -69,6 +91,80 @@ def _dataset_image_count(dataset_path: Path) -> int:
         1 for item in dataset_path.rglob("*")
         if item.is_file() and item.suffix.lower() in image_suffixes
     )
+
+
+def _validate_dataset_archive(archive_file: zipfile.ZipFile) -> None:
+    """Reject unsafe, oversized or unsupported dataset archives before extraction.
+
+    ZIP producers commonly write the same metadata file more than once (for
+    example, Roboflow exports may contain three identical ``data.yaml``
+    entries).  Identical entries are harmless and ``extractall`` would simply
+    overwrite them, so they are accepted.  A repeated path with different
+    bytes is still rejected.  Images with equal bytes at different paths are
+    also allowed: real-world datasets (including NEU) can legitimately contain
+    duplicate samples under different filenames.
+    """
+    total_uncompressed = 0
+    seen_paths: dict[str, tuple[int, int]] = {}
+    image_count = 0
+    for member in archive_file.infolist():
+        if member.is_dir():
+            continue
+        normalized = member.filename.replace("\\", "/").strip("/")
+        if not normalized:
+            raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集压缩包包含重复文件"})
+        path_key = normalized.casefold()
+        previous = seen_paths.get(path_key)
+        if previous is not None:
+            if previous != (member.file_size, member.CRC):
+                raise HTTPException(status_code=400, detail={"code": "DUPLICATE_CONTENT", "message": "数据集压缩包包含冲突的重复文件"})
+            continue
+        seen_paths[path_key] = (member.file_size, member.CRC)
+        suffix = Path(normalized).suffix.lower()
+        if suffix not in ALLOWED_DATASET_SUFFIXES:
+            raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": f"数据集包含不支持的文件类型: {suffix or '无扩展名'}"})
+        total_uncompressed += member.file_size
+        if total_uncompressed > MAX_DATASET_EXTRACTED_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "DATASET_TOO_LARGE", "message": "数据集解压后不能超过 2 GB"})
+        if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}:
+            image_count += 1
+    if image_count == 0:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "数据集至少需要一张图片"})
+
+
+def _validate_dataset_classes(dataset_path: Path) -> None:
+    """Validate data.yaml classes and labels under labels/ without changing uploaded files."""
+    try:
+        config = yaml.safe_load((dataset_path / "data.yaml").read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "data.yaml 无法解析"}) from exc
+    names = config.get("names") if isinstance(config, dict) else None
+    if isinstance(names, dict):
+        classes = list(names.values())
+    elif isinstance(names, list):
+        classes = names
+    else:
+        classes = []
+    if not classes or any(not isinstance(name, str) or not name.strip() for name in classes):
+        raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "data.yaml 必须定义非空 names 类别列表"})
+    if config.get("nc") is not None and config["nc"] != len(classes):
+        raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": "data.yaml 的 nc 与 names 类别数量不一致"})
+    for label_file in dataset_path.rglob("*.txt"):
+        if "labels" not in {part.lower() for part in label_file.parts}:
+            continue
+        for line_number, line in enumerate(label_file.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            fields = line.split()
+            try:
+                class_id = int(fields[0])
+                coordinates = [float(value) for value in fields[1:]]
+            except (ValueError, IndexError) as exc:
+                raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": f"标签格式无效: {label_file.name}:{line_number}"}) from exc
+            if len(fields) != 5 or not 0 <= class_id < len(classes):
+                raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": f"标签类别超出 data.yaml 范围: {label_file.name}:{line_number}"})
+            if not all(math.isfinite(value) and 0 <= value <= 1 for value in coordinates) or coordinates[2] <= 0 or coordinates[3] <= 0:
+                raise HTTPException(status_code=400, detail={"code": "INVALID_DATASET", "message": f"标签坐标必须是 0-1 范围内的有限值: {label_file.name}:{line_number}"})
 
 
 def _get_dataset_record(db: Session, dataset_path: str, current_user: User) -> TrainingDataset | None:
@@ -114,11 +210,42 @@ async def list_datasets(db: Session = Depends(get_db), current_user: User = Depe
             "storage_key": record.storage_key if record else directory.name,
             "ready": (directory / "data.yaml").is_file(),
             "owner_id": record.owner_id if record else None,
-            "is_builtin": record.is_builtin if record else True,
+            "is_builtin": is_builtin,
+            "display_name": record.display_name if record else None,
+            "description": record.description if record else None,
         })
     if (root / "data.yaml").is_file():
         datasets.insert(0, {"name": root.name, "path": ".", "ready": True, "owner_id": None, "is_builtin": True})
     return {"items": datasets}
+
+
+@router.patch("/datasets/{dataset_path}")
+async def update_dataset_metadata(
+    dataset_path: str,
+    payload: TrainingDatasetMetadataUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update metadata only; dataset files and their stable path are not renamed."""
+    record = _get_dataset_record(db, dataset_path, current_user)
+    if _is_builtin_dataset_path(dataset_path, record):
+        raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "内置数据集只读"})
+    if record is None:
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "数据集不存在"})
+    if record.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "无权编辑该数据集"})
+    record.display_name = payload.display_name.strip() if payload.display_name else None
+    record.description = payload.description.strip() if payload.description else None
+    db.commit()
+    db.refresh(record)
+    return {
+        "name": record.display_name or record.path,
+        "path": record.path,
+        "display_name": record.display_name,
+        "description": record.description,
+        "owner_id": record.owner_id,
+        "is_builtin": record.is_builtin,
+    }
 
 
 @router.get("/datasets/{dataset_path}/download")
@@ -132,7 +259,7 @@ async def download_dataset(
     root = _dataset_root()
     dataset = _safe_dataset_path(dataset_path)
     if not dataset.is_dir():
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "数据集不存在"})
     _get_dataset_record(db, dataset_path, current_user)
 
     archive_dir = Path(tempfile.mkdtemp(prefix="dataset-download-"))
@@ -169,7 +296,7 @@ async def delete_dataset(
         if task.dataset_path
     }
     if dataset in active_paths:
-        raise HTTPException(status_code=400, detail="该数据集正在被训练任务使用，暂不能删除")
+        raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "该数据集正在被训练任务使用，暂不能删除"})
 
     if expected_version is not None and record.resource_version != expected_version:
         raise HTTPException(status_code=409, detail={
@@ -277,6 +404,11 @@ async def purge_dataset(
 @router.post("/datasets/upload")
 async def upload_dataset(
     file: UploadFile = File(...),
+    dataset_format: str = Form("auto"),
+    train_ratio: float = Form(0.8),
+    val_ratio: float = Form(0.1),
+    test_ratio: float = Form(0.1),
+    split_seed: int = Form(42),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
@@ -357,8 +489,14 @@ async def upload_dataset(
     }
 
 
-def _check_task_access(db: Session, task_id: int, current_user):
-    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+def _resolve_training_task(db: Session, identifier: str | int):
+    value = str(identifier).strip()
+    task = db.query(TrainingTask).filter(TrainingTask.id == int(value)).first() if value.isdigit() else None
+    return task or db.query(TrainingTask).filter(TrainingTask.task_uuid == value).first()
+
+
+def _check_task_access(db: Session, task_id: str | int, current_user):
+    task = _resolve_training_task(db, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="训练任务不存在")
     if task.user_id != current_user.id and not authorization_service.has_permission(
@@ -567,13 +705,13 @@ async def get_training_metrics(
 
 @router.post("/stop/{task_id}")
 async def stop_training(
-    task_id: int,
+    task_id: str,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """停止正在运行的训练任务"""
-    _check_task_access(db, task_id, current_user)
-    result = training_service.stop_training(db, task_id)
+    task = _check_task_access(db, task_id, current_user)
+    result = training_service.stop_training(db, task.id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result

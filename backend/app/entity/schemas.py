@@ -40,6 +40,8 @@ class UserBrief(BaseModel):
     email: str
     avatar: Optional[str] = None
     roles: list[str] = []
+    is_active: bool = True
+    is_superuser: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +50,7 @@ class TokenResponse(BaseModel):
     """登录成功响应"""
     access_token: str
     token_type: str = "bearer"
+    user: UserBrief
     user: UserBrief
 
 
@@ -265,6 +268,9 @@ class BatchDetectionResponse(BaseModel):
 # --- 检测统计 ---
 
 class DetectionStatistics(BaseModel):
+    training_total_tasks: int = 0
+    training_daily_trend: list[dict] = []
+    daily_inference_time: list[dict] = Field(default_factory=list)
     """检测统计数据"""
     total_tasks: int
     total_images: int
@@ -281,6 +287,47 @@ class DetectionStatistics(BaseModel):
 
 # --- 训练任务 ---
 
+class AdvancedTrainingConfig(BaseModel):
+    """Whitelisted Ultralytics 8.3 training options exposed by the UI."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lrf: float = Field(default=0.01, ge=0, le=1)
+    momentum: float = Field(default=0.937, ge=0, le=1)
+    weight_decay: float = Field(default=0.0005, ge=0, le=0.1)
+    warmup_epochs: float = Field(default=3.0, ge=0, le=20)
+    warmup_momentum: float = Field(default=0.8, ge=0, le=1)
+    warmup_bias_lr: float = Field(default=0.1, ge=0, le=1)
+    patience: int = Field(default=100, ge=0, le=500)
+    cos_lr: bool = False
+    amp: bool = True
+    pretrained: bool = True
+    deterministic: bool = True
+    seed: int = Field(default=0, ge=0, le=2_147_483_647)
+    workers: int = Field(default=8, ge=0, le=64)
+    cache: bool = False
+    rect: bool = False
+    multi_scale: bool = False
+    close_mosaic: int = Field(default=10, ge=0, le=500)
+    save_period: int = Field(default=-1, ge=-1, le=500)
+    freeze: Optional[int] = Field(default=None, ge=0, le=1000)
+    mosaic: float = Field(default=1.0, ge=0, le=1)
+    mixup: float = Field(default=0.0, ge=0, le=1)
+    fliplr: float = Field(default=0.5, ge=0, le=1)
+    flipud: float = Field(default=0.0, ge=0, le=1)
+    scale: float = Field(default=0.5, ge=0, le=1)
+    degrees: float = Field(default=0.0, ge=0, le=180)
+    translate: float = Field(default=0.1, ge=0, le=1)
+    shear: float = Field(default=0.0, ge=0, le=180)
+    perspective: float = Field(default=0.0, ge=0, le=0.001)
+    hsv_h: float = Field(default=0.015, ge=0, le=1)
+    hsv_s: float = Field(default=0.7, ge=0, le=1)
+    hsv_v: float = Field(default=0.4, ge=0, le=1)
+    erasing: float = Field(default=0.0, ge=0, le=1)
+    label_smoothing: float = Field(default=0.0, ge=0, le=1)
+    dropout: float = Field(default=0.0, ge=0, le=1)
+
+
 class TrainingTaskCreate(BaseModel):
     """创建训练任务"""
     model_config = ConfigDict(protected_namespaces=())
@@ -288,13 +335,20 @@ class TrainingTaskCreate(BaseModel):
     scene_id: int = Field(..., description="关联场景 ID")
     model_name: str = Field(default="yolov11n", description="基础模型")
     epochs: int = Field(default=100, ge=10, le=500, description="训练轮数")
-    img_size: int = Field(default=640, description="图像尺寸")
+    img_size: int = Field(default=640, ge=128, le=2048, description="图像尺寸")
     batch_size: int = Field(default=16, ge=1, le=64, description="批次大小")
-    device: str = Field(default="0", description="训练设备")
-    optimizer: str = Field(default="SGD", description="优化器")
-    lr0: float = Field(default=0.01, description="初始学习率")
-    augment_config: Optional[dict] = Field(None, description="数据增强配置")
+    device: str = Field(default="cpu", description="训练设备")
+    optimizer: Literal["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"] = "SGD"
+    lr0: float = Field(default=0.01, gt=0, le=1, description="初始学习率")
+    augment_config: Optional[dict] = Field(None, description="兼容旧任务的数据增强配置")
+    train_config: Optional[AdvancedTrainingConfig] = Field(None, description="高级训练配置")
     dataset_path: Optional[str] = Field(None, description="数据集目录")
+
+
+class TrainingDatasetMetadataUpdate(BaseModel):
+    """Editable metadata for a user-owned dataset; its directory remains unchanged."""
+    display_name: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
 
 
 class TrainingTaskResponse(BaseModel):
@@ -313,6 +367,9 @@ class TrainingTaskResponse(BaseModel):
     img_size: int
     batch_size: int
     device: str
+    optimizer: str = "SGD"
+    lr0: float = 0.01
+    train_config: Optional[dict] = None
     dataset_size: Optional[int] = None
     error_message: Optional[str] = None
     created_at: datetime
@@ -369,6 +426,10 @@ class ModelVersionResponse(BaseModel):
     status: str
     model_path: str
     minio_url: Optional[str] = None
+    object_key: Optional[str] = None
+    cleanup_pending: bool = False
+    cleanup_error: Optional[str] = None
+    cleanup_retry_count: int = 0
     map50: Optional[float] = None
     map50_95: Optional[float] = None
     precision: Optional[float] = None
@@ -538,6 +599,10 @@ class KnowledgeDocumentResponse(BaseModel):
     title: str
     filename: str
     file_url: str
+    object_key: Optional[str] = None
+    cleanup_pending: bool = False
+    cleanup_error: Optional[str] = None
+    cleanup_retry_count: int = 0
     file_type: Optional[str] = None
     status: str
     chunk_count: int

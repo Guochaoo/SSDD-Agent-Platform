@@ -34,6 +34,7 @@ def _seed_detection_data(db_session, model_path):
     db_session.flush()
     model = ModelVersion(
         scene_id=scene.id,
+        owner_id=user.id,
         version="v1.0.0",
         model_name="ssdd_yolo11n_v1",
         model_type="yolo11n",

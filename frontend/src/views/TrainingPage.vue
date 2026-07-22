@@ -1,20 +1,19 @@
 <template>
   <div class="training-page">
-    <ModulePageHeader :title="text.title" :description="text.description">
+    <ModulePageHeader :title="text.title">
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
         {{ text.newTask }}
       </el-button>
     </ModulePageHeader>
 
-    <el-alert
+    <PageErrorAlert
       v-if="pageError"
-      class="page-alert"
-      :title="pageError"
-      type="error"
-      show-icon
+      :message="pageError.message"
+      :retry-text="text.retry"
       closable
-      @close="pageError = ''"
+      @retry="retryPageAction"
+      @close="pageError = null"
     />
 
     <el-card class="section-card" shadow="never">
@@ -69,9 +68,9 @@
         </el-table-column>
         <el-table-column :label="text.status" min-width="96">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">
+            <StatusTag :status="row.status" :label="statusText(row.status)" size="small">
               {{ statusText(row.status) }}
-            </el-tag>
+            </StatusTag>
           </template>
         </el-table-column>
         <el-table-column :label="text.createdAt" min-width="168">
@@ -89,9 +88,18 @@
               size="small"
               type="danger"
               text
-              @click.stop="stopTask(row.id)"
+              @click.stop="stopTask(taskIdentifier(row))"
             >
               {{ text.stop }}
+            </el-button>
+            <el-button
+              v-if="row.status === 'failed'"
+              size="small"
+              type="warning"
+              text
+              @click.stop="retryTask(row)"
+            >
+              {{ text.retry }}
             </el-button>
             <el-button
               v-if="isDeletable(row)"
@@ -107,6 +115,28 @@
       </el-table>
     </el-card>
 
+    <el-card class="section-card dataset-card" shadow="never">
+      <template #header>
+        <div class="card-header">
+          <div><span class="card-title">{{ bilingual('训练数据集管理', 'Training datasets') }}</span><span class="card-caption">{{ bilingual('仅可删除自己上传且未被任务使用的数据集', 'Only unused datasets uploaded by you can be deleted') }}</span></div>
+          <el-button text :loading="loadingDatasets" @click="fetchDatasets"><el-icon><Refresh /></el-icon>{{ text.refresh }}</el-button>
+        </div>
+      </template>
+      <el-table :data="datasets" size="small" stripe :empty-text="bilingual('暂无数据集', 'No datasets')">
+        <el-table-column prop="name" :label="bilingual('名称', 'Name')" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="path" :label="bilingual('路径', 'Path')" min-width="180" show-overflow-tooltip />
+        <el-table-column :label="bilingual('状态', 'Status')" width="110">
+          <template #default="{ row }"><el-tag size="small" :type="row.ready ? 'success' : 'warning'">{{ row.ready ? bilingual('可训练', 'Ready') : bilingual('待校验', 'Pending') }}</el-tag></template>
+        </el-table-column>
+        <el-table-column :label="bilingual('操作', 'Actions')" width="110" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="!row.is_builtin" text type="danger" size="small" @click="deleteDataset(row)">{{ text.delete }}</el-button>
+            <span v-else class="form-hint">{{ bilingual('内置', 'Built-in') }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-card v-if="selectedTask" class="section-card" shadow="never">
       <template #header>
         <div class="card-header monitor-header">
@@ -114,7 +144,7 @@
             <span class="card-title">{{ text.trainingMonitor }} - {{ text.task }} {{ selectedTask.public_task_id || selectedTask.task_uuid }}</span>
             <el-tag :type="statusType(selectedTask.status)" size="small">
               {{ statusText(selectedTask.status) }}
-            </el-tag>
+            </StatusTag>
           </div>
           <div class="monitor-info">
             <span>{{ text.model }}: {{ selectedTask.model_name }}</span>
@@ -125,14 +155,20 @@
         </div>
       </template>
 
-      <el-alert
-        v-if="monitorError"
-        class="monitor-alert"
-        :title="monitorError"
-        type="error"
-        show-icon
-        :closable="false"
+    <PageErrorAlert
+      v-if="monitorError"
+      class="monitor-alert"
+      :message="monitorError.message"
+      :retry-text="text.retry"
+      @retry="retryMonitorAction"
       />
+    <PageErrorAlert
+      v-if="selectedTask.status === 'failed' && selectedTask.error_message"
+      class="monitor-alert"
+      :message="selectedTask.error_message"
+      :retry-text="text.retry"
+      @retry="retryTask(selectedTask)"
+    />
 
       <el-progress
         class="monitor-progress"
@@ -275,6 +311,13 @@
                 :disabled="!dataset.ready"
               />
             </el-select>
+            <el-select v-model="datasetUpload.dataset_format" style="width: 130px" :disabled="uploadingDataset">
+              <el-option :label="bilingual('自动识别', 'Auto detect')" value="auto" />
+              <el-option label="YOLO" value="yolo" />
+              <el-option label="VOC" value="voc" />
+              <el-option label="COCO" value="coco" />
+              <el-option label="LabelMe" value="labelme" />
+            </el-select>
             <el-upload
               :show-file-list="false"
               accept=".zip"
@@ -284,7 +327,15 @@
               <el-button :loading="uploadingDataset" :icon="UploadFilled">{{ bilingual('上传 ZIP', 'Upload ZIP') }}</el-button>
             </el-upload>
           </div>
-          <span class="form-hint">{{ bilingual('ZIP 根目录必须包含 data.yaml', 'The ZIP root must contain data.yaml') }}</span>
+          <span class="form-hint">{{ bilingual('支持任意目录名；通过标注内容引用图片，无法唯一配对时会明确报错', 'Directory names are ignored; images are resolved from annotation references') }}</span>
+        </el-form-item>
+        <el-form-item :label="bilingual('自动划分', 'Auto split')">
+          <el-space wrap>
+            <span>Train</span><el-input-number v-model="datasetUpload.train_ratio" :min="0.05" :max="0.95" :step="0.05" :precision="2" size="small" />
+            <span>Val</span><el-input-number v-model="datasetUpload.val_ratio" :min="0.05" :max="0.9" :step="0.05" :precision="2" size="small" />
+            <span>Test</span><el-input-number v-model="datasetUpload.test_ratio" :min="0" :max="0.9" :step="0.05" :precision="2" size="small" />
+          </el-space>
+          <span class="form-hint">{{ bilingual('仅在源数据没有显式划分元数据时使用，三项之和必须为 1', 'Used only without explicit split metadata; values must total 1') }}</span>
         </el-form-item>
         <el-form-item :label="bilingual('检测场景', 'Detection scene')">
           <el-select v-model="trainForm.scene_id" class="full-width" :placeholder="bilingual('选择场景', 'Select a scene')">
@@ -334,9 +385,13 @@
 
         <el-form-item :label="bilingual('优化器', 'Optimizer')">
           <el-select v-model="trainForm.optimizer" class="full-width">
+            <el-option label="Auto" value="auto" />
             <el-option label="SGD（推荐）" value="SGD" />
             <el-option label="Adam" value="Adam" />
             <el-option label="AdamW" value="AdamW" />
+            <el-option label="NAdam" value="NAdam" />
+            <el-option label="RAdam" value="RAdam" />
+            <el-option label="RMSProp" value="RMSProp" />
           </el-select>
         </el-form-item>
 
@@ -349,6 +404,36 @@
             :precision="4"
           />
         </el-form-item>
+
+        <el-collapse class="advanced-settings">
+          <el-collapse-item :title="bilingual('高级设置', 'Advanced settings')" name="advanced">
+            <el-row :gutter="16">
+              <el-col :span="12"><el-form-item label="LRF"><el-input-number v-model="trainForm.train_config.lrf" :min="0" :max="1" :step="0.01" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item :label="bilingual('动量', 'Momentum')"><el-input-number v-model="trainForm.train_config.momentum" :min="0" :max="1" :step="0.01" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item :label="bilingual('权重衰减', 'Weight decay')"><el-input-number v-model="trainForm.train_config.weight_decay" :min="0" :max="0.1" :step="0.0001" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item :label="bilingual('耐心轮数', 'Patience')"><el-input-number v-model="trainForm.train_config.patience" :min="0" :max="500" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Warmup epochs"><el-input-number v-model="trainForm.train_config.warmup_epochs" :min="0" :max="20" :step="0.5" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Workers"><el-input-number v-model="trainForm.train_config.workers" :min="0" :max="64" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Seed"><el-input-number v-model="trainForm.train_config.seed" :min="0" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Close mosaic"><el-input-number v-model="trainForm.train_config.close_mosaic" :min="0" :max="500" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Mosaic"><el-slider v-model="trainForm.train_config.mosaic" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="MixUp"><el-slider v-model="trainForm.train_config.mixup" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Flip LR"><el-slider v-model="trainForm.train_config.fliplr" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Flip UD"><el-slider v-model="trainForm.train_config.flipud" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Scale"><el-slider v-model="trainForm.train_config.scale" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Translate"><el-slider v-model="trainForm.train_config.translate" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Dropout"><el-slider v-model="trainForm.train_config.dropout" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Erasing"><el-slider v-model="trainForm.train_config.erasing" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="Label smoothing"><el-slider v-model="trainForm.train_config.label_smoothing" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Cos LR"><el-switch v-model="trainForm.train_config.cos_lr" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="AMP"><el-switch v-model="trainForm.train_config.amp" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item :label="bilingual('确定性', 'Deterministic')"><el-switch v-model="trainForm.train_config.deterministic" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Cache"><el-switch v-model="trainForm.train_config.cache" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Rect"><el-switch v-model="trainForm.train_config.rect" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="Multi-scale"><el-switch v-model="trainForm.train_config.multi_scale" /></el-form-item></el-col>
+            </el-row>
+          </el-collapse-item>
+        </el-collapse>
       </el-form>
 
       <template #footer>
@@ -484,10 +569,13 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
+import { useTaskStore } from '@/stores/tasks'
 import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import {
   downloadTrainingModel,
   deleteTrainingTask,
@@ -495,24 +583,28 @@ import {
   getTrainingDatasets,
   getTrainingMetrics,
   getTrainingStatus,
-  getTrainingTasks,
   predictTrainingImage,
   startTraining,
   stopTraining,
   uploadTrainingDataset,
+  deleteTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
+
 import { getScenesApi } from '@/api/models'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
-import { getApiErrorMessage } from '@/utils/apiError'
+import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
+import StatusTag from '@/components/common/StatusTag.vue'
+import { getApiErrorInfo } from '@/utils/apiError'
 
+const route = useRoute()
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 const settingsStore = useSettingsStore()
+const taskStore = useTaskStore()
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Model Training & Monitoring',
-  description: 'Create YOLOv11 training tasks, monitor progress, then evaluate and export models.',
   newTask: 'New training task',
   taskList: 'Training tasks',
   taskCount: (count) => `${count} tasks`,
@@ -562,9 +654,9 @@ const text = computed(() => settingsStore.isEnglish ? {
   dateLocale: 'en-US',
   fetchTasksFailed: 'Failed to load training tasks',
   fetchDatasetsFailed: 'Failed to load training datasets',
+  retry: 'Retry',
 } : {
   title: '模型训练与监控',
-  description: '创建 YOLOv11 训练任务，实时查看训练进度并完成模型评估与导出。',
   newTask: '新建训练任务',
   taskList: '训练任务列表',
   taskCount: (count) => `共 ${count} 个任务`,
@@ -614,12 +706,12 @@ const text = computed(() => settingsStore.isEnglish ? {
   dateLocale: 'zh-CN',
   fetchTasksFailed: '训练任务列表加载失败',
   fetchDatasetsFailed: '训练数据集加载失败',
+  retry: '重试',
 })
 
-const taskList = ref([])
-const loadingTasks = ref(false)
-const pageError = ref('')
-const monitorError = ref('')
+const { trainingTasks: taskList, loadingTrainingTasks: loadingTasks } = storeToRefs(taskStore)
+const pageError = ref(null)
+const monitorError = ref(null)
 const selectedTask = ref(null)
 const showCreateDialog = ref(false)
 const creating = ref(false)
@@ -629,6 +721,9 @@ const mapChartRef = ref(null)
 let lossChart = null
 let mapChart = null
 let pollTimer = null
+let monitorSelectionVersion = 0
+let metricsRequestInFlight = null
+let hasExplicitTaskSelection = false
 
 const confusionChartRef = ref(null)
 const prChartRef = ref(null)
@@ -669,10 +764,53 @@ const trainForm = ref({
   device: 'cpu',
   optimizer: 'SGD',
   lr0: 0.01,
+  train_config: {
+    lrf: 0.01,
+    momentum: 0.937,
+    weight_decay: 0.0005,
+    warmup_epochs: 3,
+    warmup_momentum: 0.8,
+    warmup_bias_lr: 0.1,
+    patience: 100,
+    cos_lr: false,
+    amp: true,
+    pretrained: true,
+    deterministic: true,
+    seed: 0,
+    workers: 8,
+    cache: false,
+    rect: false,
+    multi_scale: false,
+    close_mosaic: 10,
+    save_period: -1,
+    mosaic: 1,
+    mixup: 0,
+    fliplr: 0.5,
+    flipud: 0,
+    scale: 0.3,
+    degrees: 0,
+    translate: 0.1,
+    shear: 0,
+    perspective: 0,
+    hsv_h: 0.015,
+    hsv_s: 0.7,
+    hsv_v: 0.4,
+    erasing: 0,
+    label_smoothing: 0.1,
+    dropout: 0.1,
+  },
 })
 const scenes = ref([])
 const datasets = ref([])
 const uploadingDataset = ref(false)
+const loadingDatasets = ref(false)
+const datasetUpload = ref({
+  dataset_format: 'auto',
+  train_ratio: 0.8,
+  val_ratio: 0.1,
+  test_ratio: 0.1,
+  split_seed: 42,
+})
 
 const metricCards = computed(() => {
   const task = selectedTask.value
@@ -736,16 +874,6 @@ const annotatedImageSrc = computed(() => {
   return image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`
 })
 
-function statusType(status) {
-  return {
-    pending: 'info',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger',
-    cancelled: 'info',
-  }[status] || 'info'
-}
-
 function statusText(status) {
   return {
     pending: text.value.pending,
@@ -783,6 +911,10 @@ function formatDataset(task) {
 
 function isDeletable(task) {
   return task && !RUNNING_STATUSES.has(task.status)
+}
+
+function taskIdentifier(task) {
+  return task?.id ?? task?.task_id ?? task?.taskId ?? task?.task_uuid ?? task?.taskUuid
 }
 
 function formatMetric(value) {
@@ -824,19 +956,48 @@ function normalizeTaskStatusResponse(response) {
   }
 }
 
+function reportPageError(error, fallback, retry) {
+  const { code, message } = getApiErrorInfo(error, fallback)
+  pageError.value = { message: `[${code}] ${message}`, retry }
+}
+
+function reportMonitorError(error, fallback) {
+  const { code, message } = getApiErrorInfo(error, fallback)
+  monitorError.value = { message: `[${code}] ${message}` }
+}
+
+async function retryPageAction() {
+  const retry = pageError.value?.retry
+  pageError.value = null
+  await retry?.()
+}
+
+async function retryMonitorAction() {
+  monitorError.value = null
+  await fetchMetrics()
+}
+
 async function fetchTasks() {
-  loadingTasks.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
-    scenes.value = await getScenesApi()
+    const [loadedScenes] = await Promise.all([
+      getScenesApi(),
+      taskStore.fetchTrainingTasks(),
+    ])
+    scenes.value = loadedScenes
     if (!trainForm.value.scene_id) trainForm.value.scene_id = Number(scenes.value[0]?.id) || null
-    const response = await getTrainingTasks()
-    taskList.value = response.items || []
+    const selected = taskList.value.find((task) => task.id === selectedTask.value?.id)
+      || taskStore.selectedTrainingTask
+    if (selectedTask.value && selected) selectedTask.value = { ...selectedTask.value, ...selected }
+    else if (selectedTask.value && !selected) {
+      stopPolling()
+      selectedTask.value = null
+      taskStore.clearSelectedTrainingTask()
+    }
+    return selected
   } catch (error) {
     console.error('获取训练任务列表失败', error)
-    pageError.value = getApiErrorMessage(error, text.value.fetchTasksFailed)
-  } finally {
-    loadingTasks.value = false
+    reportPageError(error, text.value.fetchTasksFailed, fetchTasks)
   }
 }
 
@@ -845,6 +1006,7 @@ function handleCurrentTaskChange(task) {
 }
 
 async function fetchDatasets() {
+  loadingDatasets.value = true
   try {
     const response = await getTrainingDatasets()
     datasets.value = response.items || []
@@ -853,22 +1015,44 @@ async function fetchDatasets() {
     }
   } catch (error) {
     console.error('获取训练数据集失败', error)
-    pageError.value = getApiErrorMessage(error, text.value.fetchDatasetsFailed)
+    reportPageError(error, text.value.fetchDatasetsFailed, fetchDatasets)
+  } finally {
+    loadingDatasets.value = false
+  }
+}
+
+async function deleteDataset(dataset) {
+  try {
+    await ElMessageBox.confirm(
+      bilingual(`确定删除数据集“${dataset.name || dataset.path}”？`, `Delete dataset “${dataset.name || dataset.path}”?`),
+      bilingual('删除训练数据集', 'Delete training dataset'),
+      { type: 'warning' },
+    )
+    await deleteTrainingDataset(dataset.path)
+    if (trainForm.value.dataset_path === dataset.path) trainForm.value.dataset_path = ''
+    await fetchDatasets()
+    ElMessage.success(bilingual('数据集已删除', 'Dataset deleted'))
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    reportPageError(error, bilingual('数据集删除失败', 'Failed to delete dataset'), () => deleteDataset(dataset))
   }
 }
 
 async function handleDatasetUpload(uploadFile) {
   if (!uploadFile.raw) return
   uploadingDataset.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
-    const dataset = await uploadTrainingDataset(uploadFile.raw)
+    const dataset = await uploadTrainingDataset(uploadFile.raw, datasetUpload.value)
     await fetchDatasets()
     trainForm.value.dataset_path = dataset.path
-    ElMessage.success('数据集上传并校验通过')
+    const summary = dataset.conversion
+    ElMessage.success(summary
+      ? `已转换 ${summary.images} 张图片，识别 ${summary.classes.length} 个类别`
+      : '数据集上传并校验通过')
   } catch (error) {
     console.error('上传训练数据集失败', error)
-    pageError.value = getApiErrorMessage(error, '训练数据集上传失败')
+    reportPageError(error, '训练数据集上传失败', () => handleDatasetUpload(uploadFile))
   } finally {
     uploadingDataset.value = false
   }
@@ -876,13 +1060,16 @@ async function handleDatasetUpload(uploadFile) {
 
 async function selectTask(task) {
   stopPolling()
+  hasExplicitTaskSelection = true
+  const selectionVersion = ++monitorSelectionVersion
   selectedTask.value = { ...task }
+  taskStore.selectTrainingTask(task.id)
   evalReport.value = null
   predictResult.value = null
 
   await nextTick()
   initCharts()
-  await fetchMetrics()
+  await fetchMetrics(selectionVersion)
 
   if (RUNNING_STATUSES.has(selectedTask.value?.status)) {
     startPolling()
@@ -897,24 +1084,25 @@ function initCharts() {
   updateCharts([])
 }
 
-async function fetchMetrics() {
+async function fetchMetrics(selectionVersion = monitorSelectionVersion) {
   if (!selectedTask.value) return
-  const taskId = selectedTask.value.id
+  const taskId = taskIdentifier(selectedTask.value)
+  if (taskId === undefined || taskId === null || taskId === '') return
+  if (metricsRequestInFlight === taskId) return
+  metricsRequestInFlight = taskId
 
   try {
     const [metricsResponse, statusResponse] = await Promise.all([
       getTrainingMetrics(taskId),
       getTrainingStatus(taskId),
     ])
+    if (selectionVersion !== monitorSelectionVersion || taskIdentifier(selectedTask.value) !== taskId) return
     const metrics = metricsResponse.metrics || []
     const taskStatus = normalizeTaskStatusResponse(statusResponse)
 
     if (taskStatus) {
       selectedTask.value = { ...selectedTask.value, ...taskStatus }
-      const index = taskList.value.findIndex((task) => task.id === taskStatus.id)
-      if (index !== -1) {
-        taskList.value[index] = { ...taskList.value[index], ...taskStatus }
-      }
+      taskStore.upsertTrainingTask(taskStatus)
     }
 
     updateCharts(metrics)
@@ -922,10 +1110,21 @@ async function fetchMetrics() {
     if (!RUNNING_STATUSES.has(selectedTask.value.status)) {
       stopPolling()
     }
-    monitorError.value = ''
+    monitorError.value = null
   } catch (error) {
     console.error('获取训练监控数据失败', error)
-    monitorError.value = getApiErrorMessage(error, '训练监控数据加载失败')
+    if (error?.response?.status === 404) {
+      stopPolling()
+      if (taskIdentifier(selectedTask.value) === taskId) {
+        selectedTask.value = null
+        taskStore.clearSelectedTrainingTask()
+      }
+      monitorError.value = null
+      return
+    }
+    reportMonitorError(error, '训练监控数据加载失败')
+  } finally {
+    if (metricsRequestInFlight === taskId) metricsRequestInFlight = null
   }
 }
 
@@ -1012,7 +1211,7 @@ async function createTask() {
     return
   }
   creating.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const response = await startTraining(trainForm.value)
     ElMessage.success(`训练任务已创建：${response.task_uuid}`)
@@ -1022,14 +1221,42 @@ async function createTask() {
     if (task) await selectTask(task)
   } catch (error) {
     console.error('创建训练任务失败', error)
-    pageError.value = getApiErrorMessage(error, '训练任务创建失败')
+    reportPageError(error, '训练任务创建失败', createTask)
+  } finally {
+    creating.value = false
+  }
+}
+
+async function retryTask(task) {
+  creating.value = true
+  pageError.value = null
+  try {
+    const response = await startTraining({
+      scene_id: task.scene_id,
+      dataset_path: task.dataset_name || task.dataset_path,
+      model_name: task.model_name,
+      epochs: task.epochs,
+      batch_size: task.batch_size,
+      img_size: task.img_size,
+      device: task.device,
+      optimizer: task.optimizer || 'SGD',
+      lr0: task.lr0 || 0.01,
+      augment_config: task.augment_config || null,
+      train_config: task.train_config || {},
+    })
+    ElMessage.success(`训练任务已重新创建：${response.task_uuid}`)
+    await fetchTasks()
+    const retriedTask = taskList.value.find((item) => item.id === response.id)
+    if (retriedTask) await selectTask(retriedTask)
+  } catch (error) {
+    reportPageError(error, '训练任务重试失败', () => retryTask(task))
   } finally {
     creating.value = false
   }
 }
 
 async function stopTask(taskId) {
-  pageError.value = ''
+  pageError.value = null
   try {
     await ElMessageBox.confirm('确定要停止当前训练任务吗？训练进度将被保留。', '确认停止', {
       type: 'warning',
@@ -1041,7 +1268,7 @@ async function stopTask(taskId) {
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       console.error('停止训练任务失败', error)
-      pageError.value = getApiErrorMessage(error, '训练任务停止失败')
+      reportPageError(error, '训练任务停止失败', () => stopTask(taskId))
     }
   }
 }
@@ -1053,10 +1280,12 @@ async function deleteTask(task) {
       text.value.delete,
       { type: 'warning' },
     )
-    await deleteTrainingTask(task.id)
-    if (selectedTask.value?.id === task.id) {
+    const identifier = taskIdentifier(task)
+    await deleteTrainingTask(identifier)
+    if (taskIdentifier(selectedTask.value) === identifier) {
       stopPolling()
       selectedTask.value = null
+      taskStore.clearSelectedTrainingTask()
       evalReport.value = null
       predictResult.value = null
     }
@@ -1064,7 +1293,7 @@ async function deleteTask(task) {
     ElMessage.success('Training history task deleted')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      pageError.value = getApiErrorMessage(error, 'Failed to delete training task')
+      reportPageError(error, '删除训练任务失败', () => deleteTask(task))
     }
   }
 }
@@ -1072,7 +1301,7 @@ async function deleteTask(task) {
 async function validateModel() {
   if (!selectedTask.value) return
   validating.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const response = await validateTrainingModel(selectedTask.value.id, {
       split: 'val',
@@ -1085,7 +1314,7 @@ async function validateModel() {
     ElMessage.success(`评估完成：mAP@50 ${formatPercent(response.overall?.map50)}`)
   } catch (error) {
     console.error('模型评估失败', error)
-    pageError.value = getApiErrorMessage(error, '模型评估失败')
+    reportPageError(error, '模型评估失败', validateModel)
   } finally {
     validating.value = false
   }
@@ -1128,7 +1357,7 @@ function renderEvaluationCharts(visualization) {
 async function exportModel() {
   if (!selectedTask.value) return
   exporting.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const response = await exportTrainingModel(selectedTask.value.id, {
       ...exportForm.value,
@@ -1139,7 +1368,7 @@ async function exportModel() {
     showExportDialog.value = false
   } catch (error) {
     console.error('模型导出失败', error)
-    pageError.value = getApiErrorMessage(error, '模型导出失败')
+    reportPageError(error, '模型导出失败', exportModel)
   } finally {
     exporting.value = false
   }
@@ -1148,14 +1377,14 @@ async function exportModel() {
 async function downloadModel() {
   if (!selectedTask.value) return
   downloading.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const blob = await downloadTrainingModel(selectedTask.value.id)
     triggerBlobDownload(blob, `best_${selectedTask.value.task_uuid}.pt`)
     ElMessage.success('模型权重下载已开始')
   } catch (error) {
     console.error('模型权重下载失败', error)
-    pageError.value = getApiErrorMessage(error, '模型权重下载失败')
+    reportPageError(error, '模型权重下载失败', downloadModel)
   } finally {
     downloading.value = false
   }
@@ -1192,7 +1421,7 @@ function handlePredictFileChange(file) {
 async function runPredict() {
   if (!predictFile.value || !selectedTask.value) return
   predicting.value = true
-  pageError.value = ''
+  pageError.value = null
   try {
     const formData = new FormData()
     formData.append('file', predictFile.value)
@@ -1206,7 +1435,7 @@ async function runPredict() {
     ElMessage.success(`检测完成：发现 ${predictResult.value.total_objects} 个目标`)
   } catch (error) {
     console.error('测试图验证失败', error)
-    pageError.value = getApiErrorMessage(error, '测试图验证失败')
+    reportPageError(error, '测试图验证失败', runPredict)
   } finally {
     predicting.value = false
   }
@@ -1248,7 +1477,14 @@ function resizeCharts() {
 }
 
 onMounted(() => {
-  fetchTasks()
+  fetchTasks().then((restoredTask) => {
+    const requestedTask = taskList.value.find((task) => String(task.id) === String(route.query.task || ''))
+    if (requestedTask) selectTask(requestedTask)
+    else {
+      const initialTask = restoredTask || taskList.value[0]
+      if (initialTask && !selectedTask.value && !hasExplicitTaskSelection) selectTask(initialTask)
+    }
+  })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)
 })
@@ -1268,6 +1504,9 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .training-page {
   width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0;
 }
 
 .page-alert,

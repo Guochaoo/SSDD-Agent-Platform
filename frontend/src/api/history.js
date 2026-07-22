@@ -16,6 +16,12 @@ export function getHistoryTaskTypeLabel(value) {
   );
 }
 
+export function getHistoryMediaType(value) {
+  if (value === "video") return "video";
+  if (value === "camera") return "camera";
+  return "image";
+}
+
 function unwrap(payload) {
   return payload?.data ?? payload;
 }
@@ -44,6 +50,7 @@ export function normalizeHistoryTask(task = {}) {
       task.model_version_id ?? task.modelVersionId ?? "",
     ),
     taskType: task.task_type ?? task.taskType ?? "single",
+    mediaType: getHistoryMediaType(task.task_type ?? task.taskType ?? "single"),
     status: task.status ?? "pending",
     totalImages,
     totalObjects: Number(task.total_objects ?? task.totalObjects ?? 0),
@@ -100,6 +107,8 @@ export async function getHistoryApi(params = {}) {
         scene_id: params.sceneId,
         task_type: params.taskType,
         status: params.status,
+        start_date: params.startDate,
+        end_date: params.endDate,
         page: params.page ?? 1,
         page_size: params.pageSize ?? 20,
       }).filter(([, value]) => value !== "" && value != null),

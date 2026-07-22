@@ -1,4 +1,5 @@
 """检测记录与统计服务测试：JSON 读写、用户隔离、分页、统计聚合"""
+from datetime import datetime, timedelta
 from app.entity.db_models import User, DetectionScene
 from app.services.history_service import history_service
 
@@ -93,6 +94,59 @@ def test_statistics_matches_actual_data(db_session):
     assert stats["total_images"] == 1
     assert stats["total_objects"] == 2
     assert stats["class_distribution"] == {"scratches": 1, "crazing": 1}
+    assert stats["daily_inference_time"][-1]["min"] == 100
+    assert stats["daily_inference_time"][-1]["max"] == 100
+    assert stats["daily_inference_time"][-1]["avg"] == 100
+
+
+def test_daily_inference_time_includes_completed_tasks_without_results(db_session):
+    user = _make_user(db_session, "alice")
+    scene = _make_scene(db_session)
+
+    task = history_service.create_task(db_session, user.id, scene.id, task_type="single")
+    history_service.mark_completed(
+        db_session, task.id, total_images=1, total_objects=0, total_inference_time=42.5
+    )
+
+    stats = history_service.get_statistics(db_session, user_id=user.id)
+    assert stats["daily_inference_time"][-1] == {
+        "date": stats["daily_inference_time"][-1]["date"],
+        "min": 42.5,
+        "max": 42.5,
+        "avg": 42.5,
+    }
+
+
+def test_statistics_uses_the_same_period_and_status_contract(db_session):
+    """默认看板只统计周期内完成任务，避免列表与统计口径不一致。"""
+    user = _make_user(db_session, "alice")
+    scene = _make_scene(db_session)
+
+    completed = history_service.create_task(db_session, user.id, scene.id, task_type="single")
+    history_service.add_results(db_session, completed.id, [
+        {"image_path": "/recent.jpg", "class_name": "scratches", "class_id": 5, "confidence": 0.9, "bbox": [0, 0, 1, 1]},
+    ])
+    history_service.mark_completed(db_session, completed.id, total_images=1, total_objects=1, total_inference_time=20)
+
+    failed = history_service.create_task(db_session, user.id, scene.id, task_type="single")
+    history_service.add_results(db_session, failed.id, [
+        {"image_path": "/failed.jpg", "class_name": "crazing", "class_id": 0, "confidence": 0.8, "bbox": [0, 0, 1, 1]},
+    ])
+    history_service.mark_failed(db_session, failed.id, "inference failed")
+
+    old = history_service.create_task(db_session, user.id, scene.id, task_type="single")
+    history_service.mark_completed(db_session, old.id, total_images=9, total_objects=9, total_inference_time=99)
+    old.created_at = datetime.now() - timedelta(days=60)
+    db_session.commit()
+
+    stats = history_service.get_statistics(db_session, user_id=user.id, days=30)
+    assert stats["total_tasks"] == 1
+    assert stats["total_images"] == 1
+    assert stats["class_distribution"] == {"scratches": 1}
+
+    failed_stats = history_service.get_statistics(db_session, user_id=user.id, days=30, status="failed")
+    assert failed_stats["total_tasks"] == 1
+    assert failed_stats["class_distribution"] == {"crazing": 1}
 
 
 def test_delete_task_moves_task_and_results_to_recycle_bin(db_session):

@@ -162,6 +162,8 @@ async def login(http_request: Request, db: Session = Depends(get_db)):
             "email": user.email,
             "avatar": user.avatar,
             "roles": roles,
+            "is_active": user.is_active,
+            "is_superuser": user.is_superuser,
         },
     }
 

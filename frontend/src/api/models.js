@@ -30,6 +30,9 @@ export async function getModelsApi(sceneId) {
     ownerId: model.owner_id ?? model.ownerId ?? null,
     isBuiltin: model.is_builtin ?? model.isBuiltin ?? false,
     fileSize: model.file_size ?? model.fileSize ?? null,
+    cleanupPending: model.cleanup_pending ?? model.cleanupPending ?? false,
+    cleanupError: model.cleanup_error ?? model.cleanupError ?? null,
+    cleanupRetryCount: model.cleanup_retry_count ?? model.cleanupRetryCount ?? 0,
     createdAt: model.created_at ?? model.createdAt ?? null,
   }));
 }
@@ -48,6 +51,10 @@ export function deleteModelVersionApi(sceneId, modelVersionId) {
   return request.delete(`/scenes/${sceneId}/models/${modelVersionId}`)
 }
 
+export function retryModelCleanupApi(sceneId, modelVersionId) {
+  return request.post(`/scenes/${sceneId}/models/${modelVersionId}/retry-cleanup`)
+}
+
 export function uploadModelVersionApi(sceneId, payload) {
   const formData = new FormData()
   formData.append('file', payload.file)
@@ -56,4 +63,12 @@ export function uploadModelVersionApi(sceneId, payload) {
   formData.append('model_type', payload.modelType || 'yolo11n')
   if (payload.description) formData.append('description', payload.description)
   return request.post(`/scenes/${sceneId}/models/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+
+export function updateModelVersionApi(sceneId, modelVersionId, payload) {
+  const formData = new FormData()
+  if (payload.version != null) formData.append('version', payload.version)
+  if (payload.modelName != null) formData.append('model_name', payload.modelName)
+  if (payload.description != null) formData.append('description', payload.description)
+  return request.patch(`/scenes/${sceneId}/models/${modelVersionId}`, formData)
 }

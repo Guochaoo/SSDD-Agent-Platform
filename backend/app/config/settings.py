@@ -1,4 +1,4 @@
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,17 +30,13 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "rsod-agent-images"
     MINIO_SECURE: bool = False
 
-    # LLM
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o-mini"
 
-    # Embedding（RAG 向量检索用，默认复用 OPENAI_* 的 OpenAI 兼容 endpoint，
-    # 如果 embedding 服务和对话 LLM 不是同一个供应商，可以在 .env 里单独覆盖）
-    # 注意：EMBEDDING_MODEL 输出的向量维度必须和 app/entity/db_models.py 里的
-    # EMBEDDING_DIM（当前 768）一致，改模型后要同步改 EMBEDDING_DIM 并重建
-    # knowledge_chunks 表和索引。
-    EMBEDDING_MODEL: str = "bge-base-zh-v1.5"
+    # The project uses the DashScope-compatible embedding endpoint by default.
+    # Its dimension must stay aligned with EMBEDDING_DIM in db_models.py.
+    EMBEDDING_MODEL: str = "qwen3.7-text-embedding"
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_BASE_URL: str = ""
 
@@ -52,26 +48,43 @@ class Settings(BaseSettings):
     def embedding_base_url(self) -> str:
         return self.EMBEDDING_BASE_URL or self.OPENAI_BASE_URL
 
-    # Training paths
     DATASET_BASE_DIR: str = "datasets/ssdd"
     TRAIN_OUTPUT_DIR: str = "runs/train"
+    CLEANUP_RETRY_INTERVAL_SECONDS: int = 300
+    CLEANUP_LOCK_TTL_SECONDS: int = 600
 
     JWT_SECRET_KEY: str = "your-super-secret-key-change-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    ALLOWED_ORIGINS: str = (
-        "http://localhost:3000,http://localhost:5173,http://localhost:8080"
-    )
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
     @field_validator("DEBUG", mode="before")
     @classmethod
     def parse_debug(cls, value):
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"release", "prod", "production"}:
-                return False
+        if isinstance(value, str) and value.strip().lower() in {"release", "prod", "production"}:
+            return False
         return value
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        if self.DEBUG:
+            return self
+        placeholders = {
+            "your-super-secret-key-change-in-production",
+            "minioadmin",
+            "rsod_admin",
+            "REPLACE_WITH_A_LONG_UNIQUE_PASSWORD",
+            "REPLACE_WITH_A_32_BYTE_OR_LONGER_RANDOM_SECRET",
+        }
+        if self.JWT_SECRET_KEY in placeholders or len(self.JWT_SECRET_KEY) < 32:
+            raise ValueError("JWT_SECRET_KEY must be a non-placeholder value of at least 32 characters in production")
+        if self.DB_PASSWORD in placeholders or self.MINIO_SECRET_KEY in placeholders:
+            raise ValueError("Database and MinIO passwords must not use example values in production")
+        origins = self.cors_origins_list
+        if not origins or "*" in origins or any("localhost" in origin for origin in origins):
+            raise ValueError("ALLOWED_ORIGINS must contain explicit non-localhost origins in production")
+        return self
 
     @property
     def DATABASE_URL(self) -> str:
@@ -84,5 +97,6 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
+
 
 settings = Settings()

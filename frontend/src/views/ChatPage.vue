@@ -40,7 +40,7 @@
               <div class="footer-left">
                 <ModelSelect v-model="model" />
                 <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
-                  <Image :size="16" />
+                  <img :src="addIcon" width="16" height="16" />
                 </button>
                 <input
                   ref="fileInputRef"
@@ -52,6 +52,13 @@
                 />
               </div>
 
+              <div class="footer-quick">
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+                <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
+              </div>
+
               <button
                 class="send-btn"
                 :disabled="!canSend"
@@ -59,7 +66,7 @@
                 @click="handleHeroSend"
               >
                 <el-icon :size="28">
-                  <ArrowUpStroke :size="16" v-if="!agentStore.isStreaming" />
+                  <ArrowUpStroke v-if="!agentStore.isStreaming" size="16" />
                   <CloseBold v-else />
                 </el-icon>
               </button>
@@ -83,15 +90,6 @@
           </button>
         </div>
 
-        <QuickDetectBar
-          :disabled="agentStore.isStreaming || isQuickDetecting"
-          :labels="chatText.quickDetect"
-          @single="handleQuickDetect('single')"
-          @batch="handleQuickDetect('batch')"
-          @zip="handleQuickDetect('zip')"
-          @video="handleQuickDetect('video')"
-        />
-
       </div>
     </template>
 
@@ -107,16 +105,6 @@
 
       <!-- Prompt card (sticky bottom) -->
       <div class="chat-bottom chat-composer">
-        <QuickDetectBar
-          class="chat-quick-detect"
-          :disabled="agentStore.isStreaming || isQuickDetecting"
-          :labels="chatText.quickDetect"
-          @single="handleQuickDetect('single')"
-          @batch="handleQuickDetect('batch')"
-          @zip="handleQuickDetect('zip')"
-          @video="handleQuickDetect('video')"
-        />
-
         <div :class="['prompt-card', { dragover: isDragover }]">
           <div class="prompt-primary">
             <div v-if="agentStore.imagePreviewUrls.length" class="inline-previews">
@@ -143,7 +131,7 @@
             <div class="footer-left">
               <ModelSelect v-model="model" />
               <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
-                <Image :size="16" />
+                <img :src="addIcon" width="16" height="16" />
               </button>
               <input
                 ref="fileInputRef"
@@ -153,6 +141,13 @@
                 hidden
                 @change="onFileChange"
               />
+            </div>
+
+            <div class="footer-quick">
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('single')">{{ chatText.quickDetect.single }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('batch')">{{ chatText.quickDetect.batch }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('zip')">{{ chatText.quickDetect.zip }}</button>
+              <button class="quick-btn" :disabled="agentStore.isStreaming || isQuickDetecting" @click="handleQuickDetect('video')">{{ chatText.quickDetect.video }}</button>
             </div>
 
             <button
@@ -181,7 +176,8 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CloseBold, Close, UploadFilled } from '@element-plus/icons-vue'
-import { Image, ArrowUpStroke } from '@boxicons/vue'
+import { ArrowUpStroke } from '@boxicons/vue'
+import addIcon from '@/assets/icons/add-circle.svg'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
@@ -192,9 +188,9 @@ import {
 } from '@/api/agent'
 import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
+import { normalizeAgentError, normalizeAgentEvent } from '@/utils/agentCards'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
-import QuickDetectBar from '@/components/agent/QuickDetectBar.vue'
 
 const agentStore = useAgentStore()
 const settingsStore = useSettingsStore()
@@ -232,7 +228,7 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   send: 'Send',
   stop: 'Stop',
   dropToUpload: 'Release to upload image',
-  onlyImages: 'Only JPG and PNG images are supported',
+  onlyImages: 'Unsupported file type',
   imageTooLarge: 'Image size cannot exceed 10MB',
   videoTooLarge: 'Video size cannot exceed 50MB',
   zipDetecting: 'Running ZIP image detection...',
@@ -252,10 +248,6 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   batchDone: (images, count) => `Batch detection completed. Processed ${images} images and found ${count} possible defects.`,
   singleFailed: 'Single-image detection failed. Please try again later.',
   batchFailed: 'Batch detection failed. Please try again later.',
-  analyzing: 'Analyzing the steel surface image...',
-  detectFailed: 'Detection failed. Check the backend service, model and authentication, then try again.',
-  noDefect: 'No obvious defect detected. Review the threshold with the production context before rechecking.',
-  unknownDefect: 'Unknown defect',
   quickDetect: { single: 'Single image', batch: 'Batch images', zip: 'ZIP', video: 'Video' },
   chips: [
     'Analyze defects in this steel surface',
@@ -269,7 +261,7 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   send: '发送',
   stop: '停止',
   dropToUpload: '释放以上传图片',
-  onlyImages: '仅支持 JPG 和 PNG 图片',
+  onlyImages: '不支持的文件类型',
   imageTooLarge: '图片大小不能超过 10MB',
   videoTooLarge: '视频大小不能超过 50MB',
   zipDetecting: '正在进行 ZIP 图片检测…',
@@ -289,10 +281,6 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   batchDone: (images, count) => `批量检测完成，共处理 ${images} 张图片，发现 ${count} 个疑似缺陷。`,
   singleFailed: '单图检测失败，请稍后重试。',
   batchFailed: '批量检测失败，请稍后重试。',
-  analyzing: '正在分析钢铁表面图像……',
-  detectFailed: '检测失败，请检查后端服务、模型和鉴权状态后重试。',
-  noDefect: '未检测到明显缺陷。建议结合生产场景复核阈值后再复检。',
-  unknownDefect: '未知缺陷',
   quickDetect: { single: '单图检测', batch: '批量图片检测', zip: 'ZIP 检测', video: '视频检测' },
   chips: [
     '分析这张钢铁表面的缺陷',
@@ -315,30 +303,6 @@ const quickChips = computed(() => chatText.value.chips.map((label) => ({ label }
 const quickDetectOptions = {
   confThreshold: 0.25,
   iouThreshold: 0.45,
-}
-
-function summarizeDetectionResult(result) {
-  const objects = result?.objects || []
-  if (!objects.length) {
-    return chatText.value.noDefect
-  }
-
-  const statMap = new Map()
-  let maxConfidence = 0
-  for (const item of objects) {
-    const key = item.classNameCn || item.className || chatText.value.unknownDefect
-    statMap.set(key, (statMap.get(key) || 0) + 1)
-    maxConfidence = Math.max(maxConfidence, Number(item.confidence || 0))
-  }
-
-  const summary = Array.from(statMap.entries())
-    .map(([name, count]) => `${name} ${count} 处`)
-    .join('，')
-
-  if (settingsStore.isEnglish) {
-    return `Detection completed. Found ${objects.length} possible defects (${summary}); highest confidence ${(maxConfidence * 100).toFixed(1)}%.\n\n`
-  }
-  return `检测完成，共发现 ${objects.length} 处疑似缺陷（${summary}），最高置信度 ${(maxConfidence * 100).toFixed(1)}%。\n\n`
 }
 
 function onDragEnter() { dragCounter++; isDragover.value = true }
@@ -398,7 +362,7 @@ function autoResizeChat() {
 
 function handleHeroSend() {
   if (agentStore.isStreaming) {
-    agentStore.stopStreaming()
+    agentStore.cancelCurrentRun()
     return
   }
   const text = heroInput.value.trim()
@@ -409,7 +373,7 @@ function handleHeroSend() {
 
 function handleChatSend() {
   if (agentStore.isStreaming) {
-    agentStore.stopStreaming()
+    agentStore.cancelCurrentRun()
     return
   }
   const text = chatInput.value.trim()
@@ -429,7 +393,30 @@ function chooseFiles({ accept, multiple }) {
     input.type = 'file'
     input.accept = accept
     input.multiple = multiple
-    input.onchange = () => resolve(Array.from(input.files || []))
+    let settled = false
+
+    const cleanup = () => {
+      window.removeEventListener('focus', onFocus)
+    }
+
+    const onFocus = () => {
+      // { once: true } already removed this listener; just wait for onchange
+      // (user picked a file) before treating the refocus as a cancel.
+      setTimeout(() => {
+        if (!settled) {
+          settled = true
+          resolve([])
+        }
+      }, 300)
+    }
+
+    input.onchange = () => {
+      settled = true
+      cleanup()
+      resolve(Array.from(input.files || []))
+    }
+
+    window.addEventListener('focus', onFocus, { once: true })
     input.click()
   })
 }
@@ -600,6 +587,11 @@ async function runVideoDetect(file, options) {
       annotatedVideoUrl: result.annotated_video_url || '',
     }
     agentStore.setToolCall({ name: 'detect_video', status: 'success', result })
+    agentStore.addToolResultCard(assistantMessage.videoResult, 'detect_video', {
+      type: 'video_result',
+      task_id: task.task_id,
+      model_id: options.modelId,
+    })
   } catch (error) {
     assistantMessage.content = chatText.value.videoFailed
     agentStore.setToolCall({ name: 'detect_video', status: 'error', error: error?.message || chatText.value.videoFailed })
@@ -612,107 +604,88 @@ async function runVideoDetect(file, options) {
 let _currentAgentLabel = ''
 
 function handleAgentEvent(event) {
-  if (event.type === 'agent_switch') {
-    _currentAgentLabel = event.label || ''
+  const normalized = normalizeAgentEvent(event)
+  if (normalized.type === 'agent_switch') {
+    _currentAgentLabel = normalized.label || ''
     return
   }
-  if (event.type === 'text_delta' || event.type === 'text_chunk') {
-    const content = event.content || ''
-    const lastMsg = agentStore.messages[agentStore.messages.length - 1]
-    if (lastMsg?.detectionResult && isStaleMockDetectionText(content)) return
+  if (normalized.type === 'run_start') {
+    agentStore.activeRunId = normalized.run_id || normalized.runId || normalized.id || agentStore.activeRunId
+  }
+  if (normalized.type === 'text_delta' || normalized.type === 'text_chunk') {
+    const content = normalized.content || ''
     agentStore.appendAssistantContent(content)
   }
-  if (event.type === 'tool_start') {
+  if (normalized.type === 'tool_start') {
     agentStore.setToolCall({
-      id: event.tool_call_id || event.tool_name,
-      name: event.tool_name,
+      id: normalized.tool_call_id || normalized.tool_name,
+      name: normalized.tool_name,
       status: 'running',
-      input: event.input,
-      agentLabel: _currentAgentLabel || event.agent || '',
+      input: normalized.input,
+      agent: normalized.agent || '',
+      agentLabel: _currentAgentLabel || normalized.agent || '',
+      task_id: normalized.task_id,
+      model_id: normalized.model_id,
+      file_id: normalized.file_id,
+      knowledge_document_id: normalized.knowledge_document_id,
     })
   }
-  if (event.type === 'tool_result') {
+  if (normalized.type === 'tool_delta') {
     agentStore.setToolCall({
-      id: event.tool_call_id || event.tool_name,
-      name: event.tool_name,
-      status: 'success',
-      result: event.result,
-      agentLabel: _currentAgentLabel || event.agent || '',
+      id: normalized.tool_call_id || normalized.tool_name,
+      name: normalized.tool_name,
+      status: 'running',
+      progress: normalized.progress,
+      input: normalized.input,
+      agentLabel: _currentAgentLabel || normalized.agent || '',
     })
-    attachToolResultCard(event.result)
   }
-  if (event.type === 'message_end') {
+  if (normalized.type === 'tool_result') {
+    agentStore.setToolCall({
+      id: normalized.tool_call_id || normalized.tool_name,
+      name: normalized.tool_name,
+      status: 'success',
+      result: normalized.result,
+      agentLabel: _currentAgentLabel || normalized.agent || '',
+      task_id: normalized.task_id,
+      model_id: normalized.model_id,
+      file_id: normalized.file_id,
+      knowledge_document_id: normalized.knowledge_document_id,
+    })
+    agentStore.addToolResultCard(normalized.result, normalized.tool_name, {
+      id: normalized.tool_call_id,
+      task_id: normalized.task_id,
+      model_id: normalized.model_id,
+      file_id: normalized.file_id,
+      knowledge_document_id: normalized.knowledge_document_id,
+      references: normalized.references,
+      snapshot: normalized.snapshot,
+    })
+  }
+  if (normalized.type === 'message_end') {
     agentStore.isStreaming = false
     agentStore.setConnectionStatus('idle')
+    agentStore.activeRunId = ''
     const lastMsg = agentStore.messages[agentStore.messages.length - 1]
     if (lastMsg?.role === 'assistant') lastMsg.status = 'done'
     saveCurrentSession()
     _currentAgentLabel = ''
   }
-  if (event.type === 'error') {
-    agentStore.errorMessage = event.message || chatText.value.agentFailed
+  if (normalized.type === 'cancelled') {
+    agentStore.stopStreaming()
+    agentStore.activeRunId = ''
+    _currentAgentLabel = ''
+  }
+  if (normalized.type === 'error') {
+    const mapped = normalizeAgentError(normalized.error || normalized, chatText.value.agentFailed)
+    agentStore.errorMessage = mapped.code ? `[${mapped.code}] ${mapped.message}` : mapped.message
     agentStore.isStreaming = false
     agentStore.setConnectionStatus('error')
+    agentStore.activeRunId = ''
     agentStore.markLastAssistantError(agentStore.errorMessage)
     ElMessage.error(agentStore.errorMessage)
     _currentAgentLabel = ''
   }
-}
-
-function attachToolResultCard(rawResult) {
-  let payload = rawResult
-  if (typeof payload === 'string') {
-    try { payload = JSON.parse(payload) } catch { return }
-  }
-  const result = payload?.result || payload
-  if (!result || result.error) return
-  const assistantMessage = [...agentStore.messages].reverse().find((message) => message.role === 'assistant')
-  const userMessage = [...agentStore.messages].reverse().find((message) => message.role === 'user')
-  if (!assistantMessage) return
-
-  const normalizeObjects = (detections = []) => detections.map((item, index) => ({
-      id: String(index),
-      className: item.class_name || item.className || 'unknown',
-      classNameCn: item.class_name_cn || item.classNameCn || item.class_name || 'unknown',
-      confidence: Number(item.confidence || 0),
-      bbox: Array.isArray(item.bbox) ? item.bbox.map(Number) : [0, 0, 0, 0],
-      bboxPercent: null,
-  }))
-
-  if (Array.isArray(result.results)) {
-    assistantMessage.detectionResult = {
-      taskId: `agent-${Date.now()}`,
-      totalImages: result.total_images ?? result.results.length,
-      totalObjects: result.total_objects ?? 0,
-      items: result.results.map((item) => ({
-        fileName: item.filename || item.file_name || '',
-        annotatedImageUrl: item.annotated_image_url || item.annotatedImageUrl || '',
-        totalObjects: item.total_objects ?? item.detections?.length ?? 0,
-        inferenceTimeMs: Number(item.inference_time || 0),
-        objects: normalizeObjects(item.detections),
-        error: item.error || null,
-      })),
-    }
-  } else {
-    const detections = result.detections || []
-    assistantMessage.detectionResult = {
-      taskId: `agent-${Date.now()}`,
-      fileName: result.filename || '',
-      originalImageUrl: result.image_url || result.originalImageUrl || '',
-      annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '',
-      totalObjects: result.total_objects ?? result.totalObjects ?? detections.length,
-      totalImages: result.total_images ?? 1,
-      inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0),
-      objects: normalizeObjects(detections),
-    }
-  }
-  assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || ''
-  assistantMessage.content = summarizeDetectionResult(assistantMessage.detectionResult)
-  saveCurrentSession()
-}
-
-function isStaleMockDetectionText(content) {
-  return /检测到\s*1\s*处疑似划痕缺陷|置信度约为\s*91|建议进一步检查该区域/.test(content)
 }
 
 function doSend(text) {
@@ -721,6 +694,7 @@ function doSend(text) {
   agentStore.setConnectionStatus('connecting')
   agentStore.currentToolCall = null
   agentStore.errorMessage = ''
+  agentStore.activeRunId = ''
 
   const formData = new FormData()
   formData.append('message', text)
@@ -729,6 +703,7 @@ function doSend(text) {
     formData.append('model', model.value)
   }
   agentStore.selectedImages.forEach(file => formData.append('image', file))
+  agentStore.clearImages()
 
   agentStore.abortController = streamAgentChat(formData, {
     onMessage: handleAgentEvent,
@@ -741,6 +716,7 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('idle')
       agentStore.abortController = null
+      agentStore.activeRunId = ''
       agentStore.clearImages()
       saveCurrentSession()
     },
@@ -748,8 +724,11 @@ function doSend(text) {
       agentStore.isStreaming = false
       agentStore.setConnectionStatus('error')
       agentStore.abortController = null
-      agentStore.markLastAssistantError(error?.message || chatText.value.agentUnavailable)
-      ElMessage.error(chatText.value.agentUnavailable)
+      agentStore.activeRunId = ''
+      const mapped = normalizeAgentError(error, chatText.value.agentUnavailable)
+      const detail = mapped.code ? `[${mapped.code}] ${mapped.message}${mapped.requestId ? ` (Request ID: ${mapped.requestId})` : ''}` : mapped.message
+      agentStore.markLastAssistantError(detail)
+      ElMessage.error(detail)
     },
   })
 }
@@ -759,31 +738,6 @@ function handleSend(text) {
   const imgUrls = agentStore.selectedImages.map(f => URL.createObjectURL(f))
   agentStore.addMessage({ role: 'user', content: text, imagePreviewUrls: imgUrls })
   doSend(text)
-}
-
-async function runSingleDetectInChat(file, previewUrl) {
-  agentStore.addMessage({
-    role: 'assistant',
-    content: chatText.value.analyzing,
-  })
-  agentStore.setToolCall({ name: 'detect_single', status: 'running', input: { fileName: file.name } })
-
-  const assistantMessage = agentStore.messages[agentStore.messages.length - 1]
-  try {
-    const options = await getQuickDetectOptions()
-    const result = await detectSingleApi(file, options)
-    assistantMessage.content = summarizeDetectionResult(result)
-    assistantMessage.detectionResult = result
-    assistantMessage.detectionPreviewUrl = previewUrl
-    agentStore.setToolCall({ name: 'detect_single', status: 'success', result })
-  } catch (error) {
-    assistantMessage.content = chatText.value.detectFailed
-    agentStore.setToolCall({ name: 'detect_single', status: 'error', error: error?.message || chatText.value.detectFailed })
-    ElMessage.error(error?.response?.data?.detail || chatText.value.detectFailed)
-  } finally {
-    agentStore.clearImages()
-    saveCurrentSession()
-  }
 }
 
 async function checkAgentToolContracts() {
@@ -828,16 +782,15 @@ checkAgentToolContracts()
   }
 
   &:not(.hero) {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
     overflow: hidden;
   }
 }
 
 .chat-main {
-  min-height: 0;
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding-bottom: 100px;
 }
 
 /* ── Hero ── */
@@ -872,7 +825,8 @@ checkAgentToolContracts()
   grid-template-areas:
     "primary"
     "bottom";
-  background: var(--app-surface);
+  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
+  backdrop-filter: blur(20px);
   border: 0;
   border-radius: 28px;
   padding: 9px 8px;
@@ -978,6 +932,36 @@ checkAgentToolContracts()
   gap: 4px;
 }
 
+.footer-quick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+}
+
+.quick-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    border-color: #8f8ab0;
+    color: var(--app-text);
+    background: var(--app-hover);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
 /* ── Buttons ── */
 .footer-btn {
   display: inline-flex;
@@ -987,11 +971,11 @@ checkAgentToolContracts()
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #737373;
+  color: var(--app-text);
   cursor: pointer;
   transition: all 0.15s;
 
-  &:hover { background: rgba(0,0,0,0.06); color: var(--app-text); }
+  &:hover { background: var(--app-hover); color: var(--app-text); }
 }
 
 .send-btn {
@@ -1011,7 +995,7 @@ checkAgentToolContracts()
   &:disabled { opacity: 0.3; cursor: not-allowed; }
 }
 
-:root[data-theme='dark'] .send-btn {
+:global(:root[data-theme='dark']) .send-btn {
   background: #3f3f46;
   color: #f4f4f5;
 
@@ -1043,13 +1027,14 @@ checkAgentToolContracts()
 .quick-chips {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
+  width: 100%;
   max-width: 640px;
 }
 
 .chat-quick-detect {
-  max-width: 720px;
+  max-width: 790px;
   margin: 0 auto 8px;
   justify-content: flex-start;
 }
@@ -1076,14 +1061,38 @@ checkAgentToolContracts()
 
 /* ── Chat bottom (input area fixed at bottom via flex) ── */
 .chat-bottom {
-  position: relative;
+  /* Keep the latest dev composer positioning so the input bar overlays the
+     message stream consistently with the rest of the application shell. */
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
   padding: 12px 16px 16px;
-  background: linear-gradient(to top, var(--app-bg) 80%, transparent);
-  flex-shrink: 0;
-
+  background:
+    linear-gradient(to top, var(--app-bg) 76%, color-mix(in srgb, var(--app-bg) 0%, transparent));
+  border-top: 1px solid var(--app-border);
   .prompt-card {
-    max-width: 720px;
+    max-width: 790px;
     margin: 0 auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .card-footer {
+    height: auto;
+    flex-wrap: wrap;
+  }
+
+  .footer-quick {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding-top: 4px;
+  }
+
+  .chat-bottom {
+    padding-inline: 10px;
   }
 }
 </style>

@@ -116,6 +116,19 @@ def test_camera_websocket_config_frame_and_close(client, db_session, monkeypatch
         websocket.send_json({"type": "close"})
 
 
+def test_camera_websocket_rejects_invalid_config_without_disconnect(client, db_session, monkeypatch):
+    user = User(username="camera-invalid", email="camera-invalid@example.com", hashed_password="x")
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token({"sub": str(user.id)})
+    monkeypatch.setattr("app.api.detection.SessionLocal", lambda: db_session)
+
+    with client.websocket_connect(f"/api/detection/camera?token={token}") as websocket:
+        websocket.send_json({"type": "config", "model_id": 1, "conf": "bad", "iou": 0.45})
+        assert websocket.receive_json() == {"type": "error", "message": "conf 和 iou 必须是数值"}
+        websocket.send_json({"type": "close"})
+
+
 def test_zip_detection_rejects_non_zip_extension(client, db_session):
     user = User(username="zip-user", email="zip@example.com", hashed_password="x")
     db_session.add(user)

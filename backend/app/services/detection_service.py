@@ -26,6 +26,7 @@ from app.config.detection import (
     MAX_ZIP_EXTRACTED_SIZE,
 )
 from app.core.logger import get_logger
+from app.core.artifact_access import register_artifact
 from app.entity.db_models import ModelVersion
 from app.database.session import SessionLocal
 from app.services.history_service import history_service
@@ -220,14 +221,16 @@ class DetectionService:
         object_id = uuid4().hex
         suffix = Path(filename).suffix.lower() or ".jpg"
         base_path = f"detections/{task.user_id}/{task.id}"
+        original_object_key = f"{base_path}/original/{object_id}{suffix}"
         image_url = minio_client.upload_bytes(
-            f"{base_path}/original/{object_id}{suffix}",
+            original_object_key,
             source_bytes,
             file.content_type,
         )
         try:
+            annotated_object_key = f"{base_path}/annotated/{object_id}.jpg"
             annotated_url = minio_client.upload_bytes(
-                f"{base_path}/annotated/{object_id}.jpg",
+                annotated_object_key,
                 self._encode_annotated_image(result),
                 "image/jpeg",
             )
@@ -239,6 +242,8 @@ class DetectionService:
             {
                 "image_path": image_url,
                 "annotated_image_url": annotated_url,
+                "original_object_key": original_object_key,
+                "annotated_object_key": annotated_object_key,
                 **item,
                 "inference_time": inference_time,
                 "image_width": image.width,
@@ -806,14 +811,22 @@ class DetectionService:
         try:
             model_version = (
                 db.query(ModelVersion)
+                .options(joinedload(ModelVersion.scene))
                 .filter(ModelVersion.status == "active", ModelVersion.is_default == True)
                 .first()
             )
             if not model_version:
-                model_version = db.query(ModelVersion).filter(ModelVersion.status == "active").first()
+                model_version = (
+                    db.query(ModelVersion)
+                    .options(joinedload(ModelVersion.scene))
+                    .filter(ModelVersion.status == "active")
+                    .first()
+                )
             if not model_version:
                 raise RuntimeError("数据库中没有可用的模型版本，请先注册模型")
-            return self._get_model(model_version), model_version
+            # Access scene within the session to avoid detached lazy-load
+            class_names_cn = (model_version.scene.class_names_cn or {}) if model_version.scene else {}
+            return self._get_model(model_version), model_version, class_names_cn
         finally:
             db.close()
 
@@ -825,34 +838,49 @@ class DetectionService:
         iou: float = 0.45,
         owner_id: int = 0,
     ) -> dict:
-        """同步检测本地图片文件（供 Agent Tool 调用，不写数据库）"""
-        model, _ = self._get_default_model()
+        """同步检测本地图片文件（供 Agent Tool 调用）。user_id 不为 None 时写入 DetectionTask。"""
+        model, model_version, class_names_cn = self._get_default_model()
 
-        results = model.predict(
-            source=image_path, conf=conf, iou=iou, imgsz=640, device="cpu",
-            save=False, verbose=False,
-        )
-        result = results[0]
+        # ── 创建 DetectionTask（Agent 调用时） ──
+        task_id = None
+        _db = None
+        if user_id is not None:
+            from app.database.session import SessionLocal as _SessionLocal
+            _db = _SessionLocal()
+            try:
+                task = history_service.create_task(
+                    _db, user_id=user_id, scene_id=model_version.scene_id,
+                    task_type=task_type, model_version_id=model_version.id,
+                    conf_threshold=conf, iou_threshold=iou,
+                    image_size=640,
+                )
+                history_service.mark_processing(_db, task.id)
+                task_id = task.id
+                logger.info("Agent检测已创建 DetectionTask id=%s user_id=%s scene_id=%s", task_id, user_id, model_version.scene_id)
+            except Exception as exc:
+                logger.exception("Agent检测创建 DetectionTask 失败: %s", exc)
+                if _db:
+                    _db.close()
+                _db = None
 
-        detections = []
-        class_counts = {}
-        total_objects = 0
+        try:
+            results = model.predict(
+                source=image_path, conf=conf, iou=iou, imgsz=640, device="cpu",
+                save=False, verbose=False,
+            )
+            result = results[0]
 
-        if result.boxes is not None and len(result.boxes) > 0:
-            for box in result.boxes:
-                cls_id = int(box.cls.item())
-                cls_name = model.names.get(cls_id, f"class_{cls_id}")
-                confidence = float(box.conf.item())
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
+            detections = []
+            class_counts = {}
+            total_objects = 0
 
-                detections.append({
-                    "class_name": cls_name,
-                    "class_id": cls_id,
-                    "confidence": round(confidence, 4),
-                    "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
-                })
-                total_objects += 1
-                class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+            if result.boxes is not None and len(result.boxes) > 0:
+                for box in result.boxes:
+                    cls_id = int(box.cls.item())
+                    cls_name = model.names.get(cls_id, f"class_{cls_id}")
+                    cls_name_cn = class_names_cn.get(cls_name, cls_name)
+                    confidence = float(box.conf.item())
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
 
         inference_time = round(float(result.speed.get("inference", 0)), 2)
         artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
@@ -868,9 +896,10 @@ class DetectionService:
             "class_counts": class_counts,
             "detections": detections,
             "inference_time": inference_time,
-            "image_width": int(result.orig_shape[1]),
-            "image_height": int(result.orig_shape[0]),
+            "image_width": image_width,
+            "image_height": image_height,
             "annotated_image_url": f"/api/agent/artifacts/{artifact_name}",
+            "task_id": task_id,
         }
 
 

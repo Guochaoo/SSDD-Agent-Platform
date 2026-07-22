@@ -33,8 +33,8 @@ export function getAgentDetectionHistoryDetailApi(taskId) {
   return getHistoryDetailApi(taskId)
 }
 
-export function listAgentSessions() {
-  return request.get('/agent/sessions')
+export function listAgentSessions(params = {}) {
+  return request.get('/agent/sessions', { params })
 }
 
 export function getAgentSession(sessionId) {
@@ -48,6 +48,35 @@ export function getAgentMessageImage(sessionId, messageId, index = 0) {
   })
 }
 
+export function getAgentArtifact(filename) {
+  return request.get(`/agent/artifacts/${encodeURIComponent(filename)}`, {
+    responseType: 'blob',
+  })
+}
+
 export function deleteAgentSession(sessionId) {
   return request.delete(`/agent/sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export function updateAgentSession(sessionId, payload) {
+  // TODO(backend): PATCH /api/agent/sessions/{id} should persist title/archived metadata.
+  return request.patch(`/agent/sessions/${encodeURIComponent(sessionId)}`, payload)
+}
+
+export function renameAgentSession(sessionId, title) {
+  return updateAgentSession(sessionId, { title })
+}
+
+export function archiveAgentSession(sessionId, archived = true) {
+  return updateAgentSession(sessionId, { archived })
+}
+
+export function cancelAgentRunApi(runId) {
+  // TODO(backend): POST /api/agent/runs/{id}/cancel should stop the whole agent request.
+  return request.post(`/agent/runs/${encodeURIComponent(runId)}/cancel`)
+}
+
+export function cancelAgentToolApi(runId, toolCallId) {
+  // TODO(backend): POST /api/agent/runs/{id}/tools/{toolCallId}/cancel should stop one running tool.
+  return request.post(`/agent/runs/${encodeURIComponent(runId)}/tools/${encodeURIComponent(toolCallId)}/cancel`)
 }

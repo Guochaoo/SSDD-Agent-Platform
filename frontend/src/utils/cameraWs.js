@@ -70,6 +70,8 @@ export function createCameraWs(options) {
             reconnectTimer = undefined;
             if (!closing) this.connect();
           }, 500 * reconnectAttempts);
+        } else if (!closing) {
+          options.onReconnectFailed?.(event);
         }
       };
     },

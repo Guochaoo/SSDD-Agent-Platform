@@ -29,6 +29,7 @@
 import csv
 import os
 import shutil
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timedelta
@@ -36,10 +37,13 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
+import yaml
+
 from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import SessionLocal
 from app.entity.db_models import ModelVersion, TrainingMetric, TrainingTask
+from app.entity.schemas import AdvancedTrainingConfig
 
 logger = get_logger(__name__)
 
@@ -47,7 +51,46 @@ logger = get_logger(__name__)
 # 存储正在运行的训练任务的 model 引用，用于中途停止训练
 # key: task_uuid, value: YOLO model 实例
 _running_tasks: dict = {}
+_stop_requested: set[str] = set()
 _running_lock = threading.Lock()
+
+
+class TrainingCancelled(RuntimeError):
+    """Controlled exception used to leave Ultralytics' batch loop immediately."""
+
+
+def _ensure_training_not_cancelled(db, task: TrainingTask, task_uuid: str) -> None:
+    """Raise when cancellation was requested in this or another API process."""
+    with _running_lock:
+        requested_in_process = task_uuid in _stop_requested
+    try:
+        db.refresh(task, attribute_names=["status"])
+    except Exception:
+        db.rollback()
+        raise
+    if requested_in_process or task.status == "cancelled":
+        raise TrainingCancelled(task_uuid)
+
+
+def _create_runtime_data_yaml(source_path: str) -> str:
+    """Create an isolated training config with paths rooted at its dataset.
+
+    Uploaded datasets are user assets.  Training must never rewrite their
+    ``data.yaml`` just to make relative image paths work, especially when a
+    legacy archive contains a stale absolute ``path`` value.
+    """
+    with open(source_path, "r", encoding="utf-8") as source:
+        config = yaml.safe_load(source) or {}
+    if not isinstance(config, dict):
+        raise ValueError("data.yaml 必须是对象")
+
+    config["path"] = os.path.dirname(os.path.abspath(source_path))
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".yaml", prefix="ssdd-training-",
+        delete=False,
+    ) as runtime_file:
+        yaml.safe_dump(config, runtime_file, allow_unicode=True, sort_keys=False)
+        return runtime_file.name
 
 
 class TrainingService:
@@ -87,6 +130,11 @@ class TrainingService:
         Returns:
             创建的 TrainingTask 数据库对象
         """
+        raw_train_config = config.get("train_config") or {}
+        if raw_train_config:
+            config = dict(config)
+            config["train_config"] = AdvancedTrainingConfig.model_validate(raw_train_config).model_dump(exclude_none=True)
+
         # ── 生成唯一任务标识 ──
         task_uuid = str(uuid.uuid4())[:8]
         idempotency_key = config.get("idempotency_key")
@@ -125,6 +173,7 @@ class TrainingService:
             optimizer=config.get("optimizer", "SGD"),
             lr0=config.get("lr0", 0.01),
             augment_config=config.get("augment_config"),
+            train_config=config.get("train_config") or {},
             dataset_path=dataset_path,
             data_yaml=data_yaml,
             dataset_size=config.get("dataset_size"),
@@ -185,10 +234,14 @@ class TrainingService:
         """
         # ── 创建独立的数据库会话（后台线程不能复用请求级会话）──
         db = SessionLocal()
+        runtime_data_yaml = None
+        original_cwd = os.getcwd()
         try:
             task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
             if not task:
                 logger.error("训练任务不存在：task_id=%d", task_id)
+                return
+            if task.status == "cancelled":
                 return
 
             # ── 更新状态为 running ──
@@ -207,6 +260,9 @@ class TrainingService:
             # ── 注册到运行中任务表（用于中途停止）──
             with _running_lock:
                 _running_tasks[task_uuid] = model
+                stop_requested = task_uuid in _stop_requested
+            if stop_requested:
+                return
 
             # ── 确定 data.yaml 路径 ──
             data_yaml = config.get("data_yaml", "")
@@ -217,23 +273,11 @@ class TrainingService:
             if not os.path.exists(data_yaml):
                 raise FileNotFoundError(f"data.yaml 不存在：{data_yaml}")
 
-            data_yaml_dir = os.path.dirname(data_yaml)
-            original_cwd = os.getcwd()
-
-            # 临时修改 data.yaml 的 path 为绝对路径（训练后恢复）
-            with open(data_yaml, "r", encoding="utf-8") as f:
-                original_content = f.read()
-
-            modified_content = original_content.replace(
-                "path: .",
-                f"path: {data_yaml_dir}"
-            )
-            with open(data_yaml, "w", encoding="utf-8") as f:
-                f.write(modified_content)
-            logger.info(f"临时修改 data.yaml path 为绝对路径：{data_yaml_dir}")
+            runtime_data_yaml = _create_runtime_data_yaml(data_yaml)
+            logger.info("创建训练运行时 data.yaml：%s", runtime_data_yaml)
 
             train_kwargs = {
-                "data": data_yaml,
+                "data": runtime_data_yaml,
                 "epochs": config.get("epochs", 50),
                 "imgsz": config.get("img_size", 640),
                 "batch": config.get("batch_size", 8),
@@ -247,6 +291,10 @@ class TrainingService:
                 "save": True,
                 "plots": False,
             }
+            # Advanced options were validated by ``TrainingTaskCreate``.  They
+            # cannot override protected paths or core task fields because the
+            # schema exposes only Ultralytics training knobs.
+            train_kwargs.update(config.get("train_config") or {})
 
             # ── 注册训练回调：每个 epoch 结束时更新数据库 ──
             def on_train_epoch_end(trainer):
@@ -317,21 +365,37 @@ class TrainingService:
                     logger.warning("训练回调异常（不影响训练）：%s", str(e))
                     db.rollback()
 
+            def on_train_batch_end(trainer):
+                """Persist coarse batch progress so the monitor moves during long epochs."""
+                _ensure_training_not_cancelled(db, task, task_uuid)
+                try:
+                    total_batches = max(int(getattr(trainer, "nb", 0) or 0), 1)
+                    batch_index = int(getattr(trainer, "batch_i", 0) or 0) + 1
+                    epoch = int(getattr(trainer, "epoch", 0) or 0)
+                    task.progress = min(99, int((epoch + batch_index / total_batches) * 100 / max(task.epochs, 1)))
+                    if batch_index == 1 or batch_index % 10 == 0:
+                        db.commit()
+                except Exception:
+                    db.rollback()
+
+            model.add_callback("on_train_batch_end", on_train_batch_end)
             # 添加回调
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
             # ── 开始训练（阻塞直到完成）──
             logger.info(
-                "开始训练：data=%s, epochs=%d", data_yaml, train_kwargs["epochs"]
+                "开始训练：data=%s, epochs=%d", runtime_data_yaml, train_kwargs["epochs"]
             )
             results = model.train(**train_kwargs)
 
             # ── 训练完成，解析最终结果 ──
-            task.status = "completed"
-            task.progress = 100
-            task.current_epoch = config.get("epochs", 50)
-            task.completed_at = datetime.now()
-            db.commit()
+            db.refresh(task)
+            if task.status != "cancelled":
+                task.status = "completed"
+                task.progress = 100
+                task.current_epoch = config.get("epochs", 50)
+                task.completed_at = datetime.now()
+                db.commit()
 
             # ── 从 results.csv 补充最终指标 ──
             project_path = os.path.join(original_cwd, settings.TRAIN_OUTPUT_DIR)
@@ -339,28 +403,39 @@ class TrainingService:
 
             logger.info("训练完成：task_id=%d, uuid=%s", task_id, task_uuid)
 
+        except TrainingCancelled:
+            db.rollback()
+            task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+            if task:
+                task.status = "cancelled"
+                task.completed_at = task.completed_at or datetime.now()
+                db.commit()
+            logger.info("训练线程已终止：task_id=%d, uuid=%s", task_id, task_uuid)
+
         except FileNotFoundError as e:
             logger.error("训练文件缺失：task_id=%d, error=%s", task_id, str(e))
-            task.status = "failed"
-            task.error_message = str(e)
-            db.commit()
+            if task.status != "cancelled":
+                task.status = "failed"
+                task.error_message = str(e)
+                task.completed_at = datetime.now()
+                db.commit()
 
         except Exception as e:
             logger.error(
                 "训练异常：task_id=%d, error=%s", task_id, str(e), exc_info=True
             )
-            task.status = "failed"
-            task.error_message = str(e)[:2000]  # 限制错误信息长度
-            db.commit()
+            if task.status != "cancelled":
+                task.status = "failed"
+                task.error_message = str(e)[:2000]  # 限制错误信息长度
+                task.completed_at = datetime.now()
+                db.commit()
 
         finally:
-            # 恢复 data.yaml 原始内容
-            try:
-                with open(data_yaml, "w", encoding="utf-8") as f:
-                    f.write(original_content)
-                logger.info(f"恢复 data.yaml 原始内容")
-            except Exception:
-                pass
+            if runtime_data_yaml:
+                try:
+                    os.unlink(runtime_data_yaml)
+                except OSError:
+                    pass
 
             # 恢复工作目录
             try:
@@ -371,6 +446,7 @@ class TrainingService:
 
             with _running_lock:
                 _running_tasks.pop(task_uuid, None)
+                _stop_requested.discard(task_uuid)
             db.close()
 
     @staticmethod
@@ -516,6 +592,10 @@ class TrainingService:
                 "device": task.device,
                 "batch_size": task.batch_size,
                 "img_size": task.img_size,
+                "optimizer": task.optimizer,
+                "lr0": task.lr0,
+                "augment_config": task.augment_config,
+                "train_config": task.train_config or {},
                 "dataset_path": task.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(task.dataset_path)) if task.dataset_path else None,
                 "dataset_size": task.dataset_size,
@@ -596,15 +676,20 @@ class TrainingService:
         if not task:
             return {"error": "训练任务不存在"}
 
-        if task.status != "running":
+        if task.status not in {"pending", "running"}:
+            if task.status == "cancelled":
+                return {"message": "训练任务已停止", "task_id": task.id}
             return {"error": f"任务当前状态为 {task.status}，无法停止"}
 
         with _running_lock:
+            _stop_requested.add(task.task_uuid)
             model = _running_tasks.get(task.task_uuid)
             if model:
                 # ultralytics 支持通过设置 model.train 的 interrupt 来停止
                 try:
-                    model.trainer.stop()
+                    trainer = getattr(model, "trainer", None)
+                    if trainer is not None:
+                        trainer.stop = True
                 except Exception as e:
                     logger.warning("停止训练异常：%s", str(e))
 
@@ -617,7 +702,7 @@ class TrainingService:
         return {"message": "训练任务已停止", "task_id": task_id}
 
     @staticmethod
-    def get_task_list(db, user_id: int = None, limit: int = 20) -> list:
+    def get_task_list(db, user_id: int = None, limit: int = 20, is_superuser: bool = False) -> list:
         """
         获取训练任务列表
 
@@ -640,12 +725,19 @@ class TrainingService:
                 "id": t.id,
                 "public_task_id": t.public_task_id,
                 "task_uuid": t.task_uuid,
+                "scene_id": t.scene_id,
                 "status": t.status,
                 "model_name": t.model_name,
                 "epochs": t.epochs,
                 "current_epoch": t.current_epoch,
                 "progress": t.progress,
                 "device": t.device,
+                "batch_size": t.batch_size,
+                "img_size": t.img_size,
+                "optimizer": t.optimizer,
+                "lr0": t.lr0,
+                "augment_config": t.augment_config,
+                "train_config": t.train_config or {},
                 "dataset_path": t.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(t.dataset_path)) if t.dataset_path else None,
                 "dataset_size": t.dataset_size,
@@ -653,6 +745,7 @@ class TrainingService:
                 "created_at": str(t.created_at),
                 "started_at": str(t.started_at) if t.started_at else None,
                 "completed_at": str(t.completed_at) if t.completed_at else None,
+                "error_message": t.error_message,
             }
             for t in tasks
         ]
@@ -1052,6 +1145,7 @@ class TrainingService:
 
         # 上传到 MinIO
         minio_url = None
+        object_name = None
         if upload_minio:
             try:
                 from app.storage.minio_client import MinIOClient
@@ -1075,6 +1169,7 @@ class TrainingService:
             model_version.model_type = task.model_name
             model_version.model_path = exported_weight
             model_version.minio_url = minio_url
+            model_version.object_key = object_name if upload_minio else None
             model_version.map50 = overall.get("map50")
             model_version.map50_95 = overall.get("map50_95")
             model_version.precision = overall.get("precision")
@@ -1091,6 +1186,7 @@ class TrainingService:
                 model_name=f"{task.model_name}_{scene.name}_{version}",
                 model_type=task.model_name,
                 model_path=exported_weight,
+                object_key=object_name if upload_minio else None,
                 minio_url=minio_url,
                 map50=overall.get("map50"),
                 map50_95=overall.get("map50_95"),

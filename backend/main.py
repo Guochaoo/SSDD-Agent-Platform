@@ -1,17 +1,21 @@
+import asyncio
+import os
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
+from uuid import uuid4
 
 from fastapi import FastAPI
-
-# Pydantic v2 reserves "model_" prefix; suppress the harmless lint
-warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
 from fastapi.middleware.cors import CORSMiddleware
 
+# Pydantic v2 reserves "model_" prefix; suppress the harmless lint.
+warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
+
+from app.api.agent import router as agent_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.detection import router as detection_router
-from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.history import router as history_router
 from app.api.knowledge import router as knowledge_router
@@ -22,16 +26,35 @@ from app.api.cleanup import router as cleanup_router
 from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
+from app.core.redis_client import redis_client
+from app.database.session import SessionLocal
 from app.middleware.request_logger import RequestLogMiddleware
 from app.services.detection_service import detection_service
-import asyncio
-
+from app.storage.cleanup import retry_pending_cleanups
 
 setup_logging()
 logger = get_logger(__name__)
 
 
-def init_minio():
+def configure_provider_proxy_bypass() -> None:
+    """Bypass a broken system proxy for DashScope only in this backend process."""
+    host = urlparse(settings.OPENAI_BASE_URL).hostname
+    if host != "dashscope.aliyuncs.com":
+        return
+    hosts = []
+    for name in ("NO_PROXY", "no_proxy"):
+        for item in os.environ.get(name, "").split(","):
+            item = item.strip()
+            if item and item not in hosts:
+                hosts.append(item)
+    if host not in hosts:
+        hosts.append(host)
+    value = ",".join(hosts)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
+
+
+def init_minio() -> None:
     try:
         from app.storage.minio_client import MinIOClient
 
@@ -39,6 +62,35 @@ def init_minio():
         logger.info("MinIO bucket '%s' initialized", minio_client.bucket_name)
     except Exception as exc:
         logger.warning("MinIO initialization failed: %s", exc)
+
+
+def retry_resource_cleanups() -> dict:
+    lock_key = "ssdd:resource-cleanup-lock"
+    lock_token = uuid4().hex
+    if not redis_client.acquire_lock(lock_key, lock_token, settings.CLEANUP_LOCK_TTL_SECONDS):
+        logger.debug("Pending resource cleanup skipped because another worker holds the lock")
+        return {"attempted": 0, "succeeded": 0, "skipped": True}
+    db = SessionLocal()
+    try:
+        result = retry_pending_cleanups(db)
+        if result["attempted"]:
+            logger.info("Pending resource cleanup retried: %s", result)
+        return result
+    finally:
+        db.close()
+        redis_client.release_lock(lock_key, lock_token)
+
+
+async def _cleanup_loop() -> None:
+    """Retry durable deletions while the API process is running."""
+    while True:
+        try:
+            await asyncio.to_thread(retry_resource_cleanups)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Pending resource cleanup retry failed")
+        await asyncio.sleep(settings.CLEANUP_RETRY_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
@@ -55,8 +107,8 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="YOLOv11 object detection agent platform API",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
@@ -76,7 +128,6 @@ app.include_router(detection_router)
 app.include_router(agent_router)
 app.include_router(health_router)
 app.include_router(history_router)
-app.include_router(knowledge_router)
 app.include_router(operation_logs_router)
 app.include_router(scenes_router)
 app.include_router(training_router)
@@ -85,12 +136,7 @@ app.include_router(cleanup_router)
 
 @app.get("/")
 def root():
-    return {
-        "message": f"Welcome to {settings.APP_NAME}",
-        "version": settings.APP_VERSION,
-        "docs": "/docs",
-        "redoc": "/redoc",
-    }
+    return {"message": f"Welcome to {settings.APP_NAME}", "version": settings.APP_VERSION, "docs": "/docs", "redoc": "/redoc"}
 
 
 if __name__ == "__main__":
@@ -104,6 +150,7 @@ if __name__ == "__main__":
         reload_dirs=[str(Path(__file__).parent / "app")],
         reload_excludes=["**/__pycache__/**", "**/*.pyc"],
         reload_delay=0.5,
+        access_log=False,
         ws_ping_interval=20,
         ws_ping_timeout=20,
     )

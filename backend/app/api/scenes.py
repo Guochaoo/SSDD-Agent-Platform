@@ -5,7 +5,11 @@
 - POST /api/scenes            创建场景（管理员）
 - POST /api/scenes/{scene_id}/default-model  切换该场景的默认模型（已登录用户）
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -18,6 +22,7 @@ from app.services.authorization_service import authorization_service
 from app.services.resource_lifecycle_service import resource_lifecycle_service
 
 router = APIRouter(prefix="/api/scenes", tags=["检测场景"])
+MAX_MODEL_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 
 def _require_permission(db: Session, current_user: User, code: str):
@@ -178,3 +183,28 @@ def set_default_model(
         request=http_request,
     )
     return ModelVersionBrief.model_validate(model)
+
+
+@router.delete("/{scene_id}/models/{model_version_id}")
+def delete_model_version(
+    scene_id: int,
+    model_version_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    model = scene_service.delete_model_version(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser
+    )
+    return {"id": model.id, "status": model.status}
+
+
+@router.post("/{scene_id}/models/{model_version_id}/retry-cleanup", response_model=ModelVersionResponse)
+def retry_model_cleanup(
+    scene_id: int,
+    model_version_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return scene_service.retry_model_cleanup(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
+    )

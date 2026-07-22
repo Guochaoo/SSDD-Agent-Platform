@@ -234,6 +234,11 @@ class DetectionResult(Base):
     task_id = Column(Integer, ForeignKey("detection_tasks.id"), nullable=False, index=True, comment="所属检测任务")
     image_path = Column(String(500), nullable=False, comment="原始图像路径")
     annotated_image_url = Column(String(500), nullable=True, comment="标注图像 MinIO URL")
+    original_object_key = Column(String(500), nullable=True)
+    annotated_object_key = Column(String(500), nullable=True)
+    cleanup_pending = Column(Boolean, default=False, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
 
     # 单个目标信息
     class_name = Column(String(50), nullable=False, index=True, comment="类别名称")
@@ -280,6 +285,7 @@ class TrainingTask(Base):
     optimizer = Column(String(20), default="SGD", comment="优化器：SGD/Adam/AdamW")
     lr0 = Column(Float, default=0.01, comment="初始学习率")
     augment_config = Column(JSON, nullable=True, comment="数据增强配置")
+    train_config = Column(JSON, nullable=True, comment="经校验的完整高级训练配置")
 
     # 训练进度
     current_epoch = Column(Integer, default=0, comment="当前轮数")
@@ -359,6 +365,10 @@ class ModelVersion(Base):
     # 模型文件
     model_path = Column(String(500), nullable=False, comment="本地模型文件路径")
     minio_url = Column(String(500), nullable=True, comment="MinIO 存储 URL")
+    object_key = Column(String(500), nullable=True, index=True)
+    cleanup_pending = Column(Boolean, default=False, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
 
     # 评估指标（训练完成后写入）
     map50 = Column(Float, nullable=True, comment="mAP@0.50")
@@ -517,6 +527,10 @@ class KnowledgeDocument(Base):
     title = Column(String(200), nullable=False, comment="文档标题")
     filename = Column(String(255), nullable=False, comment="原始文件名")
     file_url = Column(String(500), nullable=False, comment="MinIO 原文件 URL")
+    object_key = Column(String(500), nullable=True, index=True)
+    cleanup_pending = Column(Boolean, default=False, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
     file_type = Column(String(20), nullable=True, comment="pdf/docx/txt/md")
     status = Column(String(20), default="processing", index=True, comment="processing/indexed/failed")
     chunk_count = Column(Integer, default=0, comment="分块完成后的块数")

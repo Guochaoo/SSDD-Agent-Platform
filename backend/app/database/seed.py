@@ -14,6 +14,7 @@ from app.database.session import SessionLocal
 from app.entity.db_models import (
     DetectionScene,
     ModelVersion,
+    TrainingDataset,
     Permission,
     Role,
     RolePermission,
@@ -21,6 +22,8 @@ from app.entity.db_models import (
     UserRole,
 )
 from app.core.security import hash_password
+
+BUILTIN_DATASET_PATH = "NEU-DET.v9i.yolov11"
 
 DEFAULT_PERMISSIONS = [
     ("detection:task:create", "创建检测任务", "detection"),
@@ -182,6 +185,31 @@ def seed_detection_scenes(db, admin_user_id: int | None) -> None:
         db.commit()
 
 
+def seed_builtin_datasets(db) -> None:
+    """Register the one dataset shipped with the project as read-only."""
+    datasets = db.query(TrainingDataset).all()
+    dataset = next((item for item in datasets if item.path == BUILTIN_DATASET_PATH), None)
+    changed = False
+    for item in datasets:
+        should_be_builtin = item.path == BUILTIN_DATASET_PATH
+        if item.is_builtin != should_be_builtin:
+            item.is_builtin = should_be_builtin
+            changed = True
+        if should_be_builtin and item.owner_id is not None:
+            item.owner_id = None
+            changed = True
+    if dataset is None:
+        db.add(TrainingDataset(
+            path=BUILTIN_DATASET_PATH,
+            owner_id=None,
+            is_builtin=True,
+            display_name="NEU-DET.v9i.yolov11",
+        ))
+        changed = True
+    if changed:
+        db.commit()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -189,6 +217,7 @@ def run_seed() -> None:
         roles = seed_roles(db, permissions)
         admin = seed_admin_user(db, roles)
         seed_detection_scenes(db, admin.id)
+        seed_builtin_datasets(db)
         print("[seed] 种子数据初始化完成")
     finally:
         db.close()

@@ -16,6 +16,7 @@ function normalizeTask(task) {
     publicTaskId:
       task.public_task_id ?? task.publicTaskId ?? task.task_uuid ?? task.taskUuid ?? "",
     taskName: task.task_name ?? task.taskName ?? "未命名训练任务",
+    sceneName: task.scene_name ?? task.sceneName ?? "",
     status: task.status ?? "pending",
     modelName: task.model_name ?? task.modelName ?? "YOLO11n",
     datasetName: task.dataset_name ?? task.datasetName ?? "未指定数据集",
@@ -72,10 +73,12 @@ export async function startTrainingApi(payload) {
     epochs: payload.epochs,
     img_size: payload.imgSize,
     batch_size: payload.batchSize,
-    device: payload.device ?? "0",
+    device: payload.device ?? "cpu",
     optimizer: payload.optimizer ?? "SGD",
     lr0: payload.lr0 ?? 0.01,
     augment_config: payload.augmentConfig ?? null,
+    train_config: payload.trainConfig ?? null,
+    dataset_path: payload.datasetPath ?? null,
   };
   return normalizeTask(
     unwrap(await request.post("/training/start", requestPayload)),
@@ -107,9 +110,18 @@ export function deleteTrainingDataset(datasetPath) {
   return request.delete(`/training/datasets/${encodeURIComponent(datasetPath)}`)
 }
 
-export function uploadTrainingDataset(file) {
+export function updateTrainingDatasetMetadata(datasetPath, payload) {
+  return request.patch(`/training/datasets/${encodeURIComponent(datasetPath)}`, payload)
+}
+
+export function uploadTrainingDataset(file, options = {}) {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('dataset_format', options.dataset_format || 'auto')
+  formData.append('train_ratio', options.train_ratio ?? 0.8)
+  formData.append('val_ratio', options.val_ratio ?? 0.1)
+  formData.append('test_ratio', options.test_ratio ?? 0.1)
+  formData.append('split_seed', options.split_seed ?? 42)
   return request.post('/training/datasets/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

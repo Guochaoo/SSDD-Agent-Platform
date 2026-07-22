@@ -2,25 +2,19 @@
   <div class="frontend-b-page">
     <ModulePageHeader
       :title="text.title"
-      :description="text.description"
     >
-      <el-button :icon="Refresh" :loading="loading" @click="loadHistory">
-        {{ text.refresh }}
-      </el-button>
+      <button class="period-trigger refresh-btn" :disabled="loading" @click="loadHistory">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" :class="{ spin: loading }"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        <span class="period-val">{{ text.refresh }}</span>
+      </button>
     </ModulePageHeader>
 
-    <el-alert
+    <PageErrorAlert
       v-if="pageError"
-      class="page-alert"
-      :title="pageError"
-      type="error"
-      show-icon
-      :closable="false"
-    >
-      <template #default>
-        <el-button link type="primary" @click="loadHistory">{{ text.reload }}</el-button>
-      </template>
-    </el-alert>
+      :message="pageError"
+      :retry-text="text.reload"
+      @retry="loadHistory"
+    />
 
     <section class="filter-bar">
       <div class="filter-bar__title">
@@ -51,6 +45,13 @@
           :value="option.value"
         />
       </el-select>
+      <el-date-picker
+        v-model="filters.dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        :start-placeholder="text.startDate"
+        :end-placeholder="text.endDate"
+      />
       <el-button type="primary" :icon="Search" @click="applyFilters">{{ text.search }}</el-button>
       <el-button @click="resetFilters">{{ text.reset }}</el-button>
     </section>
@@ -71,19 +72,22 @@
         <el-table-column :label="text.taskType" width="112">
           <template #default="{ row }">{{ taskTypeLabel(row.taskType) }}</template>
         </el-table-column>
+        <el-table-column :label="text.mediaType" width="96">
+          <template #default="{ row }">{{ mediaTypeLabel(row.mediaType) }}</template>
+        </el-table-column>
         <el-table-column :label="text.status" width="105">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" effect="light" round>
+            <StatusTag :status="row.status" :label="statusLabel(row.status)" round>
               {{ statusLabel(row.status) }}
-            </el-tag>
+            </StatusTag>
           </template>
         </el-table-column>
-        <el-table-column prop="totalImages" :label="text.images" width="82" align="right" />
-        <el-table-column prop="totalObjects" :label="text.defects" width="82" align="right" />
-        <el-table-column :label="text.duration" width="110" align="right">
+        <el-table-column prop="totalImages" :label="text.images" width="82" align="right" sortable />
+        <el-table-column prop="totalObjects" :label="text.defects" width="82" align="right" sortable />
+        <el-table-column prop="totalInferenceTimeMs" :label="text.duration" width="110" align="right" sortable>
           <template #default="{ row }">{{ formatDuration(row.totalInferenceTimeMs) }}</template>
         </el-table-column>
-        <el-table-column :label="text.createdAt" min-width="170">
+        <el-table-column prop="createdAt" :label="text.createdAt" min-width="170" sortable>
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column :label="text.actions" width="150" fixed="right">
@@ -131,9 +135,9 @@
           <el-descriptions :column="2" border>
             <el-descriptions-item :label="text.taskId">{{ detail.task.publicTaskId }}</el-descriptions-item>
             <el-descriptions-item :label="text.status">
-              <el-tag :type="statusType(detail.task.status)" effect="light">
+              <StatusTag :status="detail.task.status" :label="statusLabel(detail.task.status)">
                 {{ statusLabel(detail.task.status) }}
-              </el-tag>
+              </StatusTag>
             </el-descriptions-item>
             <el-descriptions-item :label="text.scene">{{ displayScene(detail.task.sceneName) }}</el-descriptions-item>
             <el-descriptions-item :label="text.taskType">{{ taskTypeLabel(detail.task.taskType) }}</el-descriptions-item>
@@ -158,11 +162,33 @@
           />
 
           <div class="result-heading">
-            <h3>{{ text.defectDetails }}</h3>
-            <span>{{ text.resultCount(detail.results.length) }}</span>
+            <div>
+              <h3>{{ text.defectDetails }}</h3>
+              <span>{{ text.resultCount(filteredDetailResults.length) }}</span>
+            </div>
+            <el-input
+              v-model.trim="detailKeyword"
+              class="result-search"
+              clearable
+              :prefix-icon="Search"
+              :placeholder="text.fileSearch"
+            />
           </div>
-          <el-table :data="detail.results" :empty-text="text.emptyDetail" max-height="430">
-            <el-table-column :label="text.resultImage" width="84">
+          <el-table :data="filteredDetailResults" :empty-text="text.emptyDetail" max-height="430">
+            <el-table-column :label="text.originalImage" width="84">
+              <template #default="{ row }">
+                <el-image
+                  v-if="row.imagePath"
+                  class="result-image"
+                  :src="row.imagePath"
+                  :preview-src-list="[row.imagePath]"
+                  preview-teleported
+                  fit="cover"
+                />
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="text.processedImage" width="84">
               <template #default="{ row }">
                 <el-image
                   v-if="row.annotatedImageUrl"
@@ -195,9 +221,10 @@
 </template>
 
 <script setup>
-import { Delete, Filter, Refresh, Search, View } from "@element-plus/icons-vue";
+import { Delete, Filter, Search, View } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRoute } from "vue-router";
 import { useSettingsStore } from '@/stores/settings'
 import {
   HISTORY_TASK_TYPE_OPTIONS,
@@ -208,10 +235,13 @@ import {
 } from "@/api/history";
 import { getScenesApi } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
+import PageErrorAlert from "@/components/common/PageErrorAlert.vue";
+import StatusTag from "@/components/common/StatusTag.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 import { displayDefectName, displaySceneName } from "@/utils/displayText";
 
 const settingsStore = useSettingsStore()
+const route = useRoute()
 const taskTypeOptions = computed(() => HISTORY_TASK_TYPE_OPTIONS.map((item) => ({
   ...item,
   label: taskTypeLabel(item.value),
@@ -225,19 +255,21 @@ const statusOptions = computed(() => [
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'History',
-  description: 'Search real detection tasks, filter by scene, type and status, then view or delete your records.',
   refresh: 'Refresh',
   reload: 'Reload',
   filterTitle: 'Filters',
   allScenes: 'All scenes',
   allTypes: 'All types',
   allStatuses: 'All statuses',
+  startDate: 'Start date',
+  endDate: 'End date',
   search: 'Search',
   reset: 'Reset',
   emptyHistory: 'No detection records for the current filters',
   taskId: 'Task ID',
   scene: 'Scene',
   taskType: 'Type',
+  mediaType: 'Media',
   status: 'Status',
   images: 'Images',
   defects: 'Defects',
@@ -257,7 +289,9 @@ const text = computed(() => settingsStore.isEnglish ? {
   defectDetails: 'Defect Details',
   resultCount: (count) => `${count} target records`,
   emptyDetail: 'No defect target details for this task',
-  resultImage: 'Result',
+  originalImage: 'Original',
+  processedImage: 'Processed',
+  fileSearch: 'Search file or defect class',
   file: 'File',
   defectClass: 'Class',
   confidence: 'Confidence',
@@ -271,6 +305,9 @@ const text = computed(() => settingsStore.isEnglish ? {
   zip: 'ZIP',
   video: 'Video',
   camera: 'Camera',
+  imageMedia: 'Image',
+  videoMedia: 'Video',
+  cameraMedia: 'Camera',
   sceneFailed: 'Failed to load detection scenes',
   historyFailed: 'Failed to load history',
   detailFailed: 'Failed to load detection details',
@@ -280,19 +317,21 @@ const text = computed(() => settingsStore.isEnglish ? {
   deleteFailed: 'Failed to delete history record',
 } : {
   title: '历史记录',
-  description: '查询真实检测任务，按场景、检测类型和状态筛选，并查看或删除属于当前用户的记录。',
   refresh: '刷新',
   reload: '重新加载',
   filterTitle: '记录筛选',
   allScenes: '全部场景',
   allTypes: '全部类型',
   allStatuses: '全部状态',
+  startDate: '开始日期',
+  endDate: '结束日期',
   search: '查询',
   reset: '重置',
   emptyHistory: '当前筛选条件下暂无检测记录',
   taskId: '任务 ID',
   scene: '检测场景',
   taskType: '检测类型',
+  mediaType: '媒体',
   status: '状态',
   images: '图片',
   defects: '缺陷',
@@ -312,7 +351,9 @@ const text = computed(() => settingsStore.isEnglish ? {
   defectDetails: '缺陷明细',
   resultCount: (count) => `共 ${count} 条目标记录`,
   emptyDetail: '该任务没有缺陷目标明细',
-  resultImage: '结果图',
+  originalImage: '原图',
+  processedImage: '处理图',
+  fileSearch: '搜索文件名或缺陷类别',
   file: '文件',
   defectClass: '缺陷类别',
   confidence: '置信度',
@@ -326,6 +367,9 @@ const text = computed(() => settingsStore.isEnglish ? {
   zip: 'ZIP 检测',
   video: '视频检测',
   camera: '摄像头',
+  imageMedia: '图片',
+  videoMedia: '视频',
+  cameraMedia: '摄像头',
   sceneFailed: '检测场景加载失败',
   historyFailed: '历史记录加载失败',
   detailFailed: '检测详情加载失败',
@@ -339,14 +383,24 @@ const loading = ref(false);
 const pageError = ref("");
 const scenes = ref([]);
 const deletingId = ref(null);
-const filters = reactive({ sceneId: "", taskType: "", status: "" });
+const filters = reactive({ sceneId: "", taskType: "", status: "", dateRange: [] });
 const pagination = reactive({ page: 1, pageSize: 20 });
 const history = reactive({ items: [], total: 0 });
 
 const detailVisible = ref(false);
 const detailLoading = ref(false);
 const detailError = ref("");
+const detailKeyword = ref("");
 const detail = reactive({ task: null, results: [] });
+const filteredDetailResults = computed(() => {
+  const keyword = detailKeyword.value.toLowerCase();
+  if (!keyword) return detail.results;
+  return detail.results.filter((item) => [
+    fileName(item.imagePath),
+    item.className,
+    item.classNameCn,
+  ].some((value) => String(value ?? "").toLowerCase().includes(keyword)));
+});
 
 function taskTypeLabel(value) {
   const cnLabel = getHistoryTaskTypeLabel(value);
@@ -357,6 +411,14 @@ function taskTypeLabel(value) {
     zip: text.value.zip,
     video: text.value.video,
     camera: text.value.camera,
+  }[value] || value || "—";
+}
+
+function mediaTypeLabel(value) {
+  return {
+    image: text.value.imageMedia,
+    video: text.value.videoMedia,
+    camera: text.value.cameraMedia,
   }[value] || value || "—";
 }
 
@@ -374,10 +436,6 @@ function displayDefect(name) {
 
 function statusLabel(value) {
   return statusOptions.value.find((item) => item.value === value)?.label || value || "—";
-}
-
-function statusType(value) {
-  return { completed: "success", failed: "danger", processing: "primary", pending: "warning" }[value] || "info";
 }
 
 function formatDateTime(value) {
@@ -424,7 +482,11 @@ async function loadHistory() {
   pageError.value = "";
   try {
     const data = await getHistoryApi({
-      ...filters,
+      sceneId: filters.sceneId,
+      taskType: filters.taskType,
+      status: filters.status,
+      startDate: filters.dateRange?.[0],
+      endDate: filters.dateRange?.[1],
       page: pagination.page,
       pageSize: pagination.pageSize,
     });
@@ -445,7 +507,7 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  Object.assign(filters, { sceneId: "", taskType: "", status: "" });
+  Object.assign(filters, { sceneId: "", taskType: "", status: "", dateRange: [] });
   pagination.page = 1;
   loadHistory();
 }
@@ -461,6 +523,7 @@ async function openDetail(row) {
   detailError.value = "";
   detail.task = null;
   detail.results = [];
+  detailKeyword.value = "";
   try {
     Object.assign(detail, await getHistoryDetailApi(row.id));
   } catch (error) {
@@ -493,11 +556,32 @@ async function removeHistory(row) {
 
 onMounted(async () => {
   await Promise.all([loadScenes(), loadHistory()]);
+  const taskId = Number(route.query.task);
+  if (Number.isInteger(taskId) && taskId > 0) await openDetail({ id: taskId });
 });
 </script>
 
 <style lang="scss" scoped>
-.frontend-b-page { min-height: 100%; }
+.frontend-b-page { min-height: 100%; max-width: 1200px; margin: 0 auto; padding: 0; }
+.period-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  background: #fff;
+  color: #18181b;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+
+  &:hover:not(:disabled) { border-color: #a1a1aa; }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+.period-val { font-weight: 500; }
+.refresh-btn .spin { animation: dash-spin 1s linear infinite; }
+@keyframes dash-spin { to { transform: rotate(360deg); } }
 .page-alert { margin-bottom: 16px; }
 .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fff; }
 .filter-bar__title { display: flex; align-items: center; gap: 7px; margin-right: auto; color: #344054; font-weight: 600; }
@@ -506,9 +590,11 @@ onMounted(async () => {
 .history-pagination { justify-content: flex-end; margin-top: 16px; }
 .detail-content { min-height: 180px; }
 .detail-error { margin-top: 16px; }
-.result-heading { display: flex; align-items: baseline; justify-content: space-between; margin: 24px 0 12px; }
+.result-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 24px 0 12px; }
 .result-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
-.result-heading span { color: $text-secondary; font-size: 12px; }
+.result-heading span { display: block; margin-top: 4px; color: $text-secondary; font-size: 12px; }
+.result-search { width: min(280px, 48%); }
 .result-image { width: 54px; height: 42px; border-radius: 6px; }
 @media (max-width: 900px) { .filter-bar { flex-wrap: wrap; } .filter-bar__title { width: 100%; } .filter-bar :deep(.el-select) { flex: 1; min-width: 140px; } }
+@media (max-width: 640px) { .result-heading { align-items: stretch; flex-direction: column; } .result-search { width: 100%; } }
 </style>

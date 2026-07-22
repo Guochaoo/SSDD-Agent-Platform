@@ -1,9 +1,8 @@
 <template>
   <header class="module-header">
     <div>
-      <div class="module-header__eyebrow">STEEL DEFECT AI PLATFORM</div>
-      <h1>{{ title }}</h1>
-      <p>{{ description }}</p>
+      <h1 v-if="title" class="module-header__title">{{ title }}</h1>
+      <p v-if="description" class="module-header__desc">{{ description }}</p>
     </div>
     <div class="module-header__actions">
       <slot />
@@ -21,44 +20,44 @@ defineProps({
 <style lang="scss" scoped>
 .module-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: $spacing-lg;
-  margin-bottom: $spacing-lg;
-
-  h1 {
-    margin: 3px 0 8px;
-    color: #172033;
-    font-size: 28px;
-    line-height: 1.25;
-  }
-
-  p {
-    max-width: 760px;
-    margin: 0;
-    color: $text-secondary;
-    line-height: 1.65;
-  }
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.module-header__eyebrow {
-  color: #667085;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+.module-header__title {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 600;
+  color: #000000;
+  letter-spacing: -0.3px;
+}
+
+.module-header__desc {
+  margin: 4px 0 0;
+  max-width: 640px;
+  color: #98a2b3;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .module-header__actions {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
-  padding-top: 4px;
-  white-space: nowrap;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 @media (max-width: 780px) {
   .module-header {
     flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .module-header__actions {
+    justify-content: flex-start;
   }
 }
 </style>
