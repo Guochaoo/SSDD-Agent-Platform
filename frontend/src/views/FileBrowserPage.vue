@@ -25,7 +25,7 @@
       </div>
     </el-card>
     <el-card shadow="never" class="asset-card model-card">
-      <template #header><div class="asset-card-header"><div class="card-title">{{ text.models }}</div><div class="resource-tools"><el-button text size="small" @click="modelExpanded = !modelExpanded">{{ modelExpanded ? text.collapse : text.expand }}</el-button><el-button text size="small" @click="modelSearchOpen = !modelSearchOpen">{{ text.search }}</el-button><el-button text size="small" @click="modelBulkMode = !modelBulkMode">{{ text.bulk }}</el-button></div></div></template>
+      <template #header><div class="asset-card-header"><div class="card-title">{{ text.models }}</div><div class="resource-tools"><el-button v-if="embedded" text size="small" type="primary" @click="modelUploadVisible = true">{{ text.uploadModel }}</el-button><el-button text size="small" @click="modelExpanded = !modelExpanded">{{ modelExpanded ? text.collapse : text.expand }}</el-button><el-button text size="small" @click="modelSearchOpen = !modelSearchOpen">{{ text.search }}</el-button><el-button text size="small" @click="modelBulkMode = !modelBulkMode">{{ text.bulk }}</el-button></div></div></template>
       <div v-if="modelExpanded && modelBulkMode" class="resource-bulk-actions"><el-button size="small" :disabled="!selectedModels.length" :loading="bulkBusy" @click="bulkDownloadModels">{{ text.downloadSelected }}</el-button><el-button type="danger" plain size="small" :disabled="!selectedModels.length" :loading="bulkBusy" @click="bulkDeleteModels">{{ text.deleteSelected }}</el-button></div>
       <div v-if="modelExpanded">
       <el-input v-if="modelSearchOpen" v-model="modelQuery" class="resource-search" clearable :placeholder="text.searchModel" />
