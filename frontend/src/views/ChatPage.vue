@@ -384,8 +384,8 @@ function chooseFiles({ accept, multiple }) {
     }
 
     const onFocus = () => {
-      cleanup()
-      // 延迟等待 onchange 先触发（用户选了文件的情况）
+      // { once: true } already removed this listener; just wait for onchange
+      // (user picked a file) before treating the refocus as a cancel.
       setTimeout(() => {
         if (!settled) {
           settled = true
