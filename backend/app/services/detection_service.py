@@ -15,8 +15,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config.detection import (
     ALLOWED_IMAGE_TYPES,
@@ -81,16 +80,13 @@ class DetectionService:
 
     @staticmethod
     def _resolve_model(db: Session, model_id: int, user_id: int | None = None) -> ModelVersion:
-        query = db.query(ModelVersion).filter(
-            ModelVersion.id == model_id,
-            ModelVersion.status == "active",
+        model_version = (
+            db.query(ModelVersion)
+            .filter(ModelVersion.id == model_id, ModelVersion.status == "active")
+            .first()
         )
-        if user_id is not None:
-            query = query.filter(or_(
-                ModelVersion.is_builtin.is_(True),
-                ModelVersion.owner_id == user_id,
-            ))
-        model_version = query.first()
+        if model_version and user_id is not None and not model_version.is_builtin and model_version.owner_id != user_id:
+            model_version = None
         if not model_version:
             raise HTTPException(status_code=404, detail="模型版本不存在或不可用")
         return model_version
@@ -295,12 +291,7 @@ class DetectionService:
             history_service.mark_failed(db, task.id, str(detail))
             raise
         result.pop("db_results")
-        return {
-            "task_id": task.id,
-            "public_task_id": task.public_task_id,
-            "status": "completed",
-            **result,
-        }
+        return {"task_id": task.id, "public_task_id": task.public_task_id, "status": "completed", **result}
 
     async def detect_batch(
         self,
@@ -831,12 +822,8 @@ class DetectionService:
             db.close()
 
     def _detect_file_sync(
-        self,
-        image_path: str,
-        *,
-        conf: float = 0.25,
-        iou: float = 0.45,
-        owner_id: int = 0,
+        self, image_path: str, *, conf: float = 0.25, iou: float = 0.45,
+        user_id: int | None = None, task_type: str = "single",
     ) -> dict:
         """同步检测本地图片文件（供 Agent Tool 调用）。user_id 不为 None 时写入 DetectionTask。"""
         model, model_version, class_names_cn = self._get_default_model()
@@ -882,13 +869,95 @@ class DetectionService:
                     confidence = float(box.conf.item())
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-        inference_time = round(float(result.speed.get("inference", 0)), 2)
-        artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        _cleanup_agent_artifacts(artifact_dir)
-        artifact_name = f"annotated_u{owner_id}_{uuid4().hex}.jpg"
-        (artifact_dir / artifact_name).write_bytes(self._encode_annotated_image(result))
-        logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
+                    detections.append({
+                        "class_name": cls_name,
+                        "class_name_cn": cls_name_cn,
+                        "class_id": cls_id,
+                        "confidence": round(confidence, 4),
+                        "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
+                    })
+                    total_objects += 1
+                    display_name = cls_name_cn or cls_name
+                    class_counts[display_name] = class_counts.get(display_name, 0) + 1
+
+            inference_time = round(float(result.speed.get("inference", 0)), 2)
+            artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            _cleanup_agent_artifacts(artifact_dir)
+            artifact_name = f"annotated_{uuid4().hex}.jpg"
+            annotated_bytes = self._encode_annotated_image(result)
+            (artifact_dir / artifact_name).write_bytes(annotated_bytes)
+            register_artifact(artifact_name)
+            logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
+
+            image_width = int(result.orig_shape[1])
+            image_height = int(result.orig_shape[0])
+
+            # ── 写入检测结果（含 MinIO 上传，匹配检测工作台的记录格式）──
+            if _db and task_id:
+                try:
+                    minio = MinIOClient()
+                    object_id = uuid4().hex
+                    suffix = Path(image_path).suffix.lower() or ".jpg"
+                    base_path = f"detections/{user_id}/{task_id}"
+                    original_object_key = f"{base_path}/original/{object_id}{suffix}"
+                    annotated_object_key = f"{base_path}/annotated/{object_id}.jpg"
+
+                    # Upload original image to MinIO
+                    try:
+                        original_bytes = Path(image_path).read_bytes()
+                    except OSError:
+                        original_bytes = b""
+                    image_url = minio.upload_bytes(original_object_key, original_bytes, "image/jpeg")
+                    annotated_url = minio.upload_bytes(annotated_object_key, annotated_bytes, "image/jpeg")
+
+                    db_results = [
+                        {
+                            "image_path": image_url,
+                            "annotated_image_url": annotated_url,
+                            "original_object_key": original_object_key,
+                            "annotated_object_key": annotated_object_key,
+                            "class_name": d["class_name"],
+                            "class_name_cn": d.get("class_name_cn") or d["class_name"],
+                            "class_id": d["class_id"],
+                            "confidence": d["confidence"],
+                            "bbox": d["bbox"],
+                            "inference_time": inference_time,
+                            "image_width": image_width,
+                            "image_height": image_height,
+                        }
+                        for d in detections
+                    ] or [
+                        {
+                            "image_path": image_url,
+                            "annotated_image_url": annotated_url,
+                            "original_object_key": original_object_key,
+                            "annotated_object_key": annotated_object_key,
+                            "class_name": "", "class_name_cn": None, "class_id": 0,
+                            "confidence": 0.0, "bbox": [0, 0, 0, 0],
+                            "inference_time": inference_time,
+                            "image_width": image_width, "image_height": image_height,
+                        }
+                    ]
+                    history_service.add_results(_db, task_id, db_results)
+                    history_service.mark_completed(
+                        _db, task_id, total_images=1, total_objects=total_objects,
+                        total_inference_time=inference_time,
+                    )
+                    logger.info("Agent检测已写入结果 task_id=%s total_objects=%s", task_id, total_objects)
+                except Exception:
+                    logger.exception("Agent检测写入结果失败")
+                    raise
+        except Exception as exc:
+            if _db and task_id:
+                try:
+                    history_service.mark_failed(_db, task_id, f"Agent 检测失败: {exc}")
+                except Exception:
+                    logger.exception("Agent检测标记失败状态失败: task_id=%s", task_id)
+            raise
+        finally:
+            if _db:
+                _db.close()
 
         return {
             "filename": Path(image_path).name,

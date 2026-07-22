@@ -144,7 +144,7 @@
             <span class="card-title">{{ text.trainingMonitor }} - {{ text.task }} {{ selectedTask.public_task_id || selectedTask.task_uuid }}</span>
             <el-tag :type="statusType(selectedTask.status)" size="small">
               {{ statusText(selectedTask.status) }}
-            </StatusTag>
+            </el-tag>
           </div>
           <div class="monitor-info">
             <span>{{ text.model }}: {{ selectedTask.model_name }}</span>
