@@ -22,6 +22,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.operation_logs import router as operation_logs_router
 from app.api.scenes import router as scenes_router
 from app.api.training import router as training_router
+from app.api.cleanup import router as cleanup_router
 from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
@@ -95,19 +96,11 @@ async def _cleanup_loop() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("Starting service")
-    configure_provider_proxy_bypass()
-    init_minio()
-    warmup_task = asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
-    cleanup_task = asyncio.create_task(_cleanup_loop())
-    try:
-        yield
-    finally:
-        cleanup_task.cancel()
-        await asyncio.gather(cleanup_task, return_exceptions=True)
-        if not warmup_task.done():
-            warmup_task.cancel()
-        await asyncio.gather(warmup_task, return_exceptions=True)
-        logger.info("Service stopped")
+    if not settings.SKIP_EXTERNAL_STARTUP:
+        init_minio()
+        asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
+    yield
+    logger.info("Service stopped")
 
 
 app = FastAPI(
@@ -138,7 +131,7 @@ app.include_router(history_router)
 app.include_router(operation_logs_router)
 app.include_router(scenes_router)
 app.include_router(training_router)
-app.include_router(knowledge_router)
+app.include_router(cleanup_router)
 
 
 @app.get("/")

@@ -188,6 +188,82 @@ def make_detection_tools(user_id: int):
 DETECTION_TOOLS = make_detection_tools(None)
 
 
+def _make_detection_tools(user_id: int):
+    """Build detection tools whose generated artifacts are scoped to one user."""
+
+    def run_batch(image_paths: list[str], conf: float) -> dict:
+        results = []
+        total_objects = 0
+        class_counts = {}
+        for path in image_paths:
+            if not os.path.exists(path):
+                results.append({"image": path, "error": "文件不存在"})
+                continue
+            try:
+                item = detection_service._detect_file_sync(
+                    path, conf=conf, iou=0.45, owner_id=user_id
+                )
+                results.append({"image": path, **item})
+                total_objects += item.get("total_objects", 0)
+                for name, count in item.get("class_counts", {}).items():
+                    class_counts[name] = class_counts.get(name, 0) + count
+            except Exception as exc:
+                results.append({"image": path, "error": str(exc)})
+        return {
+            "total_images": len(image_paths),
+            "total_objects": total_objects,
+            "class_counts": class_counts,
+            "results": results,
+        }
+
+    @tool("detect_single_image")
+    def scoped_single(image_path: str, conf: float = 0.25, iou: float = 0.45) -> str:
+        """检测当前用户上传的一张图片。"""
+        try:
+            result = detection_service._detect_file_sync(
+                image_path, conf=conf, iou=iou, owner_id=user_id
+            )
+            return json.dumps(
+                {"summary": _format_detection_summary(result), "result": result},
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            logger.exception("detect_single_image 工具异常")
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+    @tool("detect_batch_images")
+    def scoped_batch(image_paths: list[str], conf: float = 0.25) -> str:
+        """批量检测当前用户上传的多张图片。"""
+        return json.dumps(run_batch(image_paths, conf), ensure_ascii=False)
+
+    @tool("detect_zip_images_file")
+    def scoped_zip(zip_path: str, conf: float = 0.25) -> str:
+        """安全解压并检测当前用户上传的 ZIP 图片包。"""
+        temp_dir = None
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="rsod_zip_")
+            _safe_extract_zip(zip_path, temp_dir)
+            image_files = [
+                str(path)
+                for path in Path(temp_dir).rglob("*")
+                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+            ]
+            if not image_files:
+                return json.dumps({"error": "ZIP 文件内未找到图片"}, ensure_ascii=False)
+            return json.dumps(run_batch(image_files, conf), ensure_ascii=False)
+        except zipfile.BadZipFile:
+            return json.dumps({"error": "无效的 ZIP 文件"}, ensure_ascii=False)
+        except Exception as exc:
+            logger.exception("detect_zip_images_file 工具异常")
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        finally:
+            if temp_dir:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return [scoped_single, scoped_batch, scoped_zip]
+
+
 # ══════════════════════════════════════════════════════════════
 # LLM 工厂
 # ══════════════════════════════════════════════════════════════

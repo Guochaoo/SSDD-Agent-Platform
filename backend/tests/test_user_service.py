@@ -72,7 +72,7 @@ def test_delete_user_cascade_removes_related_rows_and_anonymizes_scenes(db_sessi
     # MinIO 在测试环境不可用，delete_by_url 打个桩，只验证被调用不报错
     monkeypatch.setattr(
         "app.services.user_service.MinIOClient",
-        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url: None)})(),
+        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url, **kwargs: None)})(),
     )
 
     user = user_service.register(db_session, "grace", "grace@example.com", "password123")
@@ -96,7 +96,7 @@ def test_delete_user_cascade_removes_related_rows_and_anonymizes_scenes(db_sessi
 def test_delete_nonexistent_user_raises_404(db_session, monkeypatch):
     monkeypatch.setattr(
         "app.services.user_service.MinIOClient",
-        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url: None)})(),
+        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url, **kwargs: None)})(),
     )
     with pytest.raises(HTTPException) as exc:
         user_service.delete_user_cascade(db_session, 999999)

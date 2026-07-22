@@ -160,7 +160,7 @@
             <span v-if="batchResult.source === 'zip'">{{ batchResult.zipFilename }} · {{ batchResult.totalImagesInZip }} 张</span>
             <el-tag type="success">成功 {{ batchResult.successCount }}</el-tag>
             <el-tag type="danger">失败 {{ batchResult.failedCount }}</el-tag>
-            <span>任务 {{ batchResult.taskId }}</span>
+            <span>任务 {{ batchResult.publicTaskId || batchResult.taskId }}</span>
           </div>
           <el-table v-if="batchResult" :data="batchResult.items" stripe row-key="fileName">
             <el-table-column type="expand">

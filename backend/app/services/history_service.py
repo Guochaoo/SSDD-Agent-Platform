@@ -7,10 +7,11 @@ from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.entity.db_models import DetectionTask, DetectionResult, DetectionScene, TrainingTask
-from app.storage.minio_client import MinIOClient
+from app.entity.db_models import DetectionTask, DetectionResult, DetectionScene
+from app.services.resource_lifecycle_service import resource_lifecycle_service
 
 
 class HistoryService:
@@ -28,11 +29,24 @@ class HistoryService:
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
         image_size: int = 640,
+        idempotency_key: str | None = None,
     ) -> DetectionTask:
         """创建检测任务，初始状态为 pending"""
         scene = db.query(DetectionScene).filter(DetectionScene.id == scene_id).first()
         if not scene:
             raise HTTPException(status_code=404, detail="检测场景不存在")
+
+        if idempotency_key:
+            existing = db.query(DetectionTask).filter(
+                DetectionTask.user_id == user_id,
+                DetectionTask.idempotency_key == idempotency_key,
+            ).first()
+            if existing:
+                raise HTTPException(status_code=409, detail={
+                    "code": "duplicate_request",
+                    "public_task_id": existing.public_task_id,
+                    "status": existing.status,
+                })
 
         task = DetectionTask(
             user_id=user_id,
@@ -43,9 +57,24 @@ class HistoryService:
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
             image_size=image_size,
+            idempotency_key=idempotency_key,
         )
-        db.add(task)
-        db.commit()
+        try:
+            db.add(task)
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            existing = db.query(DetectionTask).filter(
+                DetectionTask.user_id == user_id,
+                DetectionTask.idempotency_key == idempotency_key,
+            ).first()
+            if existing:
+                raise HTTPException(status_code=409, detail={
+                    "code": "duplicate_request",
+                    "public_task_id": existing.public_task_id,
+                    "status": existing.status,
+                }) from exc
+            raise
         db.refresh(task)
         return task
 
@@ -128,11 +157,19 @@ class HistoryService:
         return task
 
     @staticmethod
-    def get_task_detail(db: Session, task_id: int, user_id: int, is_superuser: bool = False) -> DetectionTask:
+    def get_task_detail(
+        db: Session,
+        task_id: int,
+        user_id: int,
+        is_superuser: bool = False,
+        include_deleted: bool = False,
+    ) -> DetectionTask:
         """获取任务详情，非管理员只能查看自己的记录"""
         task = HistoryService._get_task_or_404(db, task_id)
         if task.user_id != user_id and not is_superuser:
             raise HTTPException(status_code=403, detail="无权访问该记录")
+        if task.deletion_status != "active" and not include_deleted:
+            raise HTTPException(status_code=404, detail="检测任务不存在")
         return task
 
     @staticmethod
@@ -149,10 +186,15 @@ class HistoryService:
         page_size: int = 20,
     ) -> tuple[list[DetectionTask], int]:
         """分页历史查询，支持按场景/类型/状态筛选；非管理员只能看到自己的记录"""
-        query = HistoryService._apply_task_filters(
-            db.query(DetectionTask), user_id, is_superuser, scene_id, task_type,
-            status, start_date, end_date,
-        )
+        query = db.query(DetectionTask).filter(DetectionTask.deletion_status == "active")
+        if not is_superuser:
+            query = query.filter(DetectionTask.user_id == user_id)
+        if scene_id:
+            query = query.filter(DetectionTask.scene_id == scene_id)
+        if task_type:
+            query = query.filter(DetectionTask.task_type == task_type)
+        if status:
+            query = query.filter(DetectionTask.status == status)
 
         total = query.count()
         items = (
@@ -166,50 +208,52 @@ class HistoryService:
     # ── 删除 ─────────────────────────────────────────────
 
     @staticmethod
-    def delete_task(db: Session, task_id: int, user_id: int, is_superuser: bool = False) -> None:
-        """删除检测任务：先清理 MinIO 上的标注图，再删数据库记录（级联删 detection_results）"""
+    def delete_task(
+        db: Session,
+        task_id: int,
+        user_id: int,
+        is_superuser: bool = False,
+        expected_version: int | None = None,
+    ) -> DetectionTask:
+        """Move a detection task to the recoverable trash."""
         task = HistoryService._get_task_or_404(db, task_id)
         if task.user_id != user_id and not is_superuser:
             raise HTTPException(status_code=403, detail="无权删除该记录")
+        return resource_lifecycle_service.trash_detection_task(
+            db, task, deleted_by_id=user_id, expected_version=expected_version
+        )
 
-        minio = MinIOClient()
-        try:
-            for result in task.results:
-                for object_key in (result.original_object_key, result.annotated_object_key):
-                    if object_key:
-                        minio.delete_file(object_key)
-                if not result.original_object_key:
-                    minio.delete_by_url(result.image_path)
-                if not result.annotated_object_key:
-                    minio.delete_by_url(result.annotated_image_url)
-            db.delete(task)
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            for result in task.results:
-                result.cleanup_pending = True
-                result.cleanup_error = str(exc)
-                result.cleanup_retry_count = (result.cleanup_retry_count or 0) + 1
-            db.commit()
-            raise HTTPException(status_code=503, detail={"code": "CLEANUP_RETRY", "message": "检测结果文件清理失败，已记录并可重试"}) from exc
+    @staticmethod
+    def restore_task(
+        db: Session,
+        task_id: int,
+        user_id: int,
+        is_superuser: bool = False,
+        expected_version: int | None = None,
+    ) -> DetectionTask:
+        task = HistoryService._get_task_or_404(db, task_id)
+        if task.user_id != user_id and not is_superuser:
+            raise HTTPException(status_code=403, detail="无权恢复该记录")
+        return resource_lifecycle_service.restore_detection_task(db, task, expected_version)
+
+    @staticmethod
+    def purge_task(db: Session, task_id: int, user_id: int, is_superuser: bool = False):
+        task = HistoryService._get_task_or_404(db, task_id)
+        if task.user_id != user_id and not is_superuser:
+            raise HTTPException(status_code=403, detail="无权彻底删除该记录")
+        return resource_lifecycle_service.purge_detection_task(db, task)
 
     # ── 统计 ─────────────────────────────────────────────
 
     @staticmethod
-    def get_statistics(db: Session, user_id: int, is_superuser: bool = False, days: int = 30,
-                       scene_id: int | None = None, task_type: str | None = None,
-                       status: str | None = None, start_date: date | None = None,
-                       end_date: date | None = None) -> dict:
-        """Statistics use history filters; absent status means completed tasks only."""
-        if not start_date and not end_date:
-            start_date = (datetime.now() - timedelta(days=days - 1)).date()
-        start_date = start_date or end_date
-        end_date = end_date or date.today()
-        effective_status = status or "completed"
-        query = HistoryService._apply_task_filters(
-            db.query(DetectionTask), user_id, is_superuser, scene_id, task_type,
-            effective_status, start_date, end_date,
+    def get_statistics(db: Session, user_id: int, is_superuser: bool = False, days: int = 30) -> dict:
+        """检测统计：总任务数/图像数/目标数、平均耗时、类别分布、每日趋势、场景分布"""
+        query = db.query(DetectionTask).filter(
+            DetectionTask.status == "completed",
+            DetectionTask.deletion_status == "active",
         )
+        if not is_superuser:
+            query = query.filter(DetectionTask.user_id == user_id)
 
         total_tasks = query.count()
         total_images = query.with_entities(func.coalesce(func.sum(DetectionTask.total_images), 0)).scalar()
@@ -217,17 +261,21 @@ class HistoryService:
         avg_time = query.with_entities(func.coalesce(func.avg(DetectionTask.total_inference_time), 0)).scalar()
 
         # 类别分布：基于 detection_results 按 class_name 聚合
-        result_query = HistoryService._apply_task_filters(
-            db.query(func.coalesce(DetectionResult.class_name_cn, DetectionResult.class_name).label('display_name'), func.count(DetectionResult.id)).join(
-                DetectionTask, DetectionResult.task_id == DetectionTask.id
-            ).filter(DetectionResult.class_name != ""),
-            user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
-        )
-        class_distribution = {name: int(cnt) for name, cnt in result_query.group_by('display_name').all()}
+        result_query = db.query(DetectionResult.class_name, func.count(DetectionResult.id)).join(
+            DetectionTask, DetectionResult.task_id == DetectionTask.id
+        ).filter(DetectionTask.deletion_status == "active")
+        if not is_superuser:
+            result_query = result_query.filter(DetectionTask.user_id == user_id)
+        class_distribution = dict(result_query.group_by(DetectionResult.class_name).all())
 
-        daily_query = HistoryService._apply_task_filters(
-            db.query(func.date(DetectionTask.created_at), func.count(DetectionTask.id)),
-            user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
+        # 每日趋势：最近 N 天，每天完成的任务数
+        since = datetime.now() - timedelta(days=days)
+        daily_query = (
+            db.query(func.date(DetectionTask.created_at), func.count(DetectionTask.id))
+            .filter(
+                DetectionTask.created_at >= since,
+                DetectionTask.deletion_status == "active",
+            )
         )
         daily_rows = daily_query.group_by(func.date(DetectionTask.created_at)).order_by(func.date(DetectionTask.created_at)).all()
         daily_counts = {str(d): int(c) for d, c in daily_rows}

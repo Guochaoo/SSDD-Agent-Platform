@@ -185,8 +185,11 @@ async def _consume(iterator):
     async for _ in iterator:
         pass
 
-def test_delete_chat_session_removes_persisted_messages(db_session):
-    user = User(username="delete-chat", email="delete-chat@example.com", hashed_password="x")
+
+def test_delete_chat_session_moves_persisted_messages_to_recycle_bin(db_session):
+    user = User(
+        username="delete-chat", email="delete-chat@example.com", hashed_password="x"
+    )
     db_session.add(user)
     db_session.flush()
     session = ChatSession(user_id=user.id, session_uuid="delete-chat-session")
@@ -198,8 +201,9 @@ def test_delete_chat_session_removes_persisted_messages(db_session):
     result = agent.delete_chat_session(session.session_uuid, current_user=user, db=db_session)
 
     assert result["id"] == session.session_uuid
-    assert db_session.query(ChatSession).filter_by(id=session.id).first() is None
-    assert db_session.query(ChatMessage).filter_by(session_id=session.id).count() == 0
+    recycled = db_session.query(ChatSession).filter_by(id=session.id).one()
+    assert recycled.deletion_status == "trashed"
+    assert db_session.query(ChatMessage).filter_by(session_id=session.id).count() == 1
 
 
 def test_delete_chat_session_removes_its_attachment_and_artifact(db_session, monkeypatch, tmp_path):

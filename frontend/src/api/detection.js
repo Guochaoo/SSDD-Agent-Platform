@@ -4,6 +4,11 @@ function unwrap(payload) {
   return payload?.data ?? payload;
 }
 
+function idempotencyKey(scope) {
+  const value = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  return `${scope}:${value}`;
+}
+
 function normalizeObject(item, index, imageWidth, imageHeight) {
   const bbox = item.bbox ?? [item.x1, item.y1, item.x2, item.y2];
   const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = bbox;
@@ -38,6 +43,10 @@ export function normalizeDetectionResponse(payload) {
   );
   return {
     taskId: String(task.id ?? data.record_id ?? data.task_id ?? data.taskId ?? ""),
+    publicTaskId: String(
+      task.public_task_id ?? data.public_task_id ?? data.publicTaskId ??
+      task.id ?? data.record_id ?? data.task_id ?? data.taskId ?? "",
+    ),
     status: task.status ?? data.status ?? "completed",
     fileName: data.filename ?? data.fileName ?? "",
     originalImageUrl: data.image_url ?? data.originalImageUrl ?? "",
@@ -62,7 +71,10 @@ export async function detectSingleApi(file, options) {
   formData.append("conf_threshold", String(options.confThreshold));
   formData.append("iou_threshold", String(options.iouThreshold));
   const response = await request.post("/detection/single", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: {
+      "Content-Type": "multipart/form-data",
+      "Idempotency-Key": idempotencyKey("single"),
+    },
     timeout: 120000,
   });
   return normalizeDetectionResponse(response);
@@ -76,12 +88,16 @@ export async function detectBatchApi(files, options) {
   formData.append("iou_threshold", String(options.iouThreshold));
   const data = unwrap(
     await request.post("/detection/batch", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
+      headers: {
+        "Content-Type": "multipart/form-data",
+        "Idempotency-Key": idempotencyKey("batch"),
+      },
       timeout: 300000,
     }),
   );
   return {
     taskId: String(data.task_id ?? data.taskId ?? ""),
+    publicTaskId: String(data.public_task_id ?? data.publicTaskId ?? data.task_id ?? ""),
     status: data.status ?? "completed",
     successCount: data.success_count ?? data.successCount ?? 0,
     failedCount: data.failed_count ?? data.failedCount ?? 0,
@@ -101,11 +117,15 @@ export async function detectZipApi(file, options) {
   formData.append("conf_threshold", String(options.confThreshold));
   formData.append("iou_threshold", String(options.iouThreshold));
   const data = unwrap(await request.post("/detection/zip", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: {
+      "Content-Type": "multipart/form-data",
+      "Idempotency-Key": idempotencyKey("zip"),
+    },
     timeout: 300000,
   }));
   return {
     taskId: String(data.task_id ?? ""),
+    publicTaskId: String(data.public_task_id ?? data.task_id ?? ""),
     status: data.status ?? "completed",
     source: data.source ?? "zip",
     zipFilename: data.zip_filename ?? file.name,
@@ -130,7 +150,10 @@ export async function detectVideoApi(file, options) {
   formData.append("frame_sample_rate", String(options.frameSampleRate ?? 5));
   formData.append("max_frames", String(options.maxFrames ?? 50));
   return unwrap(await request.post("/detection/video", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: {
+      "Content-Type": "multipart/form-data",
+      "Idempotency-Key": idempotencyKey("video"),
+    },
     timeout: 120000,
   }));
 }

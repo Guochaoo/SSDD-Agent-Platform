@@ -13,6 +13,8 @@ function normalizeTask(task) {
       ? Number(rawTaskId)
       : String(rawTaskId ?? ""),
     taskUuid: task.task_uuid ?? task.taskUuid ?? "",
+    publicTaskId:
+      task.public_task_id ?? task.publicTaskId ?? task.task_uuid ?? task.taskUuid ?? "",
     taskName: task.task_name ?? task.taskName ?? "未命名训练任务",
     sceneName: task.scene_name ?? task.sceneName ?? "",
     status: task.status ?? "pending",

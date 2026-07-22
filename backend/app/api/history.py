@@ -19,6 +19,7 @@ from app.entity.schemas import (
 )
 from app.services.history_service import history_service
 from app.services.operation_log_service import operation_log_service
+from app.services.authorization_service import authorization_service
 
 router = APIRouter(prefix="/api/history", tags=["检测历史"])
 
@@ -42,8 +43,9 @@ def list_history(
     db: Session = Depends(get_db),
 ):
     """分页查询检测历史；管理员可查看所有用户的记录，普通用户只能查看自己的"""
+    can_read_all = authorization_service.has_permission(db, current_user, "detection:task:read_all")
     items, total = history_service.list_tasks(
-        db, user_id=current_user.id, is_superuser=current_user.is_superuser,
+        db, user_id=current_user.id, is_superuser=can_read_all,
         scene_id=scene_id, task_type=task_type, status=status,
         start_date=start_date, end_date=end_date,
         page=page, page_size=page_size,
@@ -69,11 +71,8 @@ def get_statistics(
     db: Session = Depends(get_db),
 ):
     """检测统计数据：总量、平均耗时、类别分布、每日趋势、场景分布"""
-    return history_service.get_statistics(
-        db, user_id=current_user.id, is_superuser=current_user.is_superuser,
-        days=days, scene_id=scene_id, task_type=task_type, status=status,
-        start_date=start_date, end_date=end_date,
-    )
+    can_read_all = authorization_service.has_permission(db, current_user, "detection:task:read_all")
+    return history_service.get_statistics(db, user_id=current_user.id, is_superuser=can_read_all, days=days)
 
 
 @router.get("/{task_id}", response_model=DetectionTaskDetail)
@@ -83,7 +82,8 @@ def get_history_detail(
     db: Session = Depends(get_db),
 ):
     """检测任务详情，含所有检测结果"""
-    task = history_service.get_task_detail(db, task_id, current_user.id, current_user.is_superuser)
+    can_read_all = authorization_service.has_permission(db, current_user, "detection:task:read_all")
+    task = history_service.get_task_detail(db, task_id, current_user.id, can_read_all)
     return {
         "task": _task_to_response(task),
         "results": [DetectionResultResponse.model_validate(r) for r in task.results],
@@ -94,14 +94,48 @@ def get_history_detail(
 def delete_history(
     task_id: int,
     http_request: Request,
+    expected_version: int | None = Query(default=None, ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """删除检测任务：先清理 MinIO 标注图文件，再删数据库记录"""
-    history_service.delete_task(db, task_id, current_user.id, current_user.is_superuser)
+    """将检测任务移入 30 天回收站；不会立即删除对象存储文件。"""
+    can_delete_all = authorization_service.has_permission(db, current_user, "detection:task:delete_all")
+    task = history_service.delete_task(
+        db, task_id, current_user.id, can_delete_all, expected_version=expected_version
+    )
     operation_log_service.record(
         db, user=current_user, module="detection", action="delete_task",
         target_type="detection_task", target_id=str(task_id),
-        description=f"删除检测任务 id={task_id}", request=http_request,
+        description=f"检测任务进入回收站 public_task_id={task.public_task_id}", request=http_request,
     )
-    return {"message": "删除成功"}
+    return {
+        "message": "已移入回收站",
+        "public_task_id": task.public_task_id,
+        "resource_version": task.resource_version,
+        "purge_after": task.purge_after,
+    }
+
+
+@router.post("/{task_id}/restore", response_model=DetectionTaskResponse)
+def restore_history(
+    task_id: int,
+    expected_version: int | None = Query(default=None, ge=1),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    can_delete_all = authorization_service.has_permission(db, current_user, "detection:task:delete_all")
+    task = history_service.restore_task(
+        db, task_id, current_user.id, can_delete_all, expected_version=expected_version
+    )
+    return _task_to_response(task)
+
+
+@router.delete("/{task_id}/purge")
+def purge_history(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    can_delete_all = authorization_service.has_permission(db, current_user, "detection:task:delete_all")
+    job = history_service.purge_task(db, task_id, current_user.id, can_delete_all)
+    return {"message": "已彻底删除", "cleanup_job_id": job.id, "status": job.status}

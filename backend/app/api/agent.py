@@ -11,7 +11,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.core.artifact_access import artifact_owner_id, can_read_artifact, unreg
 from app.core.logger import get_logger
 from app.database.session import SessionLocal, get_db
 from app.entity.db_models import ChatMessage, ChatSession
+from app.services.chat_service import chat_service
 
 router = APIRouter(prefix="/api/agent", tags=["智能体"])
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -197,32 +198,19 @@ def list_chat_sessions(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return the user's sessions, or every user's sessions for administrators."""
-    if search is not None and len(search) > 200:
-        raise HTTPException(status_code=422, detail="Search query is too long")
-    if page is not None and page < 1:
-        raise HTTPException(status_code=422, detail="Page must be at least 1")
-    if page_size is not None and not 1 <= page_size <= 100:
-        raise HTTPException(status_code=422, detail="Page size must be between 1 and 100")
-    query = db.query(ChatSession)
-    if not current_user.is_superuser:
-        query = query.filter(ChatSession.user_id == current_user.id)
-    if archived is not None:
-        query = query.filter(ChatSession.status == ("archived" if archived else "active"))
-    if search:
-        query = query.filter(ChatSession.title.ilike(f"%{search.strip()}%"))
-    query = query.order_by(
-        ChatSession.last_message_at.desc(), ChatSession.created_at.desc()
+    """Return only the authenticated user's chat sessions."""
+    sessions = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.user_id == current_user.id,
+            ChatSession.deletion_status == "active",
+        )
+        .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc())
+        .all()
     )
-    total = query.count()
-    if page is not None and page_size is not None:
-        query = query.offset((page - 1) * page_size).limit(page_size)
-    sessions = query.all()
-    items = [
+    return [
         {
             "id": session.session_uuid,
-            "owner_id": session.user_id,
-            "owner_username": session.user.username if session.user else "",
             "title": session.title or "新对话",
             "message_count": session.message_count or 0,
             "created_at": session.created_at,
@@ -236,33 +224,24 @@ def list_chat_sessions(
     return {"items": items, "total": total, "page": page or 1, "page_size": page_size or total}
 
 
-def _get_owned_session(db: Session, session_id: str, user_id: int) -> ChatSession | None:
-    """Resolve a globally unique session UUID and enforce its owner."""
-    session = db.query(ChatSession).filter(ChatSession.session_uuid == session_id).first()
-    if session is not None and session.user_id != user_id:
-        raise HTTPException(status_code=409, detail="会话标识已属于其他用户，请创建新会话")
-    return session
-
-
-def _get_visible_session(db: Session, session_id: str, current_user) -> ChatSession:
-    """Resolve a session visible to its owner or to an administrator."""
-    query = db.query(ChatSession).filter(ChatSession.session_uuid == session_id)
-    if not current_user.is_superuser:
-        query = query.filter(ChatSession.user_id == current_user.id)
-    session = query.first()
-    if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    return session
-
-
 @router.get("/sessions/{session_id}")
 def get_chat_session(
     session_id: str,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return a session to its owner or to an administrator."""
-    session = _get_visible_session(db, session_id, current_user)
+    """Return a session and messages only when it belongs to the current user."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+            ChatSession.deletion_status == "active",
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
     messages = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session.id)
@@ -271,8 +250,6 @@ def get_chat_session(
     )
     return {
         "id": session.session_uuid,
-        "owner_id": session.user_id,
-        "owner_username": session.user.username if session.user else "",
         "title": session.title or "新对话",
         "message_count": session.message_count or 0,
         "created_at": session.created_at,
@@ -329,16 +306,20 @@ def get_chat_message_image(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Serve a persisted attachment to its owner or to an administrator."""
-    session = _get_visible_session(db, session_id, current_user)
-    message = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session.id,
-        ChatMessage.id == message_id,
-    ).first()
-    if not message:
-        raise HTTPException(status_code=404, detail="图片不存在")
-    image_paths = message.image_paths or ([message.image_path] if message.image_path else [])
-    if index < 0 or index >= len(image_paths):
+    """Serve a persisted chat attachment only to the session owner."""
+    message = (
+        db.query(ChatMessage)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+            ChatSession.deletion_status == "active",
+            ChatMessage.id == message_id,
+        )
+        .first()
+    )
+    image_paths = message.image_paths or ([message.image_path] if message and message.image_path else [])
+    if not message or index < 0 or index >= len(image_paths):
         raise HTTPException(status_code=404, detail="图片不存在")
     image_path = _validate_uploaded_image_path(image_paths[index])
     return FileResponse(image_path)
@@ -347,43 +328,34 @@ def get_chat_message_image(
 @router.delete("/sessions/{session_id}")
 def delete_chat_session(
     session_id: str,
+    expected_version: int | None = Query(default=None, ge=1),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a persisted session only as its owner.
-
-    Administrators may review other users' sessions, but reviewing must not
-    grant destructive access to another user's conversation.
-    """
-    session = _get_owned_session(db, session_id, current_user.id)
+    """Delete one of the current user's persisted chat sessions and messages."""
+    if not isinstance(expected_version, int):
+        expected_version = None
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == current_user.id,
+            ChatSession.deletion_status == "active",
+        )
+        .first()
+    )
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    image_paths = []
-    artifact_filenames = set()
-    for message in db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all():
-        image_paths.extend(message.image_paths or ([message.image_path] if message.image_path else []))
-        artifact_filenames.update(_artifact_filenames(message.tool_calls))
-    db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete(
-        synchronize_session=False
+    deleted = chat_service.delete_session(
+        db, session_id, current_user.id, expected_version=expected_version
     )
-    db.delete(session)
-    db.commit()
-
-    for image_path in image_paths:
-        try:
-            os.unlink(_validate_uploaded_image_path(image_path, user_id=current_user.id))
-        except (FileNotFoundError, HTTPException, OSError):
-            pass
-    for filename in artifact_filenames:
-        artifact_path = (Path(ARTIFACT_DIR) / filename).resolve()
-        if artifact_path.parent == Path(ARTIFACT_DIR).resolve():
-            try:
-                artifact_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        unregister_artifact(filename)
-    return {"id": session_id, "message": "会话已删除"}
+    return {
+        "id": session_id,
+        "message": "会话已移入回收站",
+        "resource_version": deleted.resource_version,
+        "purge_after": deleted.purge_after,
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -408,7 +380,8 @@ async def upload_image(
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=415, detail="仅支持图片文件")
     suffix = Path(file.filename).suffix.lower() or ".jpg"
-    filepath = _new_upload_path(current_user.id, suffix)
+    filename = f"u{current_user.id}_{uuid4().hex}{suffix}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
     content = await file.read(MAX_IMAGE_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="图片不能为空")
@@ -424,11 +397,11 @@ async def upload_image(
 def get_agent_artifact(
     filename: str,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Serve an opaque, generated detection artifact for inline chat previews."""
     safe_name = Path(filename).name
-    if safe_name != filename or not safe_name.startswith("annotated_") or not safe_name.endswith(".jpg"):
+    owner_prefix = f"annotated_u{current_user.id}_"
+    if safe_name != filename or not safe_name.startswith(owner_prefix) or not safe_name.endswith(".jpg"):
         raise HTTPException(status_code=404, detail="检测结果图片不存在")
     if not can_read_artifact(safe_name, current_user.id, current_user.is_superuser) and not _artifact_referenced_by_user(db, safe_name, current_user):
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -446,7 +419,6 @@ def get_agent_artifact(
 async def chat_stream(
     request: Request,
     _current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """SSE 流式对话 — Agent 智能回复。
 
@@ -483,7 +455,8 @@ async def chat_stream(
                 if len(content) > MAX_IMAGE_BYTES:
                     raise HTTPException(status_code=413, detail="图片大小不能超过 10MB")
                 suffix = Path(image_file.filename).suffix.lower() or ".jpg"
-                filepath = _new_upload_path(_current_user.id, suffix)
+                filename = f"u{_current_user.id}_{uuid4().hex}{suffix}"
+                filepath = os.path.join(UPLOAD_DIR, filename)
                 with open(filepath, "wb") as f:
                     f.write(content)
                 image_paths.append(str(filepath))
@@ -500,7 +473,7 @@ async def chat_stream(
             session_id = raw_session.strip()
         raw_image_path = body.get("image_path")
         if raw_image_path:
-            image_paths = [_validate_uploaded_image_path(raw_image_path, user_id=_current_user.id)]
+            image_paths = [_validate_uploaded_image_path(raw_image_path, _current_user.id)]
 
     if not message and not image_paths:
         raise HTTPException(status_code=422, detail="消息不能为空")
@@ -508,11 +481,6 @@ async def chat_stream(
     logger.info("Agent chat: message=%s images=%d model=%s session=%s", message[:80], len(image_paths), model or "default", session_id or "new")
 
     user_id = _current_user.id
-
-    # Validate ownership before starting the SSE response so a stale UUID from
-    # another signed-in user becomes a normal HTTP 409 instead of an INSERT error.
-    if session_id:
-        _get_owned_session(db, session_id, user_id)
 
     # ── load chat history ──
     history = _load_history(session_id, user_id) if session_id else []
@@ -607,7 +575,11 @@ async def chat_stream(
 def _ensure_session(session_id: str, user_id: int):
     db = SessionLocal()
     try:
-        s = _get_owned_session(db, session_id, user_id)
+        s = db.query(ChatSession).filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == user_id,
+            ChatSession.deletion_status == "active",
+        ).first()
         if not s:
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)
@@ -634,6 +606,8 @@ def _validate_uploaded_image_path(image_path: str, user_id: int | None = None) -
             raise HTTPException(status_code=403, detail="无权访问该图片") from exc
     if not candidate.is_file():
         raise HTTPException(status_code=400, detail="图片文件不存在")
+    if user_id is not None and not candidate.name.startswith(f"u{user_id}_"):
+        raise HTTPException(status_code=404, detail="图片文件不存在")
     return str(candidate)
 
 
@@ -641,7 +615,10 @@ def _load_history(session_id: str, user_id: int | None = None) -> list[dict]:
     """加载最近的对话历史，转为 LangChain 消息格式"""
     db = SessionLocal()
     try:
-        query = db.query(ChatSession).filter(ChatSession.session_uuid == session_id)
+        query = db.query(ChatSession).filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.deletion_status == "active",
+        )
         if user_id is not None:
             query = query.filter(ChatSession.user_id == user_id)
         s = query.first()
@@ -688,7 +665,11 @@ def _save_message(
         return
     db = SessionLocal()
     try:
-        s = _get_owned_session(db, session_id, user_id)
+        s = db.query(ChatSession).filter(
+            ChatSession.session_uuid == session_id,
+            ChatSession.user_id == user_id,
+            ChatSession.deletion_status == "active",
+        ).first()
         if not s:
             s = ChatSession(session_uuid=session_id, user_id=user_id, title="")
             db.add(s)

@@ -173,8 +173,8 @@ class SupervisorAgent:
         llm = _make_llm(model)
 
         # ── 子 Agent 工具 ──
-        from app.agent.detection_agent import make_detection_tools
-        detection_tools = make_detection_tools(user_id)
+        from app.agent.detection_agent import _make_detection_tools
+        detection_tools = _make_detection_tools(user_id)
         data_tools = _make_data_tools(None, user_id)
         general_tools = _make_general_tools(user_id)
 

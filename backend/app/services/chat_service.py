@@ -20,7 +20,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.entity.db_models import ChatSession, ChatMessage
+from app.entity.db_models import ChatSession, ChatMessage, default_purge_after
 
 
 class ChatService:
@@ -61,6 +61,8 @@ class ChatService:
         )
         if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
+        if session.deletion_status != "active":
+            raise HTTPException(status_code=404, detail="会话不存在")
         if session.user_id != user_id and not is_superuser:
             raise HTTPException(status_code=403, detail="无权访问该会话")
         return session
@@ -75,7 +77,7 @@ class ChatService:
         page_size: int = 20,
     ) -> tuple[list[ChatSession], int]:
         """分页查询会话列表，按最后消息时间倒序（没有消息的按创建时间兜底）"""
-        query = db.query(ChatSession)
+        query = db.query(ChatSession).filter(ChatSession.deletion_status == "active")
         if not is_superuser:
             query = query.filter(ChatSession.user_id == user_id)
         if status:
@@ -128,18 +130,51 @@ class ChatService:
         session_uuid: str,
         user_id: int,
         is_superuser: bool = False,
-    ) -> None:
-        """
-        硬删除会话，级联清除所有消息（依赖 ChatSession.messages 的
-        cascade="all, delete-orphan"，无需手动删除子记录）。
-        """
+        expected_version: int | None = None,
+    ) -> ChatSession:
+        """Move a conversation and its attachments to the recycle bin."""
         session = ChatService.get_session(db, session_uuid, user_id, is_superuser)
-        try:
-            db.delete(session)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        if expected_version is not None and session.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": session.resource_version,
+            })
+        session.deletion_status = "trashed"
+        session.deleted_at = datetime.now()
+        session.deleted_by_id = user_id
+        session.purge_after = default_purge_after()
+        session.resource_version += 1
+        db.commit()
+        db.refresh(session)
+        return session
+
+    @staticmethod
+    def restore_session(
+        db: Session,
+        session_uuid: str,
+        user_id: int,
+        expected_version: int | None = None,
+    ) -> ChatSession:
+        session = db.query(ChatSession).filter(ChatSession.session_uuid == session_uuid).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        if session.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权恢复该会话")
+        if expected_version is not None and session.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": session.resource_version,
+            })
+        if session.deletion_status != "trashed":
+            raise HTTPException(status_code=409, detail="会话不在可恢复状态")
+        session.deletion_status = "active"
+        session.deleted_at = None
+        session.deleted_by_id = None
+        session.purge_after = None
+        session.resource_version += 1
+        db.commit()
+        db.refresh(session)
+        return session
 
     # ── 消息读写 ─────────────────────────────────────────
 

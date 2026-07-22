@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "SSDD Agent Platform"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
+    SKIP_EXTERNAL_STARTUP: bool = False
 
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "logs"

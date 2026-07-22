@@ -22,19 +22,20 @@ import re
 import shutil
 import tempfile
 import zipfile
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
-import cv2
-import yaml
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import get_db
-from app.entity.db_models import TrainingDataset, TrainingTask, User
+from app.entity.db_models import TrainingDataset, TrainingTask, User, default_purge_after
 from app.entity.schemas import (
     ModelExportRequest,
     ModelValidateRequest,
@@ -44,7 +45,8 @@ from app.entity.schemas import (
     TrainingTaskResponse,
 )
 from app.training.training_service import training_service
-from app.training.dataset_importer import DatasetImportError, import_dataset
+from app.services.authorization_service import authorization_service
+from app.services.resource_lifecycle_service import resource_lifecycle_service
 
 logger = get_logger(__name__)
 
@@ -166,10 +168,18 @@ def _validate_dataset_classes(dataset_path: Path) -> None:
 
 
 def _get_dataset_record(db: Session, dataset_path: str, current_user: User) -> TrainingDataset | None:
-    record = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_path).first()
-    if record is None and not _is_builtin_dataset_path(dataset_path):
-        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "数据集不存在或尚未登记"})
-    if record and not (_is_builtin_dataset_path(dataset_path, record) or record.owner_id == current_user.id or current_user.is_superuser):
+    record = db.query(TrainingDataset).filter(
+        (TrainingDataset.storage_key == dataset_path) | (TrainingDataset.path == dataset_path)
+    ).first()
+    if record and record.deletion_status != "active":
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    if record and not authorization_service.can_access_owner(
+        db,
+        current_user,
+        record.owner_id,
+        is_builtin=record.is_builtin,
+        cross_user_permission="training:dataset:read_all",
+    ):
         raise HTTPException(status_code=403, detail="无权访问该数据集")
     return record
 
@@ -179,17 +189,25 @@ async def list_datasets(db: Session = Depends(get_db), current_user: User = Depe
     root = _dataset_root()
     root.mkdir(parents=True, exist_ok=True)
     datasets = []
-    records = {record.path: record for record in db.query(TrainingDataset).all()}
-    for directory in sorted(item for item in root.iterdir() if item.is_dir()):
+    records = {
+        record.storage_key: record
+        for record in db.query(TrainingDataset).filter(TrainingDataset.deletion_status == "active").all()
+    }
+    for directory in sorted(item for item in root.iterdir() if item.is_dir() and item.name != ".trash"):
         record = records.get(directory.name)
-        is_builtin = _is_builtin_dataset_path(directory.name, record)
-        if record is None and not is_builtin:
-            continue
-        if record and not (is_builtin or record.owner_id == current_user.id or current_user.is_superuser):
+        if record and not authorization_service.can_access_owner(
+            db,
+            current_user,
+            record.owner_id,
+            is_builtin=record.is_builtin,
+            cross_user_permission="training:dataset:read_all",
+        ):
             continue
         datasets.append({
-            "name": record.display_name or directory.name if record else directory.name,
-            "path": directory.name,
+            "name": record.display_name if record else directory.name,
+            "display_name": record.display_name if record else directory.name,
+            "path": record.storage_key if record else directory.name,
+            "storage_key": record.storage_key if record else directory.name,
             "ready": (directory / "data.yaml").is_file(),
             "owner_id": record.owner_id if record else None,
             "is_builtin": is_builtin,
@@ -253,10 +271,11 @@ async def download_dataset(
 @router.delete("/datasets/{dataset_path}")
 async def delete_dataset(
     dataset_path: str,
+    expected_version: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete an unused dataset directory without allowing root deletion."""
+    """Move an unused dataset to the recoverable trash."""
     root = _dataset_root()
     dataset = _safe_dataset_path(dataset_path)
     if dataset == root:
@@ -264,9 +283,11 @@ async def delete_dataset(
     if not dataset.is_dir():
         raise HTTPException(status_code=404, detail="数据集不存在")
     record = _get_dataset_record(db, dataset_path, current_user)
-    if record is None or _is_builtin_dataset_path(dataset_path, record):
-        raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "内置数据集只读"})
-    if record.owner_id != current_user.id and not current_user.is_superuser:
+    if record is None or record.is_builtin:
+        raise HTTPException(status_code=403, detail="内置数据集不可删除")
+    if record.owner_id != current_user.id and not authorization_service.has_permission(
+        db, current_user, "training:dataset:delete_all"
+    ):
         raise HTTPException(status_code=403, detail="无权删除该数据集")
 
     active_paths = {
@@ -277,10 +298,107 @@ async def delete_dataset(
     if dataset in active_paths:
         raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "该数据集正在被训练任务使用，暂不能删除"})
 
-    shutil.rmtree(dataset)
-    db.delete(record)
-    db.commit()
-    return {"path": dataset_path, "deleted": True}
+    if expected_version is not None and record.resource_version != expected_version:
+        raise HTTPException(status_code=409, detail={
+            "code": "resource_changed",
+            "current_version": record.resource_version,
+        })
+    trash_root = root / ".trash"
+    trash_root.mkdir(parents=True, exist_ok=True)
+    trash_target = trash_root / record.storage_key
+    if trash_target.exists():
+        raise HTTPException(status_code=409, detail="回收站中已存在同一资源")
+    try:
+        shutil.move(str(dataset), str(trash_target))
+        record.deletion_status = "trashed"
+        record.deleted_at = datetime.now()
+        record.deleted_by_id = current_user.id
+        record.purge_after = default_purge_after()
+        record.resource_version += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        if trash_target.is_dir() and not dataset.exists():
+            shutil.move(str(trash_target), str(dataset))
+        raise
+    return {
+        "path": record.storage_key,
+        "display_name": record.display_name,
+        "deleted": True,
+        "resource_version": record.resource_version,
+        "purge_after": record.purge_after,
+    }
+
+
+@router.post("/datasets/{dataset_path}/restore")
+async def restore_dataset(
+    dataset_path: str,
+    expected_version: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    record = db.query(TrainingDataset).filter(
+        (TrainingDataset.storage_key == dataset_path) | (TrainingDataset.path == dataset_path)
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    if record.owner_id != current_user.id and not authorization_service.has_permission(
+        db, current_user, "training:dataset:delete_all"
+    ):
+        raise HTTPException(status_code=403, detail="无权恢复该数据集")
+    if record.deletion_status != "trashed":
+        raise HTTPException(status_code=409, detail="该数据集不在可恢复状态")
+    if expected_version is not None and record.resource_version != expected_version:
+        raise HTTPException(status_code=409, detail={
+            "code": "resource_changed",
+            "current_version": record.resource_version,
+        })
+    root = _dataset_root()
+    source = root / ".trash" / record.storage_key
+    target = root / record.storage_key
+    if not source.is_dir():
+        raise HTTPException(status_code=409, detail="回收站文件缺失，无法恢复")
+    if target.exists():
+        raise HTTPException(status_code=409, detail="目标存储位置已被占用")
+    try:
+        shutil.move(str(source), str(target))
+        record.deletion_status = "active"
+        record.deleted_at = None
+        record.deleted_by_id = None
+        record.purge_after = None
+        record.cleanup_error = None
+        record.resource_version += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        if target.is_dir() and not source.exists():
+            shutil.move(str(target), str(source))
+        raise
+    return {
+        "path": record.storage_key,
+        "display_name": record.display_name,
+        "resource_version": record.resource_version,
+        "restored": True,
+    }
+
+
+@router.delete("/datasets/{dataset_path}/purge")
+async def purge_dataset(
+    dataset_path: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    record = db.query(TrainingDataset).filter(
+        (TrainingDataset.storage_key == dataset_path) | (TrainingDataset.path == dataset_path)
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    if record.owner_id != current_user.id and not authorization_service.has_permission(
+        db, current_user, "training:dataset:delete_all"
+    ):
+        raise HTTPException(status_code=403, detail="无权彻底删除该数据集")
+    job = resource_lifecycle_service.purge_dataset(db, record, _dataset_root())
+    return {"message": "数据集已彻底删除", "cleanup_job_id": job.id, "status": job.status}
 
 
 @router.post("/datasets/upload")
@@ -293,69 +411,81 @@ async def upload_dataset(
     split_seed: int = Form(42),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
 ):
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="数据集必须是 ZIP 文件")
-    dataset_name = re.sub(r"[^\w.-]+", "_", Path(file.filename).stem, flags=re.UNICODE).strip("._-")[:120]
-    if not dataset_name:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": "数据集文件名无效"})
-    target = _safe_dataset_path(dataset_name)
-    existing = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_name).first()
-    if existing or target.exists():
-        raise HTTPException(status_code=409, detail="同名数据集已存在")
+    if idempotency_key:
+        existing = db.query(TrainingDataset).filter(
+            TrainingDataset.owner_id == current_user.id,
+            TrainingDataset.idempotency_key == idempotency_key,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=409, detail={
+                "code": "duplicate_request",
+                "storage_key": existing.storage_key,
+                "deletion_status": existing.deletion_status,
+            })
+    dataset_name = Path(file.filename).stem.replace(" ", "_")
+    storage_key = f"u{current_user.id}_{uuid4().hex}"
+    target = _safe_dataset_path(storage_key)
     archive = await file.read()
-    if len(archive) > MAX_DATASET_ARCHIVE_BYTES:
-        raise HTTPException(status_code=413, detail={"code": "DATASET_TOO_LARGE", "message": "数据集压缩包不能超过 500 MB"})
-    dataset_root = _dataset_root()
-    dataset_root.mkdir(parents=True, exist_ok=True)
-    staging_root = Path(tempfile.mkdtemp(prefix=".dataset-upload-", dir=dataset_root))
-    extracted = staging_root / "source"
-    prepared = staging_root / "prepared"
-    extracted.mkdir()
-    conversion_report = None
+    if len(archive) > 500 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="数据集压缩包不能超过 500 MB")
+    target.mkdir(parents=True, exist_ok=False)
     try:
         with zipfile.ZipFile(io.BytesIO(archive)) as archive_file:
             for member in archive_file.infolist():
-                member_path = (extracted / member.filename).resolve()
-                if extracted not in member_path.parents and member_path != extracted:
-                    raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": "数据集压缩包包含非法路径"})
-            _validate_dataset_archive(archive_file)
-            archive_file.extractall(extracted)
-        conversion_report = import_dataset(
-            source=extracted,
-            target=prepared,
-            dataset_format=dataset_format,
-            split_ratios=(train_ratio, val_ratio, test_ratio),
-            seed=split_seed,
+                member_path = (target / member.filename).resolve()
+                if target not in member_path.parents and member_path != target:
+                    raise HTTPException(status_code=400, detail="数据集压缩包包含非法路径")
+            archive_file.extractall(target)
+        if not (target / "data.yaml").is_file():
+            raise HTTPException(status_code=400, detail="数据集压缩包根目录必须包含 data.yaml")
+        record = TrainingDataset(
+            path=storage_key,
+            storage_key=storage_key,
+            display_name=dataset_name,
+            owner_id=current_user.id,
+            is_builtin=False,
+            idempotency_key=idempotency_key,
         )
-        _validate_dataset_classes(prepared)
-        prepared.rename(target)
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_FORMAT", "message": "数据集压缩包无法解析"})
-    except DatasetImportError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": exc.code, "message": exc.message, "details": exc.details},
-        ) from exc
-    except HTTPException:
-        raise
-    finally:
-        shutil.rmtree(staging_root, ignore_errors=True)
-    record = TrainingDataset(path=dataset_name, owner_id=current_user.id, is_builtin=False)
-    db.add(record)
-    try:
+        db.add(record)
         db.commit()
+        db.refresh(record)
+    except zipfile.BadZipFile as exc:
+        db.rollback()
+        shutil.rmtree(target, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="数据集压缩包无法解析") from exc
+    except IntegrityError as exc:
+        db.rollback()
+        shutil.rmtree(target, ignore_errors=True)
+        existing = db.query(TrainingDataset).filter(
+            TrainingDataset.owner_id == current_user.id,
+            TrainingDataset.idempotency_key == idempotency_key,
+        ).first() if idempotency_key else None
+        if existing:
+            raise HTTPException(status_code=409, detail={
+                "code": "duplicate_request",
+                "storage_key": existing.storage_key,
+                "deletion_status": existing.deletion_status,
+            }) from exc
+        raise
     except Exception:
         db.rollback()
         shutil.rmtree(target, ignore_errors=True)
         raise
     return {
-        "name": target.name,
-        "path": target.name,
+        "name": dataset_name,
+        "display_name": dataset_name,
+        "path": storage_key,
+        "storage_key": storage_key,
         "ready": True,
         "owner_id": current_user.id,
         "is_builtin": False,
-        "conversion": conversion_report,
+        "resource_version": record.resource_version,
     }
 
 
@@ -369,14 +499,19 @@ def _check_task_access(db: Session, task_id: str | int, current_user):
     task = _resolve_training_task(db, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="训练任务不存在")
-    if task.user_id != current_user.id and not current_user.is_superuser:
+    if task.user_id != current_user.id and not authorization_service.has_permission(
+        db, current_user, "training:task:read_all"
+    ):
         raise HTTPException(status_code=403, detail="无权访问该训练任务")
+    if task.deletion_status != "active":
+        raise HTTPException(status_code=404, detail="训练任务不存在")
     return task
 
 
 @router.post("/start")
 async def start_training(
     request: TrainingTaskCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -392,6 +527,9 @@ async def start_training(
     - **lr0**: 初始学习率
     - **augment_config**: 数据增强配置（JSON）
     """
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
+
     # ── 构造训练配置 ──
     config = {
         "model_name": request.model_name,
@@ -402,7 +540,7 @@ async def start_training(
         "optimizer": request.optimizer,
         "lr0": request.lr0,
         "augment_config": request.augment_config,
-        "train_config": request.train_config.model_dump(exclude_none=True) if request.train_config else {},
+        "idempotency_key": idempotency_key,
     }
 
     # ── 从场景获取数据集路径 ──
@@ -441,6 +579,8 @@ async def start_training(
             scene_id=request.scene_id,
             config=config,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("启动训练失败：%s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"启动训练失败：{str(e)}")
@@ -452,6 +592,7 @@ async def start_training(
 
     return {
         "id": task.id,
+        "public_task_id": task.public_task_id,
         "task_uuid": task.task_uuid,
         "status": task.status,
         "model_name": task.model_name,
@@ -466,24 +607,65 @@ async def list_training_tasks(
     current_user=Depends(get_current_user),
 ):
     """获取当前用户的训练任务列表"""
-    tasks = training_service.get_task_list(
-        db, user_id=current_user.id, is_superuser=current_user.is_superuser,
-    )
+    can_read_all = authorization_service.has_permission(db, current_user, "training:task:read_all")
+    tasks = training_service.get_task_list(db, user_id=None if can_read_all else current_user.id)
     return {"total": len(tasks), "items": tasks}
 
 
 @router.delete("/tasks/{task_id}")
 async def delete_training_task(
-    task_id: str,
+    task_id: int,
+    expected_version: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """删除已结束的训练历史及其指标，保留已发布的模型版本。"""
-    task = _check_task_access(db, task_id, current_user)
-    result = training_service.delete_training_task(db, task.id)
+    _check_task_access(db, task_id, current_user)
+    result = training_service.delete_training_task(
+        db, task_id, deleted_by_id=current_user.id, expected_version=expected_version
+    )
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        status_code = 409 if result.get("code") == "resource_changed" else 400
+        raise HTTPException(status_code=status_code, detail=result)
     return result
+
+
+@router.post("/tasks/{task_id}/restore")
+async def restore_training_task(
+    task_id: int,
+    expected_version: int | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="训练任务不存在")
+    if task.user_id != current_user.id and not authorization_service.has_permission(
+        db, current_user, "training:task:delete_all"
+    ):
+        raise HTTPException(status_code=403, detail="无权恢复该训练任务")
+    result = training_service.restore_training_task(db, task_id, expected_version)
+    if "error" in result:
+        status_code = 409 if result.get("code") == "resource_changed" else 400
+        raise HTTPException(status_code=status_code, detail=result)
+    return result
+
+
+@router.delete("/tasks/{task_id}/purge")
+async def purge_training_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="训练任务不存在")
+    if task.user_id != current_user.id and not authorization_service.has_permission(
+        db, current_user, "training:task:delete_all"
+    ):
+        raise HTTPException(status_code=403, detail="无权彻底删除该训练任务")
+    job = resource_lifecycle_service.purge_training_task(db, task)
+    return {"message": "训练任务已彻底删除", "cleanup_job_id": job.id, "status": job.status}
 
 
 @router.get("/status/{task_id}")
@@ -725,6 +907,8 @@ async def predict_training_image(
                 })
 
         annotated_img = r.plot()
+        import cv2
+
         _, buf = cv2.imencode(".jpg", annotated_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
         annotated_b64 = base64.b64encode(buf).decode("utf-8")
 

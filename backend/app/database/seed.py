@@ -29,14 +29,32 @@ DEFAULT_PERMISSIONS = [
     ("detection:task:create", "创建检测任务", "detection"),
     ("detection:task:read", "查看检测任务", "detection"),
     ("detection:task:delete", "删除检测任务", "detection"),
+    ("detection:task:read_all", "查看所有用户检测任务（不含私密正文）", "detection"),
+    ("detection:task:delete_all", "管理所有用户检测任务回收站", "detection"),
     ("training:task:create", "创建训练任务", "training"),
     ("training:task:read", "查看训练任务", "training"),
+    ("training:task:read_all", "查看所有用户训练任务", "training"),
+    ("training:task:delete_all", "管理所有用户训练任务回收站", "training"),
+    ("training:dataset:read_all", "查看所有用户数据集元数据", "training"),
+    ("training:dataset:delete_all", "管理所有用户数据集回收站", "training"),
     ("model:manage", "管理模型版本", "training"),
+    ("model:read_all", "查看所有用户模型元数据", "training"),
+    ("model:manage_all", "管理所有用户模型", "training"),
+    ("model:set_default", "切换系统默认模型", "training"),
+    ("scene:manage", "管理检测场景", "detection"),
     ("agent:chat", "使用智能体对话", "agent"),
     ("knowledge:document:create", "上传知识文档", "knowledge"),
     ("knowledge:document:read", "查看/检索知识文档", "knowledge"),
     ("knowledge:document:delete", "删除知识文档", "knowledge"),
+    ("knowledge:document:delete_all", "管理所有知识文档回收站（不含正文读取）", "knowledge"),
+    ("knowledge:system:manage", "管理系统内置知识文档", "knowledge"),
     ("system:manage", "系统管理", "system"),
+    ("system:user:read", "查看用户状态与资源元数据", "system"),
+    ("system:user:status", "启用或禁用用户", "system"),
+    ("system:user:delete", "删除用户与关联资源", "system"),
+    ("system:audit:read", "读取脱敏审计日志", "system"),
+    ("system:cleanup:read", "读取资源清理队列", "system"),
+    ("system:cleanup:retry", "重试失败的资源清理任务", "system"),
 ]
 
 DEFAULT_ROLES = {
@@ -156,11 +174,15 @@ def seed_detection_scenes(db, admin_user_id: int | None) -> None:
             model_path=model_path,
             file_size=absolute_model_path.stat().st_size if absolute_model_path.is_file() else None,
             is_default=True,
+            is_builtin=True,
             description="钢铁表面缺陷检测首个部署权重",
         )
         db.add(model)
         db.commit()
         print("[seed] 注册默认模型：ssdd_yolo11n_v1（v1.0.0）")
+    elif model.owner_id is None and not model.is_builtin:
+        model.is_builtin = True
+        db.commit()
 
 
 def seed_builtin_datasets(db) -> None:

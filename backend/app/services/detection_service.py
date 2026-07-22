@@ -259,7 +259,10 @@ class DetectionService:
             "db_results": db_results,
         }
 
-    async def detect_single(self, db, user_id, file, model_id, conf_threshold, iou_threshold):
+    async def detect_single(
+        self, db, user_id, file, model_id, conf_threshold, iou_threshold,
+        idempotency_key=None,
+    ):
         model_version = self._resolve_model(db, model_id, user_id)
         task = history_service.create_task(
             db,
@@ -270,6 +273,7 @@ class DetectionService:
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
             image_size=DEFAULT_IMAGE_SIZE,
+            idempotency_key=idempotency_key,
         )
         history_service.mark_processing(db, task.id)
         try:
@@ -287,7 +291,7 @@ class DetectionService:
             history_service.mark_failed(db, task.id, str(detail))
             raise
         result.pop("db_results")
-        return {"task_id": task.id, "status": "completed", **result}
+        return {"task_id": task.id, "public_task_id": task.public_task_id, "status": "completed", **result}
 
     async def detect_batch(
         self,
@@ -298,6 +302,7 @@ class DetectionService:
         conf_threshold,
         iou_threshold,
         task_type="batch",
+        idempotency_key=None,
     ):
         if not files or len(files) > MAX_BATCH_SIZE:
             raise HTTPException(status_code=400, detail=f"批量检测需上传 1-{MAX_BATCH_SIZE} 张图片")
@@ -311,6 +316,7 @@ class DetectionService:
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
             image_size=DEFAULT_IMAGE_SIZE,
+            idempotency_key=idempotency_key,
         )
         history_service.mark_processing(db, task.id)
         try:
@@ -349,6 +355,7 @@ class DetectionService:
         success_count = sum(item["status"] == "completed" for item in items)
         return {
             "task_id": task.id,
+            "public_task_id": task.public_task_id,
             "status": "completed",
             "source": task_type,
             "success_count": success_count,
@@ -412,6 +419,7 @@ class DetectionService:
         conf_threshold,
         iou_threshold,
         original_filename,
+        idempotency_key=None,
     ):
         """安全解压 ZIP，并复用批量检测流程。"""
         with tempfile.TemporaryDirectory(prefix="ssdd_zip_") as extract_dir:
@@ -446,6 +454,7 @@ class DetectionService:
                     conf_threshold,
                     iou_threshold,
                     task_type="zip",
+                    idempotency_key=idempotency_key,
                 )
                 result["zip_filename"] = original_filename
                 result["total_images_in_zip"] = len(image_paths)

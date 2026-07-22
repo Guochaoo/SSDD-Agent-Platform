@@ -44,7 +44,9 @@
             <el-button type="primary" @click="showCreateDialog = true">{{ text.newTask }}</el-button>
           </el-empty>
         </template>
-        <el-table-column prop="task_uuid" :label="text.taskId" min-width="108" />
+        <el-table-column :label="text.taskId" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.public_task_id || row.task_uuid }}</template>
+        </el-table-column>
         <el-table-column prop="model_name" :label="text.model" min-width="106" />
         <el-table-column :label="text.dataset" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ formatDataset(row) }}</template>
@@ -139,10 +141,10 @@
       <template #header>
         <div class="card-header monitor-header">
           <div>
-            <span class="card-title">{{ text.trainingMonitor }} - {{ text.task }} {{ selectedTask.task_uuid }}</span>
-            <StatusTag :status="selectedTask.status" :label="statusText(selectedTask.status)" size="small">
+            <span class="card-title">{{ text.trainingMonitor }} - {{ text.task }} {{ selectedTask.public_task_id || selectedTask.task_uuid }}</span>
+            <el-tag :type="statusType(selectedTask.status)" size="small">
               {{ statusText(selectedTask.status) }}
-            </StatusTag>
+            </el-tag>
           </div>
           <div class="monitor-info">
             <span>{{ text.model }}: {{ selectedTask.model_name }}</span>

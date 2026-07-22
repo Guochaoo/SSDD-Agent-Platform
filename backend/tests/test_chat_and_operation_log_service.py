@@ -130,9 +130,10 @@ def test_list_messages_with_limit_keeps_time_order(db_session):
     assert [m.content for m in recent] == ["msg-2", "msg-3", "msg-4"]
 
 
-def test_delete_session_cascades_messages(db_session):
-    """删除会话时消息也一起清掉（依赖 ORM cascade="all, delete-orphan"）"""
-    from app.entity.db_models import ChatMessage
+def test_delete_session_recycles_then_purge_cascades_messages(db_session):
+    """回收站期间保留消息，彻底清理后再级联删除。"""
+    from app.entity.db_models import ChatMessage, ChatSession
+    from app.services.resource_lifecycle_service import resource_lifecycle_service
 
     user = _make_user(db_session, "alice")
     session = chat_service.create_session(db_session, user.id)
@@ -141,12 +142,17 @@ def test_delete_session_cascades_messages(db_session):
     )
     session_id = session.id
 
-    chat_service.delete_session(db_session, session.session_uuid, user.id)
+    recycled = chat_service.delete_session(db_session, session.session_uuid, user.id)
 
     remaining_messages = db_session.query(ChatMessage).filter(
         ChatMessage.session_id == session_id
     ).all()
-    assert remaining_messages == []
+    assert len(remaining_messages) == 1
+    assert recycled.deletion_status == "trashed"
+
+    resource_lifecycle_service.purge_chat_session(db_session, recycled)
+    assert db_session.query(ChatSession).filter(ChatSession.id == session_id).first() is None
+    assert db_session.query(ChatMessage).filter(ChatMessage.session_id == session_id).all() == []
 
 
 def test_archive_session_soft_deletes(db_session):

@@ -61,11 +61,7 @@ def test_owner_can_read_and_admin_sees_all(db_session):
     assert got.title == "system-doc"
 
 
-def test_delete_permission_boundary(db_session, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.knowledge_service.MinIOClient",
-        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url: None)})(),
-    )
+def test_delete_permission_boundary(db_session):
     alice = _make_user(db_session, "alice")
     bob = _make_user(db_session, "bob")
     admin = _make_user(db_session, "admin", is_superuser=True)
