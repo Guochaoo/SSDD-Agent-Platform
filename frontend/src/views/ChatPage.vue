@@ -189,6 +189,7 @@ import {
 import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
 import { normalizeAgentError, normalizeAgentEvent } from '@/utils/agentCards'
+import { chooseFiles } from '@/utils/filePicker'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
 
@@ -369,40 +370,6 @@ function handleChatSend() {
 function handleChipClick(text) {
   heroInput.value = text
   autoResize()
-}
-
-function chooseFiles({ accept, multiple }) {
-  return new Promise((resolve) => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = accept
-    input.multiple = multiple
-    let settled = false
-
-    const cleanup = () => {
-      window.removeEventListener('focus', onFocus)
-    }
-
-    const onFocus = () => {
-      cleanup()
-      // 延迟等待 onchange 先触发（用户选了文件的情况）
-      setTimeout(() => {
-        if (!settled) {
-          settled = true
-          resolve([])
-        }
-      }, 300)
-    }
-
-    input.onchange = () => {
-      settled = true
-      cleanup()
-      resolve(Array.from(input.files || []))
-    }
-
-    window.addEventListener('focus', onFocus, { once: true })
-    input.click()
-  })
 }
 
 async function handleQuickDetect(type) {
