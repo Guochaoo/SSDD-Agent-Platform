@@ -40,6 +40,7 @@ describe("前端 B 历史记录适配", () => {
       id: 7,
       sceneName: "钢铁表面缺陷",
       taskType: "batch",
+      mediaType: "image",
       avgInferenceTimeMs: 30,
     });
   });

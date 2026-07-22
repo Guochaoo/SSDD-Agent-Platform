@@ -1,5 +1,20 @@
 import { defineStore } from 'pinia'
-import { deleteAgentSession, getAgentArtifact, getAgentMessageImage, getAgentSession, listAgentSessions } from '@/api/agent'
+import {
+  archiveAgentSession,
+  cancelAgentRunApi,
+  cancelAgentToolApi,
+  deleteAgentSession,
+  getAgentArtifact,
+  getAgentMessageImage,
+  getAgentSession,
+  listAgentSessions,
+  renameAgentSession,
+} from '@/api/agent'
+import {
+  buildAgentCard,
+  normalizeDetectionResult,
+  restoreMessageCards,
+} from '@/utils/agentCards'
 
 const SESSION_KEY = 'ssdd_agent_session'
 const SESSIONS_KEY = 'ssdd_agent_sessions'
@@ -46,55 +61,23 @@ function serializeMessage(message) {
   return serializable
 }
 
-function parseToolResult(tool) {
-  let payload = tool.payload ?? tool.result
-  if (typeof payload === 'string') {
-    try { payload = JSON.parse(payload) } catch { return null }
-  }
-  return payload?.result || payload
+const AGENT_LABEL_BY_NAME = {
+  detection: '检测 Agent',
+  data: '数据 Agent',
+  general: '通用 Agent',
+  training: '训练 Agent',
 }
 
-const AGENT_LABEL_BY_NAME = {
-  detection: '🔍 检测 Agent',
-  data: '📊 数据 Agent',
-  general: '💬 通用 Agent',
+export const AGENT_ICON_BY_NAME = {
+  detection: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
+  data: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="3" height="9" rx="1"/><rect x="10" y="7" width="3" height="14" rx="1"/><rect x="17" y="3" width="3" height="18" rx="1"/></svg>`,
+  general: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+  training: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 4 4 4-4 4"/><path d="M14 4h4"/><path d="M14 8h4"/><path d="M14 12h4"/><path d="M6 16h12"/><path d="M6 20h12"/></svg>`,
 }
 
 function ensureAgentLabel(tool) {
   if (tool.agentLabel) return
   tool.agentLabel = AGENT_LABEL_BY_NAME[tool.agent] || ''
-}
-
-function restoreToolCards(message) {
-  (message.toolCalls || []).forEach(ensureAgentLabel)
-  const completedTools = (message.toolCalls || []).filter((item) => item.status !== 'error' && parseToolResult(item))
-  const tool = [...completedTools].reverse().find((item) => {
-    const result = parseToolResult(item)
-    return result?.detections || result?.results
-  })
-  message.toolResultCards = completedTools
-    .map((item) => ({
-      id: item.id || `${item.name || item.tool_name}-${item.display_order || 0}`,
-      type: item.card_type || 'tool_result',
-      result: parseToolResult(item),
-      references: item.references || {},
-    }))
-    .filter((card) => card.type !== 'detection_result')
-  if (!tool) return message
-  const result = parseToolResult(tool)
-  if (!result || result.error) return message
-  const normalizeObjects = (items = []) => items.map((item, index) => ({
-    id: String(index), className: item.class_name || item.className || 'unknown',
-    classNameCn: item.class_name_cn || item.classNameCn || item.class_name || 'unknown',
-    confidence: Number(item.confidence || 0), bbox: Array.isArray(item.bbox) ? item.bbox.map(Number) : [0, 0, 0, 0], bboxPercent: null,
-  }))
-  if (Array.isArray(result.results)) {
-    message.detectionResult = { taskId: `agent-${message.id}`, totalImages: result.total_images ?? result.results.length, totalObjects: result.total_objects ?? 0, items: result.results.map((item) => ({ fileName: item.filename || item.file_name || '', annotatedImageUrl: item.annotated_image_url || item.annotatedImageUrl || '', totalObjects: item.total_objects ?? item.detections?.length ?? 0, inferenceTimeMs: Number(item.inference_time || 0), objects: normalizeObjects(item.detections), error: item.error || null })) }
-  } else {
-    const detections = result.detections || []
-    message.detectionResult = { taskId: `agent-${message.id}`, fileName: result.filename || '', originalImageUrl: result.image_url || result.originalImageUrl || '', annotatedImageUrl: result.annotated_image_url || result.annotatedImageUrl || '', totalObjects: result.total_objects ?? result.totalObjects ?? detections.length, totalImages: result.total_images ?? 1, inferenceTimeMs: Number(result.inference_time ?? result.inference_time_ms ?? result.inferenceTimeMs ?? 0), objects: normalizeObjects(detections) }
-  }
-  return message
 }
 
   function artifactFilename(url) {
@@ -130,6 +113,14 @@ export const useAgentStore = defineStore('agent', {
     errorMessage: '',
     connectionStatus: 'idle',
     reconnectCount: 0,
+    activeRunId: '',
+    lastRestoreError: '',
+    sessionsLoading: false,
+    sessionSearch: '',
+    sessionPage: 1,
+    sessionPageSize: 20,
+    sessionTotal: 0,
+    showArchived: false,
   }),
 
   getters: {
@@ -163,24 +154,44 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
-    async fetchSessions(userId = storedUserId()) {
+    async fetchSessions(userIdOrOptions = storedUserId()) {
+      const options = typeof userIdOrOptions === 'object' && userIdOrOptions !== null ? userIdOrOptions : {}
+      const userId = typeof userIdOrOptions === 'object' && userIdOrOptions !== null
+        ? (options.userId ?? storedUserId())
+        : userIdOrOptions
       this.activateUser(userId)
-      const sessions = await listAgentSessions()
-      this.sessions = (sessions || []).map((session) => ({
-        id: session.id,
+      this.sessionsLoading = true
+      const params = {
+        search: (options.search ?? this.sessionSearch) || undefined,
+        page: options.page ?? this.sessionPage,
+        page_size: options.pageSize ?? this.sessionPageSize,
+        archived: options.archived ?? this.showArchived,
+      }
+      try {
+        const response = await listAgentSessions(params)
+        const sessions = Array.isArray(response) ? response : (response.items || response.sessions || [])
+        this.sessionTotal = response.total ?? response.count ?? sessions.length
+        this.sessionPage = params.page || 1
+        this.sessionPageSize = params.page_size || 20
+        this.sessions = sessions.map((session) => ({
+          id: session.id,
         ownerId: session.owner_id,
         ownerUsername: session.owner_username,
         title: session.title,
+          archived: Boolean(session.archived),
         createdAt: session.created_at,
         updatedAt: session.updated_at,
         messages: [],
-      }))
-      if (this.sessions.some((session) => session.id === this.currentSessionId)) {
-        await this.loadSession(this.currentSessionId)
-      } else {
-        this.messages = []
-        this.currentSessionId = crypto.randomUUID()
-        this.persistCurrentSessionId()
+        }))
+        if (this.sessions.some((session) => session.id === this.currentSessionId)) {
+          await this.loadSession(this.currentSessionId)
+        } else {
+          this.messages = []
+          this.currentSessionId = crypto.randomUUID()
+          this.persistCurrentSessionId()
+        }
+      } finally {
+        this.sessionsLoading = false
       }
     },
 
@@ -230,6 +241,29 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
+    addToolResultCard(result, toolName = '', meta = {}) {
+      const assistantMessage = [...this.messages].reverse().find((message) => message.role === 'assistant')
+      if (!assistantMessage) return null
+      const card = buildAgentCard({
+        toolName,
+        result,
+        status: meta.status || 'success',
+        meta,
+        displayOrder: (assistantMessage.toolResultCards?.length || 0) + 1,
+      })
+      if (card.type === 'detection_result') {
+        assistantMessage.detectionResult = normalizeDetectionResult(card.result, card)
+        const userMessage = [...this.messages].reverse().find((message) => message.role === 'user')
+        assistantMessage.detectionPreviewUrl = userMessage?.imagePreviewUrls?.[0] || assistantMessage.detectionPreviewUrl || ''
+        void this.hydrateDetectionImages(assistantMessage)
+      } else {
+        assistantMessage.toolResultCards = assistantMessage.toolResultCards || []
+        assistantMessage.toolResultCards.push(card)
+      }
+      this.saveSession()
+      return card
+    },
+
     setConnectionStatus(status) {
       this.connectionStatus = status
     },
@@ -275,8 +309,33 @@ export const useAgentStore = defineStore('agent', {
       const lastMessage = this.messages[this.messages.length - 1]
       if (wasStreaming && lastMessage?.role === 'assistant' && lastMessage.status === 'streaming') {
         lastMessage.status = 'cancelled'
+        lastMessage.errorMessage = '请求已取消'
         this.saveSession()
       }
+    },
+
+    async cancelCurrentRun() {
+      const runId = this.activeRunId || this.currentSessionId
+      this.stopStreaming()
+      if (!runId) return
+      try {
+        await cancelAgentRunApi(runId)
+      } catch {
+        // Backend may not support remote cancellation yet; local SSE cancellation is still applied.
+      }
+    },
+
+    async cancelCurrentTool() {
+      const runId = this.activeRunId || this.currentSessionId
+      const toolId = this.currentToolCall?.id || this.currentToolCall?.tool_call_id
+      if (!runId || !toolId) return
+      this.currentToolCall = { ...this.currentToolCall, status: 'cancelled' }
+      try {
+        await cancelAgentToolApi(runId, toolId)
+      } catch {
+        // Tool-level cancellation is optional until backend exposes the endpoint.
+      }
+      this.saveSession()
     },
 
     /**
@@ -347,35 +406,89 @@ export const useAgentStore = defineStore('agent', {
       const session = this.sessions.find(s => s.id === id)
       if (!session) return
       this.stopStreaming()
-      const remote = await getAgentSession(id)
-      this.currentSessionId = session.id
-      this.persistCurrentSessionId()
-      session.title = remote.title
-      session.messages = remote.messages || []
-      this.messages = await Promise.all(session.messages.map(async (message) => {
-        const restored = restoreToolCards({
-          id: String(message.id),
-          role: message.role,
-          content: message.content || '',
-          imagePreviewUrls: (await Promise.all(
-            (message.image_urls || (message.image_url ? [message.image_url] : [])).map(async (_, index) => {
-              try {
-                const blob = await getAgentMessageImage(session.id, message.id, index)
-                return URL.createObjectURL(blob)
-              } catch {
-                return ''
-              }
-            }),
-          )).filter(Boolean),
-          toolCalls: message.tool_calls || [],
-          createdAt: message.created_at,
-        })
-        await this.hydrateDetectionImages(restored)
-        return restored
-      }))
-      this.currentToolCall = null
-      this.errorMessage = ''
-      this.clearImages()
+      try {
+        const remote = await getAgentSession(id)
+        this.currentSessionId = session.id
+        this.persistCurrentSessionId()
+        session.title = remote.title
+        session.messages = remote.messages || []
+        this.messages = await Promise.all(session.messages.map(async (message) => {
+          const restored = restoreMessageCards({
+            id: String(message.id),
+            role: message.role,
+            content: message.content || '',
+            imagePreviewUrls: (await Promise.all(
+              (message.image_urls || (message.image_url ? [message.image_url] : [])).map(async (_, index) => {
+                try {
+                  const blob = await getAgentMessageImage(session.id, message.id, index)
+                  return URL.createObjectURL(blob)
+                } catch {
+                  return ''
+                }
+              }),
+            )).filter(Boolean),
+            toolCalls: message.tool_calls || [],
+            cards: message.cards || message.result_cards || [],
+            card_type: message.card_type,
+            payload: message.payload,
+            task_id: message.task_id,
+            model_id: message.model_id,
+            file_id: message.file_id,
+            knowledge_document_id: message.knowledge_document_id,
+            display_order: message.display_order,
+            snapshot: message.snapshot,
+            createdAt: message.created_at,
+          })
+          ;(restored.toolCalls || []).forEach(ensureAgentLabel)
+          await this.hydrateDetectionImages(restored)
+          return restored
+        }))
+        this.currentToolCall = null
+        this.errorMessage = ''
+        this.lastRestoreError = ''
+        this.clearImages()
+        this.saveSession()
+      } catch (error) {
+        this.lastRestoreError = error?.response?.data?.detail || error?.message || '会话恢复失败'
+        throw error
+      }
+    },
+
+    async renameSession(id, title) {
+      const nextTitle = String(title || '').trim()
+      if (!nextTitle) throw new Error('会话名称不能为空')
+      const session = this.sessions.find(s => s.id === id)
+      const previous = session?.title
+      if (session) session.title = nextTitle
+      try {
+        await renameAgentSession(id, nextTitle)
+      } catch (error) {
+        if (session) session.title = previous
+        throw error
+      } finally {
+        this.saveSessionsMeta()
+      }
+    },
+
+    async archiveSession(id, archived = true) {
+      const session = this.sessions.find(s => s.id === id)
+      const previous = session?.archived
+      if (session) session.archived = archived
+      try {
+        await archiveAgentSession(id, archived)
+      } catch (error) {
+        if (session) session.archived = previous
+        throw error
+      }
+      if (archived && this.currentSessionId === id) this.newChat()
+      this.sessions = this.sessions.filter(s => s.id !== id || this.showArchived)
+      this.saveSessionsMeta()
+    },
+
+    saveSessionsMeta() {
+      if (this.userScope != null) {
+        localStorage.setItem(storageKey(SESSIONS_KEY, this.userScope), JSON.stringify(this.sessions))
+      }
     },
 
     async hydrateDetectionImages(message) {
@@ -395,9 +508,7 @@ export const useAgentStore = defineStore('agent', {
     async deleteSession(id) {
       await deleteAgentSession(id)
       this.sessions = this.sessions.filter(s => s.id !== id)
-      if (this.userScope != null) {
-        localStorage.setItem(storageKey(SESSIONS_KEY, this.userScope), JSON.stringify(this.sessions))
-      }
+      this.saveSessionsMeta()
       if (this.currentSessionId === id) {
         this.newChat()
       }

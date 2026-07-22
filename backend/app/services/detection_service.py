@@ -806,7 +806,9 @@ class DetectionService:
                 )
             if not model_version:
                 raise RuntimeError("数据库中没有可用的模型版本，请先注册模型")
-            return self._get_model(model_version), model_version
+            # Access scene within the session to avoid detached lazy-load
+            class_names_cn = (model_version.scene.class_names_cn or {}) if model_version.scene else {}
+            return self._get_model(model_version), model_version, class_names_cn
         finally:
             db.close()
 
@@ -815,8 +817,7 @@ class DetectionService:
         user_id: int | None = None, task_type: str = "single",
     ) -> dict:
         """同步检测本地图片文件（供 Agent Tool 调用）。user_id 不为 None 时写入 DetectionTask。"""
-        model, model_version = self._get_default_model()
-        class_names_cn = (model_version.scene.class_names_cn or {}) if model_version.scene else {}
+        model, model_version, class_names_cn = self._get_default_model()
 
         # ── 创建 DetectionTask（Agent 调用时） ──
         task_id = None

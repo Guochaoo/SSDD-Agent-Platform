@@ -265,6 +265,7 @@ class BatchDetectionResponse(BaseModel):
 class DetectionStatistics(BaseModel):
     training_total_tasks: int = 0
     training_daily_trend: list[dict] = []
+    daily_inference_time: list[dict] = Field(default_factory=list)
     """检测统计数据"""
     total_tasks: int
     total_images: int

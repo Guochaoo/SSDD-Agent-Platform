@@ -383,6 +383,27 @@ def test_admin_can_list_and_read_other_users_sessions(db_session):
     assert detail["messages"][0]["content"] == "仅用于管理员查看"
 
 
+def test_owner_can_update_session_metadata_and_list_filters(db_session):
+    owner = User(username="session-owner", email="session-owner@example.com", hashed_password="x")
+    db_session.add(owner)
+    db_session.flush()
+    session = ChatSession(user_id=owner.id, session_uuid="editable-session", title="Old title")
+    db_session.add(session)
+    db_session.commit()
+
+    updated = agent.update_chat_session(
+        session.session_uuid,
+        agent.AgentSessionUpdate(title="Renamed", archived=True),
+        current_user=owner,
+        db=db_session,
+    )
+    assert updated["title"] == "Renamed"
+    assert updated["archived"] is True
+    listing = agent.list_chat_sessions(current_user=owner, db=db_session, archived=True, page=1, page_size=20)
+    assert listing["total"] == 1
+    assert listing["items"][0]["id"] == session.session_uuid
+
+
 def test_admin_cannot_delete_other_users_session(db_session):
     admin = User(
         username="delete-admin", email="delete-admin@example.com", hashed_password="x",

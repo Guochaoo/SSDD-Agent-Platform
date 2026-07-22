@@ -129,3 +129,16 @@ def test_stop_training_is_idempotent_and_records_stop_request(db_session):
     finally:
         with _running_lock:
             _stop_requested.discard(task.task_uuid)
+
+
+def test_stop_training_cancels_pending_task_idempotently(db_session):
+    task = _task(db_session, task_uuid="pending-stop")
+    task.status = "pending"
+    db_session.commit()
+
+    first = TrainingService.stop_training(db_session, task.id)
+    second = TrainingService.stop_training(db_session, task.id)
+
+    assert first["task_id"] == task.id
+    assert second["task_id"] == task.id
+    assert db_session.get(TrainingTask, task.id).status == "cancelled"

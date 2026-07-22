@@ -1,6 +1,6 @@
 <template>
   <div class="training-page">
-    <ModulePageHeader :title="text.title" :description="text.description">
+    <ModulePageHeader :title="text.title">
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
         {{ text.newTask }}
@@ -567,12 +567,13 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
 import { useTaskStore } from '@/stores/tasks'
 import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import {
   downloadTrainingModel,
   deleteTrainingTask,
@@ -587,12 +588,14 @@ import {
   deleteTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
+
 import { getScenesApi } from '@/api/models'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
 import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import { getApiErrorInfo } from '@/utils/apiError'
 
+const route = useRoute()
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 const settingsStore = useSettingsStore()
@@ -600,7 +603,6 @@ const taskStore = useTaskStore()
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Model Training & Monitoring',
-  description: 'Create YOLOv11 training tasks, monitor progress, then evaluate and export models.',
   newTask: 'New training task',
   taskList: 'Training tasks',
   taskCount: (count) => `${count} tasks`,
@@ -653,7 +655,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   retry: 'Retry',
 } : {
   title: '模型训练与监控',
-  description: '创建 YOLOv11 训练任务，实时查看训练进度并完成模型评估与导出。',
   newTask: '新建训练任务',
   taskList: '训练任务列表',
   taskCount: (count) => `共 ${count} 个任务`,
@@ -719,7 +720,7 @@ let lossChart = null
 let mapChart = null
 let pollTimer = null
 let monitorSelectionVersion = 0
-let metricsRequestInFlight = false
+let metricsRequestInFlight = null
 let hasExplicitTaskSelection = false
 
 const confusionChartRef = ref(null)
@@ -1083,17 +1084,17 @@ function initCharts() {
 
 async function fetchMetrics(selectionVersion = monitorSelectionVersion) {
   if (!selectedTask.value) return
-  if (metricsRequestInFlight) return
   const taskId = taskIdentifier(selectedTask.value)
   if (taskId === undefined || taskId === null || taskId === '') return
-  metricsRequestInFlight = true
+  if (metricsRequestInFlight === taskId) return
+  metricsRequestInFlight = taskId
 
   try {
     const [metricsResponse, statusResponse] = await Promise.all([
       getTrainingMetrics(taskId),
       getTrainingStatus(taskId),
     ])
-    if (selectionVersion !== monitorSelectionVersion || selectedTask.value?.id !== taskId) return
+    if (selectionVersion !== monitorSelectionVersion || taskIdentifier(selectedTask.value) !== taskId) return
     const metrics = metricsResponse.metrics || []
     const taskStatus = normalizeTaskStatusResponse(statusResponse)
 
@@ -1121,7 +1122,7 @@ async function fetchMetrics(selectionVersion = monitorSelectionVersion) {
     }
     reportMonitorError(error, '训练监控数据加载失败')
   } finally {
-    metricsRequestInFlight = false
+    if (metricsRequestInFlight === taskId) metricsRequestInFlight = null
   }
 }
 
@@ -1475,8 +1476,12 @@ function resizeCharts() {
 
 onMounted(() => {
   fetchTasks().then((restoredTask) => {
-    const initialTask = restoredTask || taskList.value[0]
-    if (initialTask && !selectedTask.value && !hasExplicitTaskSelection) selectTask(initialTask)
+    const requestedTask = taskList.value.find((task) => String(task.id) === String(route.query.task || ''))
+    if (requestedTask) selectTask(requestedTask)
+    else {
+      const initialTask = restoredTask || taskList.value[0]
+      if (initialTask && !selectedTask.value && !hasExplicitTaskSelection) selectTask(initialTask)
+    }
   })
   fetchDatasets()
   window.addEventListener('resize', resizeCharts)
@@ -1497,6 +1502,9 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .training-page {
   width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0;
 }
 
 .page-alert,

@@ -16,6 +16,12 @@ export function getHistoryTaskTypeLabel(value) {
   );
 }
 
+export function getHistoryMediaType(value) {
+  if (value === "video") return "video";
+  if (value === "camera") return "camera";
+  return "image";
+}
+
 function unwrap(payload) {
   return payload?.data ?? payload;
 }
@@ -40,6 +46,7 @@ export function normalizeHistoryTask(task = {}) {
       task.model_version_id ?? task.modelVersionId ?? "",
     ),
     taskType: task.task_type ?? task.taskType ?? "single",
+    mediaType: getHistoryMediaType(task.task_type ?? task.taskType ?? "single"),
     status: task.status ?? "pending",
     totalImages,
     totalObjects: Number(task.total_objects ?? task.totalObjects ?? 0),
