@@ -131,6 +131,26 @@
             </ul>
           </div>
         </transition>
+
+        <!-- Logout confirm dialog -->
+        <div v-if="showLogoutConfirm" class="logout-overlay" @click.self="showLogoutConfirm = false" />
+        <transition name="logout-card-fade">
+          <div v-if="showLogoutConfirm" class="logout-card" role="alertdialog" aria-modal="true">
+            <button class="logout-card-close" @click="showLogoutConfirm = false" :aria-label="text.cancel">
+              <svg height="20px" viewBox="0 0 384 512">
+                <path d="M342.6 150.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L192 210.7 86.6 105.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L146.7 256 41.4 361.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L192 301.3 297.4 406.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L237.3 256 342.6 150.6z" />
+              </svg>
+            </button>
+            <div class="logout-card-content">
+              <p class="logout-card-heading">{{ text.logoutTitle }}</p>
+              <p class="logout-card-description">{{ text.logoutMessage }}</p>
+            </div>
+            <div class="logout-card-actions">
+              <button class="logout-btn secondary" @click="showLogoutConfirm = false">{{ text.cancel }}</button>
+              <button class="logout-btn primary" @click="handleLogoutConfirm">{{ text.confirm }}</button>
+            </div>
+          </div>
+        </transition>
       </Teleport>
     </div>
 
@@ -145,7 +165,7 @@ import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield, ClipboardCheck } from '@boxicons/vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 
 const props = defineProps({
@@ -158,6 +178,7 @@ const hoverLocked = ref(false)
 const settingsVisible = ref(false)
 const settingsReturnTarget = ref(null)
 const menuOpen = ref(false)
+const showLogoutConfirm = ref(false)
 const footerRef = ref(null)
 const sessionQuery = ref('')
 const editingSessionId = ref('')
@@ -190,14 +211,16 @@ function handleMenuCommand(command) {
     return
   }
   if (command === 'logout') {
-    ElMessageBox.confirm(text.value.logoutMessage, text.value.logoutTitle, {
-      confirmButtonText: text.value.confirm, cancelButtonText: text.value.cancel, type: 'warning',
-    }).then(() => {
-      agentStore.clearUserScope()
-      userStore.logout()
-      router.push('/login')
-    }).catch(() => {})
+    showLogoutConfirm.value = true
+    return
   }
+}
+
+function handleLogoutConfirm() {
+  showLogoutConfirm.value = false
+  agentStore.clearUserScope()
+  userStore.logout()
+  router.push('/login')
 }
 
 function restoreSettingsFocus() {
@@ -913,5 +936,129 @@ async function handleArchiveSession(id) {
 .menu-fade-leave-to {
   opacity: 0;
   transform: translateY(3px);
+}
+
+/* ── Logout confirm card ── */
+.logout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logout-card {
+  position: fixed;
+  inset: 0;
+  z-index: 3001;
+  margin: auto;
+  width: 300px;
+  height: fit-content;
+  background: var(--app-surface);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 30px;
+  box-shadow: 20px 20px 30px rgba(0, 0, 0, 0.068);
+}
+
+.logout-card-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background-color: transparent;
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.logout-card-close svg {
+  fill: rgb(175, 175, 175);
+}
+
+.logout-card-close:hover svg {
+  fill: black;
+}
+
+.logout-card-content {
+  width: 100%;
+  height: fit-content;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.logout-card-heading {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--app-text);
+  margin: 0;
+}
+
+.logout-card-description {
+  font-weight: 400;
+  color: var(--app-muted);
+  margin: 0;
+  font-size: 14px;
+}
+
+.logout-card-actions {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.logout-btn {
+  width: 50%;
+  height: 35px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.logout-btn.primary {
+  background-color: rgb(255, 114, 109);
+  color: white;
+}
+
+.logout-btn.primary:hover {
+  background-color: rgb(255, 73, 66);
+}
+
+.logout-btn.secondary {
+  background-color: var(--app-hover);
+  color: var(--app-text);
+}
+
+.logout-btn.secondary:hover {
+  background-color: var(--app-border);
+}
+
+.logout-card-fade-enter-active {
+  transition: all 0.25s ease-out;
+}
+.logout-card-fade-leave-active {
+  transition: all 0.15s ease-in;
+}
+.logout-card-fade-enter-from {
+  opacity: 0;
+  transform: scale(0.9);
+}
+.logout-card-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
 }
 </style>

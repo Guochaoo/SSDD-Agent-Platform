@@ -2,7 +2,7 @@
   <div class="task-center">
     <el-badge :value="activeTasks.length || undefined" :hidden="!activeTasks.length" type="warning"><el-button circle :icon="List" aria-label="任务中心" @click="visible = true" /></el-badge>
     <el-drawer v-model="visible" title="任务中心" size="min(420px, 92vw)">
-      <div class="toolbar"><span>从服务端恢复训练与检测任务</span><el-button text :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button></div>
+      <div class="toolbar"><span>从服务端恢复训练与检测任务</span><button class="period-trigger refresh-btn" :disabled="loading" @click="refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" :class="{ spin: loading }"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg><span class="period-val">刷新</span></button></div>
       <el-empty v-if="!allTasks.length && !loading" description="暂无可恢复的任务" />
       <PageErrorAlert v-if="error" :message="error" retry-text="重试" @retry="refresh" />
       <div v-else class="list" v-loading="loading">
@@ -20,7 +20,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { List, Refresh } from '@element-plus/icons-vue'
+import { List } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import StatusTag from '@/components/common/StatusTag.vue'
 import PageErrorAlert from '@/components/common/PageErrorAlert.vue'

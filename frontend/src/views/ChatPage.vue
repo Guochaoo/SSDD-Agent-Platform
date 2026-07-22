@@ -377,7 +377,30 @@ function chooseFiles({ accept, multiple }) {
     input.type = 'file'
     input.accept = accept
     input.multiple = multiple
-    input.onchange = () => resolve(Array.from(input.files || []))
+    let settled = false
+
+    const cleanup = () => {
+      window.removeEventListener('focus', onFocus)
+    }
+
+    const onFocus = () => {
+      cleanup()
+      // 延迟等待 onchange 先触发（用户选了文件的情况）
+      setTimeout(() => {
+        if (!settled) {
+          settled = true
+          resolve([])
+        }
+      }, 300)
+    }
+
+    input.onchange = () => {
+      settled = true
+      cleanup()
+      resolve(Array.from(input.files || []))
+    }
+
+    window.addEventListener('focus', onFocus, { once: true })
     input.click()
   })
 }
@@ -751,7 +774,7 @@ checkAgentToolContracts()
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 16px;
+  padding-bottom: 100px;
 }
 
 /* ── Hero ── */
@@ -936,7 +959,7 @@ checkAgentToolContracts()
   cursor: pointer;
   transition: all 0.15s;
 
-  &:hover { background: rgba(0,0,0,0.06); color: var(--app-text); }
+  &:hover { background: var(--app-hover); color: var(--app-text); }
 }
 
 .send-btn {
@@ -1033,7 +1056,6 @@ checkAgentToolContracts()
   background:
     linear-gradient(to top, var(--app-bg) 76%, color-mix(in srgb, var(--app-bg) 0%, transparent));
   border-top: 1px solid var(--app-border);
-
   .prompt-card {
     max-width: 790px;
     margin: 0 auto;

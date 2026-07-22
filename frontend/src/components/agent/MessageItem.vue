@@ -38,13 +38,12 @@
         :result="message.detectionResult"
         :preview-url="message.detectionPreviewUrl"
       />
-      <div class="markdown-body" v-html="renderedContent" />
-
       <AgentResultCard
         v-for="card in message.toolResultCards || []"
         :key="card.id"
         :card="card"
       />
+      <div class="markdown-body" v-html="renderedContent" />
 
       <el-alert
         v-if="message.status === 'error'"
