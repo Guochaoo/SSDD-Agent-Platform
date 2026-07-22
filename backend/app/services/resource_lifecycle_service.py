@@ -341,6 +341,8 @@ class ResourceLifecycleService:
             job.status = "failed"
             job.retry_count += 1
             job.error_message = str(exc)
+            task.deletion_status = "cleanup_failed"
+            task.cleanup_error = str(exc)
             db.commit()
             raise HTTPException(status_code=502, detail={
                 "code": "storage_cleanup_failed",

@@ -298,6 +298,8 @@ class TrainingTask(Base):
     deleted_at = Column(DateTime, nullable=True)
     deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     purge_after = Column(DateTime, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.now, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")

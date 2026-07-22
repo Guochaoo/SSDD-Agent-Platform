@@ -45,7 +45,7 @@
                 <input
                   ref="fileInputRef"
                   type="file"
-                  accept="image/png,image/jpeg"
+                  accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp,video/mp4,video/avi,video/quicktime,video/x-matroska,.mp4,.avi,.mov,.mkv"
                   multiple
                   hidden
                   @change="onFileChange"
@@ -148,7 +148,7 @@
               <input
                 ref="fileInputRef"
                 type="file"
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp,video/mp4,video/avi,video/quicktime,video/x-matroska,.mp4,.avi,.mov,.mkv"
                 multiple
                 hidden
                 @change="onFileChange"
@@ -228,12 +228,13 @@ const greeting = computed(() => {
 
 const chatText = computed(() => settingsStore.isEnglish ? {
   inputPlaceholder: 'Enter a detection question...',
-  uploadImage: 'Upload image',
+  uploadImage: 'Upload image or video',
   send: 'Send',
   stop: 'Stop',
   dropToUpload: 'Release to upload image',
   onlyImages: 'Only JPG and PNG images are supported',
   imageTooLarge: 'Image size cannot exceed 10MB',
+  videoTooLarge: 'Video size cannot exceed 50MB',
   zipDetecting: 'Running ZIP image detection...',
   videoDetecting: 'Uploading and analyzing video...',
   videoProgress: (progress) => `Video detection in progress (${progress}%)...`,
@@ -264,12 +265,13 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   ],
 } : {
   inputPlaceholder: '输入检测问题…',
-  uploadImage: '上传图片',
+  uploadImage: '上传图片或视频',
   send: '发送',
   stop: '停止',
   dropToUpload: '释放以上传图片',
   onlyImages: '仅支持 JPG 和 PNG 图片',
   imageTooLarge: '图片大小不能超过 10MB',
+  videoTooLarge: '视频大小不能超过 50MB',
   zipDetecting: '正在进行 ZIP 图片检测…',
   videoDetecting: '正在上传并分析视频…',
   videoProgress: (progress) => `视频检测处理中（${progress}%）…`,
@@ -359,8 +361,22 @@ function onFileChange(e) {
   files.forEach(handleSelectedFile)
 }
 
-function handleSelectedFile(file) {
-  const allowed = ['image/jpeg', 'image/png']
+async function handleSelectedFile(file) {
+  const videoTypes = ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-matroska']
+  const isVideo = videoTypes.includes(file.type) || /\.(mp4|avi|mov|mkv)$/i.test(file.name || '')
+  if (isVideo) {
+    if (file.size > 50 * 1024 * 1024) { ElMessage.error(chatText.value.videoTooLarge); return }
+    try {
+      isQuickDetecting.value = true
+      await runVideoDetect(file, await getQuickDetectOptions())
+    } catch (error) {
+      ElMessage.error(error?.response?.data?.detail || error?.message || chatText.value.videoFailed)
+    } finally {
+      isQuickDetecting.value = false
+    }
+    return
+  }
+  const allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp']
   if (!allowed.includes(file.type)) { ElMessage.error(chatText.value.onlyImages); return }
   if (file.size > 10 * 1024 * 1024) { ElMessage.error(chatText.value.imageTooLarge); return }
   agentStore.addSelectedImages([file])
