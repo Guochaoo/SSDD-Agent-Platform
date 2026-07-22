@@ -1,15 +1,17 @@
+import { useUserStore } from '@/stores/user'
+
 export function streamChat(url, body, callbacks = {}, options = {}) {
   const { onMessage, onDone, onError, onRetry } = callbacks
   const {
     maxRetries = 1,
     retryDelay = 800,
   } = options
-  const token = localStorage.getItem('ssdd_token')
   const controller = new AbortController()
   const isFormData = body instanceof FormData
   let retryCount = 0
   let settled = false
   let receivedAnyMessage = false
+  let tokenRefreshAttempted = false
 
   async function connect() {
     try {
@@ -17,7 +19,7 @@ export function streamChat(url, body, callbacks = {}, options = {}) {
         method: 'POST',
         headers: {
           ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(localStorage.getItem('ssdd_token') ? { Authorization: `Bearer ${localStorage.getItem('ssdd_token')}` } : {}),
         },
         body: isFormData ? body : JSON.stringify(body),
         signal: controller.signal,
@@ -28,7 +30,20 @@ export function streamChat(url, body, callbacks = {}, options = {}) {
         try { payload = await response.json() } catch { /* non-JSON gateway response */ }
         const error = new Error(payload?.message || payload?.detail?.message || `HTTP ${response.status}`)
         error.code = payload?.error_code || payload?.detail?.code || `HTTP_${response.status}`
+        error.statusCode = payload?.status_code || response.status
+        error.detail = payload?.detail
         error.requestId = payload?.request_id || response.headers.get('x-request-id')
+        error.retryable = payload?.retryable ?? [408, 425, 429, 500, 502, 503, 504].includes(response.status)
+        if (response.status === 401 && !tokenRefreshAttempted) {
+          const userStore = useUserStore()
+          if (userStore.refreshToken) {
+            tokenRefreshAttempted = true
+            try {
+              await userStore.refreshSession()
+              return connect()
+            } catch { /* fall through to the normal auth error */ }
+          }
+        }
         throw error
       }
       if (!response.body) throw new Error('当前浏览器不支持流式响应')
@@ -66,7 +81,7 @@ export function streamChat(url, body, callbacks = {}, options = {}) {
     } catch (err) {
       if (err.name === 'AbortError') return
 
-      const canRetry = !receivedAnyMessage && retryCount < maxRetries
+      const canRetry = !receivedAnyMessage && Boolean(err.retryable ?? !err.code) && retryCount < maxRetries
       if (canRetry) {
         retryCount += 1
         onRetry?.({ retryCount, error: err })
@@ -101,9 +116,17 @@ function processSSEMessage(message, onMessage) {
   if (data === '[DONE]') return true
 
   try {
-    onMessage?.(JSON.parse(data))
+    const event = JSON.parse(data)
+    if (event?.type === 'error') {
+      event.error_code ||= event.code || 'SSE_ERROR'
+      event.code ||= event.error_code
+      event.status_code ||= 502
+      event.detail ||= { code: event.error_code, message: event.message || 'SSE request failed' }
+      event.retryable = Boolean(event.retryable)
+    }
+    onMessage?.(event)
   } catch {
-    onMessage?.({ type: 'text_delta', content: data })
+            onMessage?.({ type: 'text_delta', content: data })
   }
 
   return false

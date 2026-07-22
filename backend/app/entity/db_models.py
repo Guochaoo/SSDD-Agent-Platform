@@ -54,6 +54,88 @@ class User(Base):
     chat_sessions = relationship("ChatSession", back_populates="user")
     operation_logs = relationship("OperationLog", back_populates="user")
     knowledge_documents = relationship("KnowledgeDocument", back_populates="user")
+    auth_sessions = relationship("AuthSession", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
+    undo_actions = relationship("UndoAction", back_populates="user", cascade="all, delete-orphan")
+
+
+class AuthSession(Base):
+    """Server-side token session used for refresh and immediate revocation."""
+    __tablename__ = "auth_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_uuid = Column(String(100), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    access_jti = Column(String(100), unique=True, nullable=False, index=True)
+    refresh_jti = Column(String(100), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    last_seen_at = Column(DateTime, nullable=True)
+    access_expires_at = Column(DateTime, nullable=False)
+    refresh_expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+    ip_address = Column(String(50), nullable=True)
+    user_agent = Column(String(500), nullable=True)
+
+    user = relationship("User", back_populates="auth_sessions")
+
+
+class ActionConfirmation(Base):
+    """Durable approval ticket for destructive or privileged actions."""
+    __tablename__ = "action_confirmations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    confirmation_uuid = Column(String(100), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation = Column(String(80), nullable=False, index=True)
+    target_type = Column(String(80), nullable=False)
+    target_id = Column(String(120), nullable=True)
+    impact = Column(JSON, nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    consumed_at = Column(DateTime, nullable=True)
+    request_id = Column(String(100), nullable=True, index=True)
+    task_id = Column(String(100), nullable=True, index=True)
+    session_id = Column(String(100), nullable=True, index=True)
+
+    user = relationship("User")
+
+
+class Notification(Base):
+    """Durable user notification with optional task/resource correlation."""
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(40), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    message = Column(Text, nullable=False)
+    task_id = Column(String(100), nullable=True, index=True)
+    resource_type = Column(String(80), nullable=True)
+    resource_id = Column(String(120), nullable=True)
+    request_id = Column(String(100), nullable=True, index=True)
+    read_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+
+    user = relationship("User", back_populates="notifications")
+
+
+class UndoAction(Base):
+    """Short-lived, single-use inverse operation for reversible changes."""
+    __tablename__ = "undo_actions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    undo_uuid = Column(String(100), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation = Column(String(80), nullable=False, index=True)
+    payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    consumed_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="undo_actions")
 
 
 class Role(Base):
@@ -353,6 +435,7 @@ class TrainingDataset(Base):
     path = Column(String(500), unique=True, nullable=False, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     is_builtin = Column(Boolean, default=False, nullable=False)
+    status = Column(String(20), default="active", nullable=False, index=True)
     display_name = Column(String(200), nullable=True)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -394,6 +477,7 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False, comment="消息内容")
     image_path = Column(String(500), nullable=True, comment="该消息关联的服务端图片路径")
     image_paths = Column(JSON, nullable=True, comment="该消息关联的服务端图片路径列表")
+    attachments = Column(JSON, nullable=True, comment="对话附件元数据：name/path/content_type")
 
     # 智能体路由信息
     agent_used = Column(String(50), nullable=True, comment="处理的 Agent：supervisor/detection/analysis/qa")
@@ -434,6 +518,9 @@ class OperationLog(Base):
     user_agent = Column(String(500), nullable=True, comment="客户端 User-Agent")
     request_method = Column(String(10), nullable=True, comment="HTTP 方法")
     request_path = Column(String(500), nullable=True, comment="请求路径")
+    request_id = Column(String(100), nullable=True, index=True, comment="请求追踪 ID")
+    task_id = Column(String(100), nullable=True, index=True, comment="关联任务 ID")
+    session_id = Column(String(100), nullable=True, index=True, comment="关联会话 ID")
 
     # 结果
     status = Column(String(20), default="success", comment="操作结果：success/failure")
@@ -457,7 +544,9 @@ class KnowledgeDocument(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True, comment="上传者，为空表示系统内置文档")
     title = Column(String(200), nullable=False, comment="文档标题")
     filename = Column(String(255), nullable=False, comment="原始文件名")
-    file_url = Column(String(500), nullable=False, comment="MinIO 原文件 URL")
+    # Legacy column retained for schema compatibility; access uses object_key
+    # and fresh signed URLs, so a permanent URL is no longer required.
+    file_url = Column(String(500), nullable=True, comment="Legacy URL; never exposed")
     object_key = Column(String(500), nullable=True, index=True)
     cleanup_pending = Column(Boolean, default=False, nullable=False)
     cleanup_error = Column(Text, nullable=True)

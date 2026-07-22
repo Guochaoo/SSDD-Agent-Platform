@@ -1,10 +1,12 @@
 """YOLO 图片、视频和摄像头检测 API。"""
 
+import asyncio
 import base64
 import os
 import tempfile
 import threading
 import time
+from uuid import uuid4
 
 from fastapi import (
     APIRouter,
@@ -27,6 +29,7 @@ from app.config.detection import (
     DEFAULT_IOU_THRESHOLD,
     DEFAULT_VIDEO_FRAME_SAMPLE_RATE,
     DEFAULT_VIDEO_MAX_FRAMES,
+    MAX_VIDEO_FRAMES,
     MAX_VIDEO_SIZE,
     MAX_ZIP_SIZE,
     VIDEO_PROGRESS_TTL,
@@ -35,9 +38,12 @@ from app.core.logger import get_logger
 from app.core.redis_client import redis_client
 from app.core.security import decode_access_token
 from app.database.session import SessionLocal, get_db
+from app.entity.db_models import AuthSession
 from app.entity.schemas import BatchDetectionResponse, DetectionResponse
 from app.services.detection_service import detection_service
 from app.services.history_service import history_service
+from app.services.notification_service import notification_service
+from app.services.operation_log_service import operation_log_service
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/api/detection", tags=["detection"])
@@ -126,7 +132,7 @@ async def detect_video(
     conf_threshold: float = Form(DEFAULT_CONF_THRESHOLD, ge=0, le=1),
     iou_threshold: float = Form(DEFAULT_IOU_THRESHOLD, ge=0, le=1),
     frame_sample_rate: int = Form(DEFAULT_VIDEO_FRAME_SAMPLE_RATE, ge=1, le=60),
-    max_frames: int = Form(DEFAULT_VIDEO_MAX_FRAMES, ge=1, le=100),
+    max_frames: int = Form(DEFAULT_VIDEO_MAX_FRAMES, ge=1, le=MAX_VIDEO_FRAMES),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -213,7 +219,7 @@ async def detect_video(
         except Exception as exc:
             redis_client.set_video_task(
                 task_id,
-                {"status": "failed", "progress": 0, "message": f"视频检测失败: {exc}"},
+                {"status": "failed", "progress": 0, "message": "视频检测失败，请稍后重试"},
                 ttl=VIDEO_PROGRESS_TTL,
             )
         finally:
@@ -266,11 +272,19 @@ def _get_websocket_user(token: str | None, db: Session):
         return None
     try:
         payload = decode_access_token(token)
+        if payload.get("type") not in (None, "access"):
+            return None
         user_id = int(payload.get("sub"))
     except (JWTError, TypeError, ValueError):
         return None
     try:
-        return user_service.get_user_by_id(db, user_id)
+        user = user_service.get_user_by_id(db, user_id)
+        if not user.is_active:
+            return None
+        jti = payload.get("jti")
+        if jti and not db.query(AuthSession).filter(AuthSession.access_jti == jti, AuthSession.revoked_at.is_(None)).first():
+            return None
+        return user
     except HTTPException:
         return None
 
@@ -278,18 +292,55 @@ def _get_websocket_user(token: str | None, db: Session):
 @router.websocket("/camera")
 async def camera_detection(websocket: WebSocket):
     db = SessionLocal()
-    user = _get_websocket_user(websocket.query_params.get("token"), db)
+    await websocket.accept()
+    request_id = websocket.headers.get("x-request-id") or uuid4().hex
+    try:
+        auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+    except (asyncio.TimeoutError, WebSocketDisconnect, ValueError):
+        await websocket.close(code=1008, reason="认证消息无效")
+        db.close()
+        return
+    token = auth_message.get("token") if auth_message.get("type") == "auth" else None
+    user = _get_websocket_user(token, db)
     if not user:
         await websocket.close(code=1008, reason="无效的认证凭据")
         db.close()
         return
-    await websocket.accept()
     connection_id = id(websocket)
+
+    async def send_ws_error(code: str, detail: str, *, retryable: bool = False, status_code: int = 400):
+        operation_log_service.record(
+            db,
+            user=user,
+            module="detection",
+            action="websocket_error",
+            target_type="camera_session",
+            target_id=str(connection_id),
+            description=f"WebSocket error {code}",
+            status="failure",
+            error_message=detail,
+            request_id=request_id,
+        )
+        await websocket.send_json({
+            "type": "error",
+            "code": code,
+            "error_code": code,
+            "status_code": status_code,
+            "message": detail,
+            "detail": {"code": code, "message": detail},
+            "request_id": request_id,
+            "task_id": None,
+            "session_id": None,
+            "user_id": user.id,
+            "retryable": retryable,
+        })
+
     mode = "cpu"
     conf = DEFAULT_CONF_THRESHOLD
     iou = DEFAULT_IOU_THRESHOLD
     model_version = None
     model = None
+    model_id = None
     frame_count = 0
     fps_window_started = time.perf_counter()
     fps_window_count = 0
@@ -303,16 +354,16 @@ async def camera_detection(websocket: WebSocket):
             if message_type == "config":
                 mode = message.get("mode", "cpu")
                 if mode not in {"cpu", "gpu"}:
-                    await websocket.send_json({"type": "error", "message": "mode 必须是 cpu 或 gpu"})
+                    await send_ws_error("INVALID_MODE", "mode must be cpu or gpu")
                     continue
                 try:
                     conf = float(message.get("conf", DEFAULT_CONF_THRESHOLD))
                     iou = float(message.get("iou", DEFAULT_IOU_THRESHOLD))
                 except (TypeError, ValueError):
-                    await websocket.send_json({"type": "error", "message": "conf 和 iou 必须是数值"})
+                    await send_ws_error("INVALID_THRESHOLD", "conf and iou must be numeric")
                     continue
                 if not 0 <= conf <= 1 or not 0 <= iou <= 1:
-                    await websocket.send_json({"type": "error", "message": "conf 和 iou 必须在 0-1 之间"})
+                    await send_ws_error("INVALID_THRESHOLD", "conf and iou must be between 0 and 1")
                     continue
                 try:
                     model_id = int(message.get("model_id"))
@@ -321,7 +372,12 @@ async def camera_detection(websocket: WebSocket):
                     )
                 except Exception as exc:
                     logger.exception("摄像头模型初始化失败 connection_id=%s", connection_id)
-                    await websocket.send_json({"type": "error", "message": f"模型加载失败: {exc}"})
+                    notification_service.safe_create(
+                        db, user.id, "model_anomaly", "Model anomaly",
+                        "Camera model loading failed; please check the model configuration.",
+                        resource_type="model", resource_id=model_id, request_id=request_id,
+                    )
+                    await send_ws_error("MODEL_LOAD_FAILED", "model loading failed", retryable=True, status_code=503)
                     continue
                 await websocket.send_json(
                     {
@@ -329,17 +385,24 @@ async def camera_detection(websocket: WebSocket):
                         "mode": mode,
                         "model_id": model_version.id,
                         "model_name": model_version.model_name,
-                        "model_path": model_version.model_path,
+                        "request_id": request_id,
+                        "task_id": None,
+                        "session_id": None,
+                        "user_id": user.id,
                         "message": f"配置成功，模式: {mode}，模型: {model_version.model_name}",
                     }
                 )
             elif message_type == "frame":
                 if model is None:
-                    await websocket.send_json({"type": "error", "message": "请先发送 config 消息"})
+                    await send_ws_error("CONFIG_REQUIRED", "send config before sending frames")
                     continue
                 now = time.perf_counter()
                 if mode == "cpu" and now - last_frame_time < 0.3:
-                    await websocket.send_json({"type": "frame_skipped", "retry_after_ms": 300})
+                    await websocket.send_json({
+                        "type": "frame_skipped", "retry_after_ms": 300,
+                        "request_id": request_id, "task_id": None,
+                        "session_id": None, "user_id": user.id,
+                    })
                     continue
                 last_frame_time = now
                 try:
@@ -367,16 +430,20 @@ async def camera_detection(websocket: WebSocket):
                             **result,
                             "fps": round(current_fps, 1),
                             "frame_count": frame_count,
+                            "request_id": request_id,
+                            "task_id": None,
+                            "session_id": None,
+                            "user_id": user.id,
                         }
                     )
                 except Exception as exc:
                     logger.warning("摄像头帧处理失败 connection_id=%s error=%s", connection_id, exc)
-                    await websocket.send_json({"type": "error", "message": f"帧处理失败: {exc}"})
+                    await send_ws_error("FRAME_PROCESSING_FAILED", "frame processing failed", retryable=True, status_code=422)
             elif message_type == "close":
                 await websocket.close(code=1000, reason="Client requested close")
                 break
             else:
-                await websocket.send_json({"type": "error", "message": "未知消息类型"})
+                await send_ws_error("UNKNOWN_MESSAGE_TYPE", "unknown message type")
     except WebSocketDisconnect as exc:
         logger.info(
             "摄像头 WebSocket 断开 connection_id=%s code=%s reason=%s",

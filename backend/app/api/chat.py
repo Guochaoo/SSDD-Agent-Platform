@@ -5,7 +5,7 @@
 - GET    /api/chat/sessions/{session_uuid}        单个会话信息
 - PATCH  /api/chat/sessions/{session_uuid}/title  重命名会话
 - POST   /api/chat/sessions/{session_uuid}/archive 归档会话
-- DELETE /api/chat/sessions/{session_uuid}        硬删除会话（含消息）
+- DELETE /api/chat/sessions/{session_uuid}        软删除会话（支持撤销）
 - GET    /api/chat/sessions/{session_uuid}/messages  会话消息列表
 - GET    /api/chat/sessions/{session_uuid}/history   会话+消息一次性拿
 
@@ -14,7 +14,7 @@ Agent 编排（api/agent.py 里的流式端点）是另一个模块的责任；�
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -25,8 +25,27 @@ from app.entity.schemas import (
     ChatSessionResponse, PageResponse,
 )
 from app.services.chat_service import chat_service
+from app.services.action_confirmation_service import action_confirmation_service
+from app.services.operation_log_service import operation_log_service
+from app.services.undo_service import undo_service
 
 router = APIRouter(prefix="/api/chat", tags=["对话历史"])
+
+
+def _message_response(session_uuid: str, message) -> dict:
+    data = ChatMessageResponse.model_validate(message).model_dump()
+    data["attachments"] = [
+        {key: item.get(key) for key in ("name", "content_type", "size") if item.get(key) is not None}
+        for item in (message.attachments or [])
+        if isinstance(item, dict)
+    ]
+    image_paths = message.image_paths or ([message.image_path] if message.image_path else [])
+    data["has_image"] = bool(image_paths)
+    data["image_urls"] = [
+        f"/api/agent/sessions/{session_uuid}/messages/{message.id}/image?index={index}"
+        for index, _ in enumerate(image_paths)
+    ]
+    return data
 
 
 @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)
@@ -43,6 +62,7 @@ def create_session(
 @router.get("/sessions", response_model=PageResponse)
 def list_sessions(
     status: Optional[str] = Query(default=None, description="active/archived，默认返回全部"),
+    search: Optional[str] = Query(default=None, max_length=100),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -51,7 +71,7 @@ def list_sessions(
     """会话列表，普通用户只能看自己的，管理员可看全部"""
     items, total = chat_service.list_sessions(
         db, user_id=current_user.id, is_superuser=current_user.is_superuser,
-        status=status, page=page, page_size=page_size,
+        status=status, search=search, page=page, page_size=page_size,
     )
     return {
         "total": total,
@@ -75,37 +95,83 @@ def get_session(
 def rename_session(
     session_uuid: str,
     title: str = Query(..., min_length=1, max_length=200),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return chat_service.rename_session(
+    session = chat_service.get_session(db, session_uuid, current_user.id, current_user.is_superuser)
+    previous_title = session.title or ""
+    session = chat_service.rename_session(
         db, session_uuid, current_user.id, title, current_user.is_superuser
     )
+    undo = undo_service.create(db, current_user.id, "rename_chat", {
+        "session_uuid": session_uuid, "previous_title": previous_title,
+    })
+    data = ChatSessionResponse.model_validate(session).model_dump()
+    data["undo_id"] = undo.undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="chat", action="rename_session",
+        target_type="chat_session", target_id=session_uuid,
+        description=f"Rename chat session {session_uuid}", request=request,
+    )
+    return data
 
 
 @router.post("/sessions/{session_uuid}/archive", response_model=ChatSessionResponse)
 def archive_session(
     session_uuid: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """归档会话（软删除，仍保留在数据库中）"""
-    return chat_service.archive_session(
+    session = chat_service.get_session(db, session_uuid, current_user.id, current_user.is_superuser)
+    previous_status = session.status
+    session = chat_service.archive_session(
         db, session_uuid, current_user.id, current_user.is_superuser
     )
+    undo = undo_service.create(db, current_user.id, "archive_chat", {
+        "session_uuid": session_uuid, "previous_status": previous_status,
+    })
+    data = ChatSessionResponse.model_validate(session).model_dump()
+    data["undo_id"] = undo.undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="chat", action="archive_session",
+        target_type="chat_session", target_id=session_uuid,
+        description=f"Archive chat session {session_uuid}", request=request,
+    )
+    return data
 
 
 @router.delete("/sessions/{session_uuid}")
 def delete_session(
     session_uuid: str,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """硬删除会话，同时级联删除所有消息"""
-    chat_service.delete_session(
-        db, session_uuid, current_user.id, current_user.is_superuser
+    session = chat_service.get_session(db, session_uuid, current_user.id, current_user.is_superuser)
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="delete_chat_session", target_type="chat_session", target_id=session_uuid,
+        impact={"scope": "hide conversation and attachments during the undo window", "reversible": True},
+        payload={"session_uuid": session_uuid},
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
     )
-    return {"message": "会话已删除"}
+    previous_status = session.status
+    session.status = "deleted"
+    db.commit()
+    undo_id = undo_service.create(db, current_user.id, "delete_chat_session", {
+        "session_uuid": session_uuid,
+        "previous_status": previous_status,
+    }).undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="chat", action="delete_session",
+        target_type="chat_session", target_id=session_uuid,
+        description=f"Delete chat session {session_uuid}", request=request,
+    )
+    return {"message": "会话已删除", "undo_id": undo_id}
 
 
 @router.get("/sessions/{session_uuid}/messages", response_model=list[ChatMessageResponse])
@@ -116,9 +182,10 @@ def list_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return chat_service.list_messages(
+    messages = chat_service.list_messages(
         db, session_uuid, current_user.id, current_user.is_superuser, limit=limit
     )
+    return [_message_response(session_uuid, message) for message in messages]
 
 
 @router.get("/sessions/{session_uuid}/history", response_model=ChatHistoryResponse)
@@ -131,4 +198,7 @@ def get_history(
     session, messages = chat_service.get_history(
         db, session_uuid, current_user.id, current_user.is_superuser
     )
-    return {"session": session, "messages": messages}
+    return {
+        "session": session,
+        "messages": [_message_response(session_uuid, message) for message in messages],
+    }

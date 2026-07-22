@@ -1,6 +1,6 @@
 import { streamChat } from '@/utils/stream'
 import request from '@/utils/request'
-import { getHistoryApi, getHistoryDetailApi } from './history'
+import { getHistoryApi, getHistoryDetailApi } from '@/api/history'
 
 export function streamAgentChat(payload, callbacks) {
   return streamChat('/api/agent/chat/stream', payload, callbacks, {
@@ -43,6 +43,13 @@ export function getAgentSession(sessionId) {
 
 export function getAgentMessageImage(sessionId, messageId, index = 0) {
   return request.get(`/agent/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/image`, {
+    params: { index },
+    responseType: 'blob',
+  })
+}
+
+export function getAgentMessageAttachment(sessionId, messageId, index = 0) {
+  return request.get(`/agent/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/attachment`, {
     params: { index },
     responseType: 'blob',
   })

@@ -4,6 +4,13 @@
       <div>
         <strong>{{ title }}</strong>
         <p>{{ subtitle }}</p>
+        <router-link
+          v-if="taskLinkId"
+          :to="{ path: '/history', query: { task: taskLinkId } }"
+          class="task-link"
+        >
+          {{ text.openTask }} #{{ taskLinkId }}
+        </router-link>
       </div>
       <el-tag type="success" effect="light">{{ text.done }}</el-tag>
     </div>
@@ -75,6 +82,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   defectType: 'Defect type',
   confidence: 'Confidence',
   noDefect: 'No obvious defect detected',
+  openTask: 'Open task',
   batchTitle: 'Batch Detection Result',
   singleTitle: 'Single-image Detection Result',
   task: 'Task',
@@ -88,6 +96,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   defectType: '缺陷类型',
   confidence: '置信度',
   noDefect: '未检测到明显缺陷',
+  openTask: '打开任务',
   batchTitle: '批量检测结果',
   singleTitle: '单图检测结果',
   task: '任务',
@@ -101,6 +110,11 @@ const title = computed(() => (isBatch.value ? text.value.batchTitle : text.value
 const subtitle = computed(() => {
   if (isBatch.value) return `任务 ${props.result.taskId || '-'}`
   return props.result.fileName || `${text.value.task} ${props.result.taskId || '-'}`
+})
+
+const taskLinkId = computed(() => {
+  const value = Number(props.result.taskId ?? props.result.task_id)
+  return Number.isInteger(value) && value > 0 ? value : null
 })
 
 const displayImages = computed(() => {
@@ -193,6 +207,13 @@ function formatPercent(value) {
     color: $text-secondary;
     font-size: 12px;
   }
+}
+
+.task-link {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--app-primary);
+  font-size: 12px;
 }
 
 .result-overview {

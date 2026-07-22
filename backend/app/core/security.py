@@ -5,6 +5,7 @@
 """
 
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 from jose import jwt
 import bcrypt
@@ -31,7 +32,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(password_bytes, hashed_password.encode("utf-8"))
 
 
-def create_access_token(data: dict) -> str:
+def create_access_token(data: dict, expires_minutes: int | None = None) -> str:
     """
     生成 JWT Access Token
 
@@ -42,8 +43,8 @@ def create_access_token(data: dict) -> str:
         JWT Token 字符串
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire, "jti": to_encode.get("jti", uuid4().hex)})
     encoded_jwt = jwt.encode(
         to_encode,
         settings.JWT_SECRET_KEY,

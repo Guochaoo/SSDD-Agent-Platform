@@ -22,7 +22,6 @@ import {
   validateTrainingModel,
   uploadTrainingDataset,
 } from '@/api/training'
-import { startTrainingApi } from '@/api/training'
 
 describe('training api', () => {
   beforeEach(() => {
@@ -77,18 +76,20 @@ describe('training api', () => {
     })
   })
 
-  it('uses CPU when the normalized training adapter receives no device', async () => {
-    request.post.mockResolvedValueOnce({ id: 8, status: 'pending' })
-
-    await startTrainingApi({
-      sceneId: 1,
-      modelName: 'yolo11n.pt',
+  it('passes the canonical training payload through unchanged', async () => {
+    const payload = {
+      scene_id: 1,
+      model_name: 'yolo11n.pt',
       epochs: 10,
-      imgSize: 64,
-      batchSize: 1,
-    })
+      img_size: 64,
+      batch_size: 1,
+      device: 'cpu',
+    }
+
+    await startTraining(payload)
 
     expect(request.post).toHaveBeenCalledWith('/training/start', expect.objectContaining({
+      ...payload,
       device: 'cpu',
     }))
   })

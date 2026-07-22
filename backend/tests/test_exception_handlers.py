@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
 
 from app.core.exceptions import register_exception_handlers
 from app.middleware.request_logger import RequestLogMiddleware
@@ -57,3 +58,20 @@ def test_not_found_uses_the_same_error_contract():
     assert response.json()["error_code"] == "HTTP_404"
     assert response.json()["detail"]["code"] == "HTTP_404"
     assert response.headers["x-request-id"] == response.json()["request_id"]
+
+
+def test_database_outage_is_retryable_and_does_not_leak_driver_detail():
+    app = FastAPI()
+    app.add_middleware(RequestLogMiddleware)
+    register_exception_handlers(app)
+
+    @app.get("/db")
+    def database_call():
+        raise OperationalError("connection failed", {}, RuntimeError("private driver detail"))
+
+    response = TestClient(app).get("/db")
+
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "DATABASE_UNAVAILABLE"
+    assert response.json()["retryable"] is True
+    assert "private driver detail" not in response.text

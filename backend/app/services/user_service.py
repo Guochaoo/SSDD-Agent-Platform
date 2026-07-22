@@ -4,13 +4,18 @@
 """
 import hashlib
 import secrets
+import smtplib
 from datetime import datetime, timedelta
+from email.message import EmailMessage
+from urllib.parse import quote
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.config.settings import settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.entity.db_models import (
+    AuthSession,
     User, DetectionTask, TrainingTask,
     ModelVersion, ChatSession, KnowledgeDocument, DetectionScene, OperationLog,
     PasswordResetToken,
@@ -130,11 +135,24 @@ class UserService:
         return user
 
     @staticmethod
-    def change_password(db: Session, user: User, old_password: str, new_password: str) -> None:
+    def change_password(
+        db: Session,
+        user: User,
+        old_password: str,
+        new_password: str,
+        current_session_uuid: str | None = None,
+    ) -> None:
         """已登录状态下修改密码，需校验旧密码"""
         if not verify_password(old_password, user.hashed_password):
             raise HTTPException(status_code=400, detail="旧密码不正确")
         user.hashed_password = hash_password(new_password)
+        sessions = db.query(AuthSession).filter(
+            AuthSession.user_id == user.id,
+            AuthSession.revoked_at.is_(None),
+        )
+        if current_session_uuid:
+            sessions = sessions.filter(AuthSession.session_uuid != current_session_uuid)
+        sessions.update({"revoked_at": datetime.now()}, synchronize_session=False)
         db.commit()
 
     @staticmethod
@@ -142,6 +160,17 @@ class UserService:
         """管理员启用/禁用用户"""
         user = UserService.get_user_by_id(db, user_id)
         user.is_active = is_active
+        db.commit()
+        db.refresh(user)
+        return user
+
+    @staticmethod
+    def admin_reset_password(db: Session, user_id: int, new_password: str) -> User:
+        user = UserService.get_user_by_id(db, user_id)
+        user.hashed_password = hash_password(new_password)
+        db.query(AuthSession).filter(
+            AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None)
+        ).update({"revoked_at": datetime.now()}, synchronize_session=False)
         db.commit()
         db.refresh(user)
         return user
@@ -173,6 +202,32 @@ class UserService:
         return raw_token
 
     @staticmethod
+    def send_password_reset_email(email: str, raw_token: str) -> None:
+        if not settings.SMTP_HOST or not settings.SMTP_FROM_EMAIL:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "PASSWORD_RESET_DELIVERY_UNAVAILABLE",
+                    "message": "Password reset email delivery is not configured",
+                },
+            )
+        reset_url = f"{settings.PASSWORD_RESET_URL}?token={quote(raw_token)}"
+        message = EmailMessage()
+        message["Subject"] = "Password reset"
+        message["From"] = settings.SMTP_FROM_EMAIL
+        message["To"] = email
+        message.set_content(
+            "Use the following link within 60 minutes to reset your password:\n\n"
+            f"{reset_url}\n\nIf you did not request this, ignore this email."
+        )
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as client:
+            if settings.SMTP_USE_TLS:
+                client.starttls()
+            if settings.SMTP_USERNAME:
+                client.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            client.send_message(message)
+
+    @staticmethod
     def confirm_password_reset(db: Session, raw_token: str, new_password: str) -> None:
         """校验重置令牌并设置新密码"""
         token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
@@ -190,6 +245,10 @@ class UserService:
 
         user.hashed_password = hash_password(new_password)
         token.used = True
+        db.query(AuthSession).filter(
+            AuthSession.user_id == user.id,
+            AuthSession.revoked_at.is_(None),
+        ).update({"revoked_at": datetime.now()}, synchronize_session=False)
         db.commit()
 
     # ── 删除用户（事务 + 级联清理） ───────────────────────

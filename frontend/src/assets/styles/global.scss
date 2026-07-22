@@ -59,6 +59,31 @@ body {
   line-height: 1.5;
 }
 
+// Keep keyboard navigation visible without changing mouse focus presentation.
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid var(--el-color-primary);
+  outline-offset: 2px;
+}
+
+.el-table {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .page-container {
+    padding: $spacing-md;
+  }
+
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px);
+  }
+
+  .el-table {
+    overflow-x: auto;
+  }
+}
+
 .el-button {
   font-weight: 500;
 }

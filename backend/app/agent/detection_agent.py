@@ -12,8 +12,10 @@
 import io
 import json
 import os
+import threading
 import tempfile
 import zipfile
+from contextvars import ContextVar
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -24,16 +26,25 @@ from langchain_openai import ChatOpenAI
 
 from app.config.settings import settings
 from app.core.logger import get_logger
+from app.core.redis_client import redis_client
+from app.database.session import SessionLocal
+from app.services.history_service import history_service
 from app.services.detection_service import detection_service
+from app.config.detection import (
+    DEFAULT_VIDEO_FRAME_SAMPLE_RATE,
+    DEFAULT_VIDEO_MAX_FRAMES,
+    VIDEO_PROGRESS_TTL,
+)
 
 logger = get_logger(__name__)
 
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "rsod_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 MAX_ZIP_FILES = 1_000
 MAX_ZIP_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+_TRUSTED_BATCH_ROOT: ContextVar[Path | None] = ContextVar("trusted_batch_root", default=None)
 
 
 def _safe_extract_zip(zip_path: str, target_dir: str) -> None:
@@ -101,12 +112,14 @@ def make_detection_tools(user_id: int):
             JSON 字符串，包含 total_objects、class_counts、detections、inference_time
         """
         try:
+            from app.api.agent import _validate_uploaded_image_path
+            image_path = _validate_uploaded_image_path(image_path, user_id=user_id)
             result = detection_service._detect_file_sync(image_path, conf=conf, iou=iou, user_id=user_id, task_type="single")
             summary = _format_detection_summary(result)
             return json.dumps({"summary": summary, "result": result}, ensure_ascii=False)
         except Exception as exc:
             logger.exception("detect_single_image 工具异常")
-            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+            return json.dumps({"error": "Detection failed"}, ensure_ascii=False)
 
     @tool
     def detect_batch_images(image_paths: list[str], conf: float = 0.25) -> str:
@@ -124,17 +137,26 @@ def make_detection_tools(user_id: int):
         total_objects = 0
         class_counts = {}
         for path in image_paths:
-            if not os.path.exists(path):
-                results.append({"image": path, "error": "文件不存在"})
+            try:
+                from app.api.agent import _validate_uploaded_image_path
+                trusted_root = _TRUSTED_BATCH_ROOT.get()
+                if trusted_root is not None:
+                    candidate = Path(path).resolve()
+                    candidate.relative_to(trusted_root)
+                    safe_path = str(candidate)
+                else:
+                    safe_path = _validate_uploaded_image_path(path, user_id=user_id)
+            except Exception:
+                results.append({"image": Path(path).name, "error": "File not found"})
                 continue
             try:
-                r = detection_service._detect_file_sync(path, conf=conf, iou=0.45, user_id=user_id, task_type="batch")
-                results.append({"image": path, **r})
+                r = detection_service._detect_file_sync(safe_path, conf=conf, iou=0.45, user_id=user_id, task_type="batch")
+                results.append({"image": Path(safe_path).name, **r})
                 total_objects += r.get("total_objects", 0)
                 for name, count in r.get("class_counts", {}).items():
                     class_counts[name] = class_counts.get(name, 0) + count
             except Exception as exc:
-                results.append({"image": path, "error": str(exc)})
+                results.append({"image": Path(safe_path).name, "error": "Detection failed"})
 
         return json.dumps(
             {"total_images": len(image_paths), "total_objects": total_objects,
@@ -157,6 +179,8 @@ def make_detection_tools(user_id: int):
         """
         temp_dir = None
         try:
+            from app.api.agent import _validate_uploaded_image_path
+            zip_path = _validate_uploaded_image_path(zip_path, user_id=user_id)
             temp_dir = tempfile.mkdtemp(prefix="rsod_zip_")
             _safe_extract_zip(zip_path, temp_dir)
 
@@ -169,19 +193,110 @@ def make_detection_tools(user_id: int):
             if not image_files:
                 return json.dumps({"error": "ZIP 文件内未找到图片"}, ensure_ascii=False)
 
-            batch_result = detect_batch_images.invoke({"image_paths": image_files, "conf": conf})
-            return batch_result
+            token = _TRUSTED_BATCH_ROOT.set(Path(temp_dir).resolve())
+            try:
+                return detect_batch_images.invoke({"image_paths": image_files, "conf": conf})
+            finally:
+                _TRUSTED_BATCH_ROOT.reset(token)
         except zipfile.BadZipFile:
             return json.dumps({"error": "无效的 ZIP 文件"}, ensure_ascii=False)
         except Exception as exc:
             logger.exception("detect_zip_images_file 工具异常")
-            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+            return json.dumps({"error": "ZIP detection failed"}, ensure_ascii=False)
         finally:
             if temp_dir and os.path.exists(temp_dir):
                 import shutil
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-    return [detect_single_image, detect_batch_images, detect_zip_images_file]
+    @tool
+    def detect_video_file(
+        video_path: str,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        frame_sample_rate: int = DEFAULT_VIDEO_FRAME_SAMPLE_RATE,
+        max_frames: int = DEFAULT_VIDEO_MAX_FRAMES,
+    ) -> str:
+        """异步检测视频附件并返回可查询的 DetectionTask。"""
+        try:
+            path = Path(video_path).resolve()
+            user_root = (Path(UPLOAD_DIR) / str(user_id)).resolve()
+            if path != user_root and user_root not in path.parents:
+                raise ValueError("视频附件路径无效")
+            if not path.is_file():
+                raise ValueError("视频文件不存在")
+            if path.suffix.lower() not in {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv"}:
+                raise ValueError("不支持的视频格式")
+            if not 0 <= conf <= 1 or not 0 <= iou <= 1:
+                raise ValueError("conf 和 iou 必须在 0 到 1 之间")
+            frame_sample_rate = max(1, min(int(frame_sample_rate), 60))
+            max_frames = max(1, min(int(max_frames), DEFAULT_VIDEO_MAX_FRAMES))
+
+            _, model_version, _ = detection_service._get_default_model()
+            db = SessionLocal()
+            try:
+                task = history_service.create_task(
+                    db, user_id=user_id, scene_id=model_version.scene_id,
+                    task_type="video", model_version_id=model_version.id,
+                    conf_threshold=conf, iou_threshold=iou,
+                )
+                history_service.mark_processing(db, task.id)
+                task_id = task.id
+            finally:
+                db.close()
+
+            redis_client.set_video_task(
+                task_id,
+                {"status": "processing", "progress": 0, "message": "视频检测处理中"},
+                ttl=VIDEO_PROGRESS_TTL,
+            )
+
+            def update_progress(current_frame, total_frames):
+                progress = round(current_frame / total_frames * 100, 2) if total_frames else 0
+                redis_client.set_video_task(
+                    task_id,
+                    {
+                        "status": "processing", "progress": progress,
+                        "current_frame": current_frame, "total_frames": total_frames,
+                        "message": "视频检测处理中",
+                    },
+                    ttl=VIDEO_PROGRESS_TTL,
+                )
+
+            def run_detection():
+                try:
+                    result = detection_service.detect_video(
+                        video_path=str(path), model_id=model_version.id, task_id=task_id,
+                        conf=conf, iou=iou, frame_sample_rate=frame_sample_rate,
+                        max_frames=max_frames, progress_callback=update_progress,
+                    )
+                    redis_client.set_video_task(
+                        task_id,
+                        {"status": "completed", "progress": 100, "message": "视频检测完成", "result": result},
+                        ttl=VIDEO_PROGRESS_TTL,
+                    )
+                except Exception:
+                    logger.exception("Agent 视频检测失败 task_id=%s", task_id)
+                    redis_client.set_video_task(
+                        task_id,
+                        {"status": "failed", "progress": 0, "message": "视频检测失败"},
+                        ttl=VIDEO_PROGRESS_TTL,
+                    )
+                finally:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning("Agent 视频临时文件清理失败 task_id=%s", task_id)
+
+            threading.Thread(target=run_detection, daemon=True, name=f"agent-video-{task_id}").start()
+            return json.dumps(
+                {"task_id": task_id, "status": "processing", "message": "视频检测任务已创建，可通过任务 ID 查询进度"},
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            logger.exception("detect_video_file 工具异常")
+            return json.dumps({"error": "视频检测任务创建失败"}, ensure_ascii=False)
+
+    return [detect_single_image, detect_batch_images, detect_zip_images_file, detect_video_file]
 
 
 # 向后兼容：无 user_id 时的默认工具列表（不写 DB）
@@ -240,6 +355,7 @@ _SYSTEM_PROMPT = """你是一个专业的目标检测助手，可以帮助用户
 - 单张图片 → 调用 detect_single_image
 - 多张图片 → 调用 detect_batch_images
 - ZIP 压缩包 → 调用 detect_zip_images_file
+- 视频附件 → 调用 detect_video_file；工具会立即返回 task_id，告知用户可在任务中心查看进度
 
 工作流程：
 1. 理解用户意图
@@ -287,7 +403,7 @@ class DetectionAgent:
             }
         except Exception as exc:
             logger.exception("Agent 执行异常")
-            return {"output": f"处理出错：{exc}", "intermediate_steps": []}
+            return {"output": "处理出错，请稍后重试。", "intermediate_steps": []}
 
     async def chat_stream(self, message: str, image_paths: list[str] = None, model: str = None, chat_history: list[dict] | None = None) -> AsyncGenerator:
         if image_paths:
@@ -323,7 +439,7 @@ class DetectionAgent:
 
         except Exception as exc:
             logger.exception("Agent 流式执行异常")
-            yield {"type": "error", "content": f"处理出错：{exc}"}
+            yield {"type": "error", "content": "处理出错，请稍后重试。"}
 
 
 detection_agent = DetectionAgent()

@@ -1,8 +1,7 @@
 import request from "@/utils/request";
 
-function unwrap(payload) {
-  return payload?.data ?? payload;
-}
+// @internal-compat: shape normalizers are retained for fixture and legacy
+// integrations; production pages consume the canonical request adapters below.
 
 function normalizeTask(task) {
   const rawTaskId = task.id ?? task.task_id ?? task.taskId ?? task.task_uuid;
@@ -45,48 +44,11 @@ function normalizeMetric(metric) {
   };
 }
 
-export async function getTrainingTasksApi() {
-  const response = unwrap(await request.get("/training/tasks"));
-  return (response?.items ?? response ?? []).map(normalizeTask);
-}
-
-export async function getTrainingDetailApi(taskId) {
-  const [status, metrics] = await Promise.all([
-    request.get(`/training/status/${taskId}`),
-    request.get(`/training/metrics/${taskId}`),
-  ]);
-  const statusData = unwrap(status) ?? {};
-  const task = normalizeTask(statusData.task ?? statusData);
-  const metricData = unwrap(metrics);
-  return {
-    ...task,
-    metrics: (metricData?.metrics ?? metricData?.items ?? metricData ?? []).map(normalizeMetric),
-  };
-}
-
-export async function startTrainingApi(payload) {
-  const requestPayload = {
-    scene_id: Number(payload.sceneId),
-    model_name: payload.modelName,
-    epochs: payload.epochs,
-    img_size: payload.imgSize,
-    batch_size: payload.batchSize,
-    device: payload.device ?? "cpu",
-    optimizer: payload.optimizer ?? "SGD",
-    lr0: payload.lr0 ?? 0.01,
-    augment_config: payload.augmentConfig ?? null,
-    train_config: payload.trainConfig ?? null,
-    dataset_path: payload.datasetPath ?? null,
-  };
-  return normalizeTask(
-    unwrap(await request.post("/training/start", requestPayload)),
-  );
-}
-
+// @internal-compat: no production page imports these normalizers directly.
 export { normalizeMetric, normalizeTask };
  
-// Raw endpoint adapters used by the richer training workbench. The normalized
-// adapters above remain available to the existing dev dashboard.
+// Canonical endpoint adapters used by the training workbench. The normalized
+// helpers below are internal compatibility adapters for data-shape tests.
 
 export function getTrainingTasks() {
   return request.get('/training/tasks')
@@ -137,10 +99,16 @@ export function stopTraining(taskId) {
   return request.post(`/training/stop/${taskId}`)
 }
 
+export function retryTrainingTask(taskId) {
+  return request.post(`/training/retry/${taskId}`)
+}
+
 export function deleteTrainingTask(taskId) {
   return request.delete(`/training/tasks/${taskId}`)
 }
 
+// @internal-compat: raw results.csv is retained for external/diagnostic
+// consumers; the Training page uses the structured report endpoint instead.
 export function downloadTrainingResults(taskUuid) {
   return request.get(`/training/results/${taskUuid}`, {
     responseType: 'blob',
@@ -162,6 +130,18 @@ export function downloadTrainingModel(taskId) {
     responseType: 'blob',
     timeout: 120000,
   })
+}
+
+export function archiveTrainingDataset(datasetPath) {
+  return request.post(`/training/datasets/${encodeURIComponent(datasetPath)}/archive`)
+}
+
+export function reprocessTrainingDataset(datasetPath) {
+  return request.post(`/training/datasets/${encodeURIComponent(datasetPath)}/reprocess`)
+}
+
+export function downloadTrainingReport(taskId) {
+  return request.get(`/training/report/${taskId}`, { responseType: 'blob', timeout: 120000 })
 }
 
 export function predictTrainingImage(payload) {

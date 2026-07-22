@@ -3,7 +3,7 @@
  * 启动时自动从后端拉取可用模型列表
  */
 import { defineStore } from 'pinia'
-import request from '@/utils/request'
+import { getLlmModels } from '@/api/llm'
 
 export const DEFAULT_LLM_MODEL_VALUE = '__default__'
 
@@ -66,7 +66,7 @@ export const useLlmStore = defineStore('llm', {
       this.loading = true
       this.error = null
       try {
-        const data = await request.get('/agent/models')
+        const data = await getLlmModels()
         this.models = data?.models?.length ? data.models : FALLBACK_MODELS
         this.provider = data?.provider ?? null
         this.loaded = true

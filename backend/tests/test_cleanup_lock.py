@@ -1,4 +1,6 @@
 from app.core.redis_client import RedisClient
+from app.entity.db_models import ChatMessage, ChatSession, User
+from app.storage.cleanup import cleanup_stale_agent_uploads
 import main
 
 
@@ -59,3 +61,32 @@ def test_cleanup_runner_releases_lock_after_retry(monkeypatch):
 
     assert main.retry_resource_cleanups() == {"attempted": 1, "succeeded": 1}
     assert events == ["acquire", "close", "release"]
+
+
+def test_stale_agent_upload_cleanup_preserves_referenced_attachment(db_session, tmp_path):
+    user = User(username="upload-cleanup", email="upload-cleanup@example.com", hashed_password="x")
+    db_session.add(user)
+    db_session.flush()
+    session = ChatSession(session_uuid="upload-cleanup-session", user_id=user.id, title="uploads")
+    db_session.add(session)
+    db_session.flush()
+
+    referenced = tmp_path / "referenced.txt"
+    stale = tmp_path / "stale.txt"
+    referenced.write_text("keep", encoding="utf-8")
+    stale.write_text("remove", encoding="utf-8")
+    old_time = referenced.stat().st_mtime - 48 * 60 * 60
+    import os
+    os.utime(referenced, (old_time, old_time))
+    os.utime(stale, (old_time, old_time))
+    db_session.add(ChatMessage(
+        session_id=session.id,
+        role="user",
+        content="attachment",
+        attachments=[{"path": str(referenced)}],
+    ))
+    db_session.commit()
+
+    assert cleanup_stale_agent_uploads(db_session, tmp_path, max_age_seconds=24 * 60 * 60) == 1
+    assert referenced.exists()
+    assert not stale.exists()

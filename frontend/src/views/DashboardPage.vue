@@ -4,6 +4,9 @@
     <div class="dash-header">
       <span class="dash-title">数据看板</span>
       <div class="dash-header-right">
+        <el-select v-model="filters.mediaType" class="format-select" @change="loadDashboard">
+          <el-option v-for="option in mediaTypeOptions" :key="option.value || 'all'" :label="option.label" :value="option.value" />
+        </el-select>
         <div class="period-wrap" ref="periodRef">
         <button class="period-trigger" @click="menuOpen = !menuOpen">
           <span class="period-label">时间维度</span>
@@ -54,12 +57,37 @@
           </transition>
         </Teleport>
       </div>
+      <button class="period-trigger refresh-btn" :disabled="loading" @click="exportDashboard">
+        <span class="period-val">{{ settingsStore.isEnglish ? 'Export CSV' : '导出 CSV' }}</span>
+      </button>
       <button class="period-trigger refresh-btn" :disabled="loading" @click="loadDashboard">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" :class="{ spin: loading }"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
         <span class="period-val">{{ text.refresh }}</span>
       </button>
       </div>
     </div>
+
+    <section v-if="false" class="dashboard-filter-bar">
+      <el-input v-model="filters.keyword" clearable :placeholder="text.keyword" @keyup.enter="loadDashboard" />
+      <el-select v-model="filters.taskType" clearable :placeholder="text.allTypes">
+        <el-option v-for="option in taskTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+      </el-select>
+      <el-select v-model="filters.mediaType" clearable :placeholder="text.mediaType">
+        <el-option v-for="option in mediaTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+      </el-select>
+      <el-select v-model="filters.sceneId" clearable :placeholder="text.allScenes">
+        <el-option v-for="scene in scenes" :key="scene.id" :label="scene.displayName || scene.name" :value="scene.id" />
+      </el-select>
+      <el-select v-model="filters.status" clearable :placeholder="text.allStatuses">
+        <el-option v-for="option in statusOptions" :key="option.value" :label="option.label" :value="option.value" />
+      </el-select>
+      <el-input v-if="userStore.isSuperuser" v-model="filters.ownerUserId" clearable :placeholder="text.userId" />
+      <el-button type="primary" @click="loadDashboard">{{ text.applyFilters }}</el-button>
+      <el-select v-model="viewGranularity" :placeholder="text.viewGranularity">
+        <el-option v-for="option in granularityOptions" :key="option.value" :label="option.label" :value="option.value" />
+      </el-select>
+      <el-button @click="openFilteredHistory">{{ text.openView }}</el-button>
+    </section>
 
     <PageErrorAlert
       v-if="pageError"
@@ -79,7 +107,7 @@
             <span class="chart-pill blue-light">{{ trendPrevTotal }} 次</span>
           </div>
           <div class="chart-compare-row">
-            <span class="chart-compare-label">vs </span>
+            <span class="chart-compare-label">vs</span>
             <span class="chart-compare-date" ref="trendCompareRef" @click.stop="toggleTrendCompareCal">
               {{ trendDateLabel }}
               <svg class="cal-arrow" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="m12 15.41 5.71-5.7-1.42-1.42-4.29 4.3-4.29-4.3-1.42 1.42z"/></svg>
@@ -124,6 +152,7 @@
           <div class="blob-bg" />
           <div class="blob-shape" />
           <div class="blob-content">
+            <div class="metric-mode-label">{{ mediaCountLabel }} · {{ mediaTimeLabel }}</div>
             <div class="card-icon-wrap colored">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M13 8h2v12h-2zM9 4h2v16H9zm8 10h2v6h-2zM5 11h2v9H5z"/>
@@ -273,8 +302,11 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { useRouter } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
-import { getDashboardApi } from "@/api/statistics";
+import { exportStatisticsApi, getDashboardApi } from "@/api/statistics";
+import { getScenesApi } from "@/api/models";
+import { useUserStore } from '@/stores/user'
 import EChartPanel from "@/components/charts/EChartPanel.vue";
 import PageErrorAlert from "@/components/common/PageErrorAlert.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
@@ -294,11 +326,37 @@ function fmtDate(d) {
 
 const loading = ref(false);
 const settingsStore = useSettingsStore()
+const userStore = useUserStore()
+const router = useRouter()
 const pageError = ref("");
 const period = ref('30d');
 const menuOpen = ref(false);
 const periodRef = ref(null);
-const filters = reactive({ dateRange: last30Days() });
+const filters = reactive({ dateRange: last30Days(), taskType: '', mediaType: '', sceneId: '', status: '', keyword: '', ownerUserId: '' });
+const scenes = ref([])
+const viewGranularity = ref('task')
+const granularityOptions = [
+  { value: 'task', label: 'Tasks' },
+  { value: 'file', label: 'Files' },
+  { value: 'frame', label: 'Frames' },
+]
+const taskTypeOptions = [
+  { value: 'single', label: 'Single' }, { value: 'batch', label: 'Batch' },
+  { value: 'zip', label: 'ZIP' }, { value: 'video', label: 'Video' }, { value: 'camera', label: 'Camera' },
+]
+const mediaTypeOptions = [
+  { value: '', label: '全部' }, { value: 'image', label: '图片' }, { value: 'video', label: '视频' },
+]
+const mediaCountLabel = computed(() => filters.mediaType === 'video' ? '检测帧数' : filters.mediaType === 'image' ? '检测图片' : '处理媒体量')
+const mediaTimeLabel = computed(() => filters.mediaType === 'video' ? '单帧平均耗时' : '单图平均耗时')
+function formatDashboardDuration(value) {
+  const ms = Number(value || 0)
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`
+}
+const statusOptions = [
+  { value: 'pending', label: 'Pending' }, { value: 'processing', label: 'Processing' },
+  { value: 'completed', label: 'Completed' }, { value: 'failed', label: 'Failed' },
+]
 
 const periodOptions = [
   { label: '近 7 天', value: '7d' },
@@ -619,8 +677,24 @@ const text = computed(() => settingsStore.isEnglish ? {
   sceneSubtitle: 'Completed tasks by scene',
   taskSeries: 'Detection tasks',
   objectUnit: 'defects',
-  loadFailed: 'Failed to load dashboard data',
-} : {
+   loadFailed: 'Failed to load dashboard data',
+   keyword: 'Task, scene or file keyword',
+   allTypes: 'All task types',
+   mediaType: 'Media type',
+   allScenes: 'All scenes',
+   allStatuses: 'All statuses',
+   userId: 'Admin user ID',
+  applyFilters: 'Apply',
+  viewGranularity: 'View granularity',
+  openView: 'Open filtered view',
+ } : {
+  keyword: '关键词',
+  allTypes: '全部任务类型',
+  mediaType: '媒体类型',
+  allScenes: '全部场景',
+  allStatuses: '全部状态',
+  userId: '管理员用户 ID',
+  applyFilters: '筛选',
   refresh: '刷新',
   reload: '重新加载',
   startDate: '开始日期',
@@ -721,13 +795,19 @@ async function loadDashboard() {
     const data = await getDashboardApi({
       startDate: filters.dateRange?.[0],
       endDate: filters.dateRange?.[1],
+      taskType: filters.taskType,
+      mediaType: filters.mediaType,
+      sceneId: filters.sceneId,
+      status: filters.status,
+      keyword: filters.keyword,
+      userId: filters.ownerUserId,
     });
     Object.assign(dashboard, data);
     // Fetch previous period for comparison
     const { start: ps, end: pe } = trendPrevRange.value
     if (ps && pe) {
       try {
-        const prevData = await getDashboardApi({ startDate: ps, endDate: pe })
+        const prevData = await getDashboardApi({ startDate: ps, endDate: pe, ...filters })
         Object.assign(prevDashboard, prevData)
       } catch { /* prev period data is best-effort */ }
     } else {
@@ -741,7 +821,26 @@ async function loadDashboard() {
   }
 }
 
+function openFilteredHistory() {
+  router.push({ name: 'History', query: {
+    scene_id: filters.sceneId || undefined,
+    task_type: filters.taskType || undefined,
+    status: filters.status || undefined,
+    media_type: viewGranularity.value === 'frame' ? 'frame' : (filters.mediaType || undefined),
+    keyword: filters.keyword || undefined,
+    owner_user_id: filters.ownerUserId || undefined,
+  } })
+}
+
+async function exportDashboard() {
+  try {
+    const blob = await exportStatisticsApi({ days: period.value === '7d' ? 7 : 30, sceneId: filters.sceneId, taskType: filters.taskType, mediaType: filters.mediaType, status: filters.status, keyword: filters.keyword, ownerUserId: filters.ownerUserId, startDate: filters.dateRange?.[0], endDate: filters.dateRange?.[1] })
+    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'detection-statistics.csv'; link.click(); URL.revokeObjectURL(url)
+  } catch (error) { pageError.value = getApiErrorMessage(error, text.value.loadFailed) }
+}
+
 onMounted(() => {
+  getScenesApi().then((items) => { scenes.value = items || [] }).catch(() => {})
   loadDashboard()
 });
 </script>
@@ -759,6 +858,16 @@ onMounted(() => {
   justify-content: space-between;
   margin-bottom: 12px;
 }
+
+.metric-mode-label { margin-bottom: 8px; color: var(--app-text-secondary); font-size: 12px; }
+.dashboard-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) repeat(5, minmax(120px, 1fr)) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+.format-select { width: 112px; }
 
 .dash-title {
   font-size: 40px;
@@ -1347,7 +1456,12 @@ onMounted(() => {
 .blob-card {
   position: relative;
   overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #e7ebf1;
+  box-shadow: none;
+  background: #fff;
 }
+.blob-card .blob-shape { display: none; }
 
 .blob-bg {
   position: absolute;
@@ -1541,6 +1655,7 @@ onMounted(() => {
 }
 
 @media (max-width: 980px) {
+  .dashboard-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash-top-row {
     grid-template-columns: 1fr;
   }

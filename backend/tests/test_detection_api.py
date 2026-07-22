@@ -2,12 +2,14 @@
 
 import io
 import base64
+from datetime import datetime
+from uuid import uuid4
 
 from PIL import Image
 
 from app.api.auth import get_current_user
-from app.core.security import create_access_token
-from app.entity.db_models import User
+from app.core.security import create_access_token, decode_access_token
+from app.entity.db_models import AuthSession, User
 from main import app
 
 
@@ -15,6 +17,19 @@ def _jpeg_bytes():
     output = io.BytesIO()
     Image.new("RGB", (8, 8), "white").save(output, format="JPEG")
     return output.getvalue()
+
+
+def _issue_camera_token(db_session, user):
+    token = create_access_token({"sub": str(user.id), "type": "access"})
+    claims = decode_access_token(token)
+    db_session.add(AuthSession(
+        session_uuid=str(uuid4()), user_id=user.id,
+        access_jti=claims["jti"], refresh_jti=str(uuid4()),
+        access_expires_at=datetime.fromtimestamp(claims["exp"]),
+        refresh_expires_at=datetime.now(),
+    ))
+    db_session.commit()
+    return token
 
 
 def test_single_detection_requires_authentication(client):
@@ -63,7 +78,7 @@ def test_camera_websocket_config_frame_and_close(client, db_session, monkeypatch
     user = User(username="camera-user", email="camera@example.com", hashed_password="x")
     db_session.add(user)
     db_session.commit()
-    token = create_access_token({"sub": str(user.id)})
+    token = _issue_camera_token(db_session, user)
     model_version = type(
         "ModelVersionStub",
         (),
@@ -89,7 +104,8 @@ def test_camera_websocket_config_frame_and_close(client, db_session, monkeypatch
         },
     )
 
-    with client.websocket_connect(f"/api/detection/camera?token={token}") as websocket:
+    with client.websocket_connect("/api/detection/camera") as websocket:
+        websocket.send_json({"type": "auth", "token": token})
         websocket.send_json({
             "type": "config", "mode": "cpu", "conf": 0.25, "iou": 0.45,
             "model_id": 1,
@@ -97,6 +113,8 @@ def test_camera_websocket_config_frame_and_close(client, db_session, monkeypatch
         config = websocket.receive_json()
         assert config["type"] == "config_ok"
         assert config["model_name"] == "ssdd_yolo11n_v1"
+        assert config["request_id"]
+        assert config["user_id"] == user.id
         websocket.send_json({
             "type": "frame",
             "data": base64.b64encode(_jpeg_bytes()).decode("ascii"),
@@ -105,6 +123,8 @@ def test_camera_websocket_config_frame_and_close(client, db_session, monkeypatch
         assert result["type"] == "result"
         assert result["frame_count"] == 1
         assert result["inference_time"] == 12.5
+        assert result["request_id"] == config["request_id"]
+        assert result["user_id"] == user.id
         websocket.send_json({"type": "close"})
 
 
@@ -112,12 +132,18 @@ def test_camera_websocket_rejects_invalid_config_without_disconnect(client, db_s
     user = User(username="camera-invalid", email="camera-invalid@example.com", hashed_password="x")
     db_session.add(user)
     db_session.commit()
-    token = create_access_token({"sub": str(user.id)})
+    token = _issue_camera_token(db_session, user)
     monkeypatch.setattr("app.api.detection.SessionLocal", lambda: db_session)
 
-    with client.websocket_connect(f"/api/detection/camera?token={token}") as websocket:
+    with client.websocket_connect("/api/detection/camera") as websocket:
+        websocket.send_json({"type": "auth", "token": token})
         websocket.send_json({"type": "config", "model_id": 1, "conf": "bad", "iou": 0.45})
-        assert websocket.receive_json() == {"type": "error", "message": "conf 和 iou 必须是数值"}
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "INVALID_THRESHOLD"
+        assert error["detail"]["code"] == "INVALID_THRESHOLD"
+        assert error["retryable"] is False
+        assert error["request_id"]
         websocket.send_json({"type": "close"})
 
 

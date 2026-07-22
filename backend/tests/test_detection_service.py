@@ -180,8 +180,9 @@ async def test_batch_detection_keeps_partial_success(db_session, tmp_path, monke
 
 
 def test_model_path_must_exist(tmp_path):
-    with pytest.raises(HTTPException, match="模型权重不存在"):
+    with pytest.raises(HTTPException, match="模型权重不存在") as exc_info:
         DetectionService._resolve_model_path(str(tmp_path / "missing.pt"))
+    assert str(tmp_path) not in str(exc_info.value.detail)
 
 
 def test_video_detection_samples_frames_and_persists_results(db_session, tmp_path, monkeypatch):

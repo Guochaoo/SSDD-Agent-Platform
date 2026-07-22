@@ -1,4 +1,10 @@
 """
+LEGACY COMPATIBILITY MODULE
+
+The production API imports ``app.training.training_service``. This module is
+kept only for existing tests and older integrations; new callers must use the
+canonical training service and API adapters.
+
 训练任务与模型版本服务层
 处理训练任务的创建、进度/指标更新、生命周期状态，以及训练产出的模型版本管理
 对应任务文档步骤 11 的训练部分。
@@ -10,6 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.entity.db_models import TrainingTask, TrainingMetric, ModelVersion, DetectionScene
+from app.services.notification_service import notification_service
 
 
 class TrainingService:
@@ -119,6 +126,11 @@ class TrainingService:
         task.completed_at = datetime.now()
         db.commit()
         db.refresh(task)
+        notification_service.create(
+            db, task.user_id, "training_completed", "Training completed",
+            f"Training task {task.task_uuid} completed.", task_id=task.task_uuid,
+            resource_type="training_task", resource_id=task.id,
+        )
         return task
 
     @staticmethod
@@ -129,6 +141,11 @@ class TrainingService:
         task.completed_at = datetime.now()
         db.commit()
         db.refresh(task)
+        notification_service.create(
+            db, task.user_id, "training_failed", "Training failed",
+            f"Training task {task.task_uuid} failed.", task_id=task.task_uuid,
+            resource_type="training_task", resource_id=task.id,
+        )
         return task
 
     @staticmethod

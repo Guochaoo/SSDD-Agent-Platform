@@ -3,10 +3,10 @@
     <ModulePageHeader
       :title="text.title"
     >
-      <button class="period-trigger refresh-btn" :disabled="loading" @click="loadHistory">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" :class="{ spin: loading }"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-        <span class="period-val">{{ text.refresh }}</span>
-      </button>
+      <el-button :icon="Download" :loading="exporting" @click="exportHistory">{{ text.export }}</el-button>
+      <el-button :icon="Refresh" :loading="loading" @click="loadHistory">
+        {{ text.refresh }}
+      </el-button>
     </ModulePageHeader>
 
     <PageErrorAlert
@@ -17,11 +17,11 @@
     />
 
     <section class="filter-bar">
-      <div class="filter-bar__title">
+      <div v-if="false" class="filter-bar__title">
         <el-icon><Filter /></el-icon>
         <span>{{ text.filterTitle }}</span>
       </div>
-      <el-select v-model="filters.sceneId" :placeholder="text.allScenes" clearable>
+      <el-select v-if="false" v-model="filters.sceneId" :placeholder="text.allScenes" clearable>
         <el-option
           v-for="scene in scenes"
           :key="scene.id"
@@ -29,15 +29,15 @@
           :value="scene.id"
         />
       </el-select>
-      <el-select v-model="filters.taskType" :placeholder="text.allTypes" clearable>
+      <el-select v-model="filters.mediaType" :placeholder="text.allTypes" clearable>
         <el-option
-          v-for="option in taskTypeOptions"
+          v-for="option in mediaTypeOptions"
           :key="option.value"
           :label="option.label"
           :value="option.value"
         />
       </el-select>
-      <el-select v-model="filters.status" :placeholder="text.allStatuses" clearable>
+      <el-select v-if="false" v-model="filters.status" :placeholder="text.allStatuses" clearable>
         <el-option
           v-for="option in statusOptions"
           :key="option.value"
@@ -57,21 +57,25 @@
     </section>
 
     <section class="history-card">
+      <div class="history-bulk-toolbar">
+        <el-button text size="small" @click="bulkMode = !bulkMode">{{ bulkMode ? '退出批量' : '批量操作' }}</el-button>
+        <el-button v-if="bulkMode" size="small" :disabled="!selectedRows.length" @click="exportHistory">{{ text.export }}</el-button>
+        <el-button v-if="bulkMode" type="danger" plain size="small" :disabled="!selectedRows.length" @click="removeSelected">删除所选</el-button>
+      </div>
       <el-table
         v-loading="loading"
         :data="history.items"
         row-key="id"
         :empty-text="text.emptyHistory"
+        @selection-change="selectedRows = $event"
       >
-        <el-table-column prop="id" :label="text.taskId" width="92" sortable />
+        <el-table-column v-if="bulkMode" type="selection" width="48" />
+        <el-table-column prop="id" :label="text.taskId" width="92" />
         <el-table-column :label="text.scene" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ displayScene(row.sceneName) }}</template>
         </el-table-column>
         <el-table-column :label="text.taskType" width="112">
           <template #default="{ row }">{{ taskTypeLabel(row.taskType) }}</template>
-        </el-table-column>
-        <el-table-column :label="text.mediaType" width="96">
-          <template #default="{ row }">{{ mediaTypeLabel(row.mediaType) }}</template>
         </el-table-column>
         <el-table-column :label="text.status" width="105">
           <template #default="{ row }">
@@ -80,12 +84,12 @@
             </StatusTag>
           </template>
         </el-table-column>
-        <el-table-column prop="totalImages" :label="text.images" width="82" align="right" sortable />
-        <el-table-column prop="totalObjects" :label="text.defects" width="82" align="right" sortable />
-        <el-table-column prop="totalInferenceTimeMs" :label="text.duration" width="110" align="right" sortable>
-          <template #default="{ row }">{{ formatDuration(row.totalInferenceTimeMs) }}</template>
+        <el-table-column :label="text.images" width="100" align="right"><template #default="{ row }">{{ row.totalImages }}{{ row.taskType === 'video' ? '帧' : '张' }}</template></el-table-column>
+        <el-table-column prop="totalObjects" :label="text.defects" width="82" align="right" />
+        <el-table-column :label="text.duration" width="110" align="right">
+          <template #default="{ row }">{{ formatHistoryDuration(row.totalInferenceTimeMs) }}</template>
         </el-table-column>
-        <el-table-column prop="createdAt" :label="text.createdAt" min-width="170" sortable>
+        <el-table-column :label="text.createdAt" min-width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column :label="text.actions" width="150" fixed="right">
@@ -143,8 +147,8 @@
             <el-descriptions-item :label="text.defectCount">{{ detail.task.totalObjects }}</el-descriptions-item>
             <el-descriptions-item :label="text.confThreshold">{{ formatNumber(detail.task.confThreshold, 2) }}</el-descriptions-item>
             <el-descriptions-item label="IoU 阈值">{{ formatNumber(detail.task.iouThreshold, 2) }}</el-descriptions-item>
-            <el-descriptions-item :label="text.totalInference">{{ formatDuration(detail.task.totalInferenceTimeMs) }}</el-descriptions-item>
-            <el-descriptions-item :label="text.avgInference">{{ formatDuration(detail.task.avgInferenceTimeMs) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.totalInference">{{ formatHistoryDuration(detail.task.totalInferenceTimeMs) }}</el-descriptions-item>
+            <el-descriptions-item :label="text.avgInference">{{ formatHistoryDuration(detail.task.avgInferenceTimeMs) }}</el-descriptions-item>
             <el-descriptions-item :label="text.createdAt">{{ formatDateTime(detail.task.createdAt) }}</el-descriptions-item>
             <el-descriptions-item :label="text.completedAt">{{ formatDateTime(detail.task.completedAt) }}</el-descriptions-item>
           </el-descriptions>
@@ -160,33 +164,11 @@
           />
 
           <div class="result-heading">
-            <div>
-              <h3>{{ text.defectDetails }}</h3>
-              <span>{{ text.resultCount(filteredDetailResults.length) }}</span>
-            </div>
-            <el-input
-              v-model.trim="detailKeyword"
-              class="result-search"
-              clearable
-              :prefix-icon="Search"
-              :placeholder="text.fileSearch"
-            />
+            <h3>{{ text.defectDetails }}</h3>
+            <span>{{ text.resultCount(detail.results.length) }}</span>
           </div>
-          <el-table :data="filteredDetailResults" :empty-text="text.emptyDetail" max-height="430">
-            <el-table-column :label="text.originalImage" width="84">
-              <template #default="{ row }">
-                <el-image
-                  v-if="row.imagePath"
-                  class="result-image"
-                  :src="row.imagePath"
-                  :preview-src-list="[row.imagePath]"
-                  preview-teleported
-                  fit="cover"
-                />
-                <span v-else>—</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="text.processedImage" width="84">
+          <el-table :data="detail.results" :empty-text="text.emptyDetail" max-height="430">
+            <el-table-column :label="text.resultImage" width="84">
               <template #default="{ row }">
                 <el-image
                   v-if="row.annotatedImageUrl"
@@ -219,7 +201,7 @@
 </template>
 
 <script setup>
-import { Delete, Filter, Search, View } from "@element-plus/icons-vue";
+import { Delete, Download, Filter, Refresh, Search, View } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
@@ -230,6 +212,7 @@ import {
   getHistoryTaskTypeLabel,
   getHistoryApi,
   getHistoryDetailApi,
+  exportHistoryApi,
 } from "@/api/history";
 import { getScenesApi } from "@/api/models";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
@@ -237,13 +220,20 @@ import PageErrorAlert from "@/components/common/PageErrorAlert.vue";
 import StatusTag from "@/components/common/StatusTag.vue";
 import { getApiErrorMessage } from "@/utils/apiError";
 import { displayDefectName, displaySceneName } from "@/utils/displayText";
+import { undoAction } from '@/api/undo'
 
 const settingsStore = useSettingsStore()
+const exporting = ref(false)
 const route = useRoute()
 const taskTypeOptions = computed(() => HISTORY_TASK_TYPE_OPTIONS.map((item) => ({
   ...item,
   label: taskTypeLabel(item.value),
 })));
+const mediaTypeOptions = [
+  { value: '', label: '全部' },
+  { value: 'image', label: '图片' },
+  { value: 'video', label: '视频' },
+]
 const statusOptions = computed(() => [
   { value: "pending", label: text.value.pending },
   { value: "processing", label: text.value.processing },
@@ -254,6 +244,7 @@ const statusOptions = computed(() => [
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'History',
   refresh: 'Refresh',
+  export: 'Export CSV',
   reload: 'Reload',
   filterTitle: 'Filters',
   allScenes: 'All scenes',
@@ -267,7 +258,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   taskId: 'Task ID',
   scene: 'Scene',
   taskType: 'Type',
-  mediaType: 'Media',
   status: 'Status',
   images: 'Images',
   defects: 'Defects',
@@ -287,9 +277,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   defectDetails: 'Defect Details',
   resultCount: (count) => `${count} target records`,
   emptyDetail: 'No defect target details for this task',
-  originalImage: 'Original',
-  processedImage: 'Processed',
-  fileSearch: 'Search file or defect class',
+  resultImage: 'Result',
   file: 'File',
   defectClass: 'Class',
   confidence: 'Confidence',
@@ -303,9 +291,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   zip: 'ZIP',
   video: 'Video',
   camera: 'Camera',
-  imageMedia: 'Image',
-  videoMedia: 'Video',
-  cameraMedia: 'Camera',
   sceneFailed: 'Failed to load detection scenes',
   historyFailed: 'Failed to load history',
   detailFailed: 'Failed to load detection details',
@@ -313,6 +298,10 @@ const text = computed(() => settingsStore.isEnglish ? {
   deleteConfirm: (id) => `Delete detection task #${id}? Related results will also be deleted.`,
   deleteSuccess: 'History record deleted',
   deleteFailed: 'Failed to delete history record',
+  undoTitle: 'Undo recent change?',
+  undoMessage: 'The detection task was hidden. Undo it now?',
+  undo: 'Undo',
+  keep: 'Keep',
 } : {
   title: '历史记录',
   refresh: '刷新',
@@ -329,7 +318,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   taskId: '任务 ID',
   scene: '检测场景',
   taskType: '检测类型',
-  mediaType: '媒体',
   status: '状态',
   images: '图片',
   defects: '缺陷',
@@ -349,9 +337,7 @@ const text = computed(() => settingsStore.isEnglish ? {
   defectDetails: '缺陷明细',
   resultCount: (count) => `共 ${count} 条目标记录`,
   emptyDetail: '该任务没有缺陷目标明细',
-  originalImage: '原图',
-  processedImage: '处理图',
-  fileSearch: '搜索文件名或缺陷类别',
+  resultImage: '结果图',
   file: '文件',
   defectClass: '缺陷类别',
   confidence: '置信度',
@@ -365,9 +351,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   zip: 'ZIP 检测',
   video: '视频检测',
   camera: '摄像头',
-  imageMedia: '图片',
-  videoMedia: '视频',
-  cameraMedia: '摄像头',
   sceneFailed: '检测场景加载失败',
   historyFailed: '历史记录加载失败',
   detailFailed: '检测详情加载失败',
@@ -375,30 +358,26 @@ const text = computed(() => settingsStore.isEnglish ? {
   deleteConfirm: (id) => `确定删除检测任务 #${id} 吗？相关结果记录也会被删除。`,
   deleteSuccess: '历史记录已删除',
   deleteFailed: '历史记录删除失败',
+  undoTitle: '撤销最近操作？',
+  undoMessage: '检测任务已隐藏，现在撤销吗？',
+  undo: '撤销',
+  keep: '保留',
 })
 
 const loading = ref(false);
 const pageError = ref("");
 const scenes = ref([]);
 const deletingId = ref(null);
-const filters = reactive({ sceneId: "", taskType: "", status: "", dateRange: [] });
+const filters = reactive({ sceneId: "", taskType: "", status: "", mediaType: "", keyword: "", ownerUserId: "", dateRange: [] });
 const pagination = reactive({ page: 1, pageSize: 20 });
 const history = reactive({ items: [], total: 0 });
+const bulkMode = ref(false)
+const selectedRows = ref([])
 
 const detailVisible = ref(false);
 const detailLoading = ref(false);
 const detailError = ref("");
-const detailKeyword = ref("");
 const detail = reactive({ task: null, results: [] });
-const filteredDetailResults = computed(() => {
-  const keyword = detailKeyword.value.toLowerCase();
-  if (!keyword) return detail.results;
-  return detail.results.filter((item) => [
-    fileName(item.imagePath),
-    item.className,
-    item.classNameCn,
-  ].some((value) => String(value ?? "").toLowerCase().includes(keyword)));
-});
 
 function taskTypeLabel(value) {
   const cnLabel = getHistoryTaskTypeLabel(value);
@@ -409,14 +388,6 @@ function taskTypeLabel(value) {
     zip: text.value.zip,
     video: text.value.video,
     camera: text.value.camera,
-  }[value] || value || "—";
-}
-
-function mediaTypeLabel(value) {
-  return {
-    image: text.value.imageMedia,
-    video: text.value.videoMedia,
-    camera: text.value.cameraMedia,
   }[value] || value || "—";
 }
 
@@ -440,6 +411,12 @@ function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(settingsStore.isEnglish ? "en-US" : "zh-CN", { hour12: false });
+}
+
+function formatHistoryDuration(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number >= 1000 ? `${(number / 1000).toFixed(2)}s` : `${Math.round(number)}ms`;
 }
 
 function formatDuration(value) {
@@ -483,6 +460,9 @@ async function loadHistory() {
       sceneId: filters.sceneId,
       taskType: filters.taskType,
       status: filters.status,
+      mediaType: filters.mediaType,
+      keyword: filters.keyword,
+      ownerUserId: filters.ownerUserId,
       startDate: filters.dateRange?.[0],
       endDate: filters.dateRange?.[1],
       page: pagination.page,
@@ -499,13 +479,25 @@ async function loadHistory() {
   }
 }
 
+async function exportHistory() {
+  exporting.value = true
+  try {
+    const blob = await exportHistoryApi({ mediaType: filters.mediaType, startDate: filters.dateRange?.[0], endDate: filters.dateRange?.[1] })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a'); link.href = url; link.download = 'detection-history.csv'; link.click(); URL.revokeObjectURL(url)
+  } catch (error) {
+    pageError.value = getApiErrorMessage(error, text.value.historyFailed)
+  } finally { exporting.value = false }
+}
+
 function applyFilters() {
   pagination.page = 1;
   loadHistory();
 }
 
 function resetFilters() {
-  Object.assign(filters, { sceneId: "", taskType: "", status: "", dateRange: [] });
+  Object.assign(filters, { sceneId: "", taskType: "", status: "", mediaType: "", keyword: "", ownerUserId: "", dateRange: [] });
+  selectedRows.value = []
   pagination.page = 1;
   loadHistory();
 }
@@ -521,7 +513,6 @@ async function openDetail(row) {
   detailError.value = "";
   detail.task = null;
   detail.results = [];
-  detailKeyword.value = "";
   try {
     Object.assign(detail, await getHistoryDetailApi(row.id));
   } catch (error) {
@@ -529,6 +520,16 @@ async function openDetail(row) {
   } finally {
     detailLoading.value = false;
   }
+}
+
+async function removeSelected() {
+  if (!selectedRows.value.length) return
+  try {
+    await ElMessageBox.confirm(`确定删除选中的 ${selectedRows.value.length} 条记录吗？`, text.value.deleteTitle, { type: 'warning' })
+    for (const row of selectedRows.value) await deleteHistoryApi(row.id)
+    selectedRows.value = []
+    await loadHistory()
+  } catch { /* cancel */ }
 }
 
 async function removeHistory(row) {
@@ -539,10 +540,19 @@ async function removeHistory(row) {
       { type: "warning", confirmButtonText: text.value.delete, cancelButtonText: text.value.reset },
     );
     deletingId.value = row.id;
-    await deleteHistoryApi(row.id);
+    const result = await deleteHistoryApi(row.id);
     ElMessage.success(text.value.deleteSuccess);
     if (history.items.length === 1 && pagination.page > 1) pagination.page -= 1;
     await loadHistory();
+    if (result?.undo_id) {
+      try {
+        await ElMessageBox.confirm(text.value.undoMessage, text.value.undoTitle, {
+          confirmButtonText: text.value.undo, cancelButtonText: text.value.keep, type: 'info',
+        })
+        await undoAction(result.undo_id)
+        await loadHistory()
+      } catch { /* keep deleted */ }
+    }
   } catch (error) {
     if (error !== "cancel" && error !== "close") {
       pageError.value = getApiErrorMessage(error, text.value.deleteFailed);
@@ -553,6 +563,14 @@ async function removeHistory(row) {
 }
 
 onMounted(async () => {
+  Object.assign(filters, {
+    sceneId: "",
+    taskType: "",
+    status: "",
+    mediaType: route.query.media_type || "",
+    keyword: route.query.keyword || "",
+    ownerUserId: route.query.owner_user_id || "",
+  })
   await Promise.all([loadScenes(), loadHistory()]);
   const taskId = Number(route.query.task);
   if (Number.isInteger(taskId) && taskId > 0) await openDetail({ id: taskId });
@@ -561,38 +579,18 @@ onMounted(async () => {
 
 <style lang="scss" scoped>
 .frontend-b-page { min-height: 100%; max-width: 1200px; margin: 0 auto; padding: 0; }
-.period-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border: 1px solid #d4d4d8;
-  border-radius: 8px;
-  background: #fff;
-  color: #18181b;
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color 0.15s;
-
-  &:hover:not(:disabled) { border-color: #a1a1aa; }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
-}
-.period-val { font-weight: 500; }
-.refresh-btn .spin { animation: dash-spin 1s linear infinite; }
-@keyframes dash-spin { to { transform: rotate(360deg); } }
 .page-alert { margin-bottom: 16px; }
 .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fff; }
+.history-bulk-toolbar { display: flex; justify-content: flex-end; gap: 8px; margin: 0 0 8px; }
 .filter-bar__title { display: flex; align-items: center; gap: 7px; margin-right: auto; color: #344054; font-weight: 600; }
 .filter-bar :deep(.el-select) { width: 160px; }
 .history-card { overflow: hidden; padding: 8px 16px 16px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); }
 .history-pagination { justify-content: flex-end; margin-top: 16px; }
 .detail-content { min-height: 180px; }
 .detail-error { margin-top: 16px; }
-.result-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 24px 0 12px; }
+.result-heading { display: flex; align-items: baseline; justify-content: space-between; margin: 24px 0 12px; }
 .result-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
-.result-heading span { display: block; margin-top: 4px; color: $text-secondary; font-size: 12px; }
-.result-search { width: min(280px, 48%); }
+.result-heading span { color: $text-secondary; font-size: 12px; }
 .result-image { width: 54px; height: 42px; border-radius: 6px; }
 @media (max-width: 900px) { .filter-bar { flex-wrap: wrap; } .filter-bar__title { width: 100%; } .filter-bar :deep(.el-select) { flex: 1; min-width: 140px; } }
-@media (max-width: 640px) { .result-heading { align-items: stretch; flex-direction: column; } .result-search { width: 100%; } }
 </style>

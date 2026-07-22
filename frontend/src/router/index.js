@@ -48,7 +48,7 @@ const routes = [
       {
         path: 'files',
         name: 'Files',
-        component: () => import('@/views/FileBrowserPage.vue'),
+        redirect: '/training',
         meta: { title: '文件查看', icon: 'FolderOpened' },
       },
       {
@@ -62,6 +62,12 @@ const routes = [
         name: 'Dashboard',
         component: () => import('@/views/DashboardPage.vue'),
         meta: { title: '数据看板', icon: 'DataAnalysis' },
+      },
+      {
+        path: 'help',
+        name: 'Help',
+        component: () => import('@/views/HelpPage.vue'),
+        meta: { title: '帮助与引导', icon: 'QuestionFilled' },
       },
       {
         path: 'admin',

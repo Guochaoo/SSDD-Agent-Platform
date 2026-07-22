@@ -72,13 +72,13 @@ class MinIOClient:
         )
         return self.get_presigned_url(object_name)
 
-    def get_presigned_url(self, object_name: str) -> str:
+    def get_presigned_url(self, object_name: str, expires_seconds: int = 15 * 60) -> str:
         """获取对象的预签名访问 URL（有效期 7 天）"""
         from datetime import timedelta
         url = self.client.presigned_get_object(
             bucket_name=self.bucket_name,
             object_name=object_name,
-            expires=timedelta(days=7),
+            expires=timedelta(seconds=expires_seconds),
         )
         return url
 
@@ -105,7 +105,7 @@ class MinIOClient:
             if object_name:
                 self.delete_file(object_name)
         except Exception:
-            logger.exception("MinIO cleanup failed url=%s", url)
+            logger.exception("MinIO cleanup failed for a stored object reference")
             raise
 
     def object_exists(self, object_name: str) -> bool:

@@ -103,7 +103,9 @@
           <div class="section-title section-title--inline">
             <div>
               <h3>{{ text.batchTitle }}</h3>
-              <p>{{ text.batchHint }}</p>
+              <el-tooltip :content="text.batchHint" placement="top">
+                <span class="batch-hint" tabindex="0" aria-label="批量检测限制">?</span>
+              </el-tooltip>
             </div>
             <el-button
               type="primary"
@@ -119,7 +121,7 @@
             drag
             multiple
             :auto-upload="false"
-            :limit="20"
+            :limit="MAX_BATCH_IMAGES"
             :accept="imageAccept"
             :on-change="validateBatchFile"
             :on-exceed="handleBatchExceed"
@@ -218,7 +220,7 @@
         <div class="two-column-cards">
           <section class="workspace-card">
             <div class="section-title">
-              <div><h3>{{ text.videoTaskTitle }}</h3><p>{{ text.videoTaskHint }}</p></div>
+              <div><h3>{{ text.videoTaskTitle }}</h3></div>
             </div>
             <el-upload
               v-model:file-list="videoFileList"
@@ -237,7 +239,7 @@
                 <span class="field-suffix">{{ text.frames }}</span>
               </el-form-item>
               <el-form-item :label="text.maxKeyFrames">
-                <el-input-number v-model="videoMaxFrames" :min="1" :max="100" />
+                <el-input-number v-model="videoMaxFrames" :min="1" :max="MAX_VIDEO_FRAMES" />
                 <span class="field-suffix">{{ text.frames }}</span>
               </el-form-item>
             </el-form>
@@ -302,7 +304,7 @@
             </div>
           </section>
           <section class="workspace-card camera-control">
-            <div class="section-title"><div><h3>{{ text.cameraTitle }}</h3><p>{{ text.cameraHint }}</p></div></div>
+            <div class="section-title"><div><h3>{{ text.cameraTitle }}</h3></div></div>
             <el-radio-group v-model="cameraMode" :disabled="cameraActive || cameraConnecting" class="camera-mode">
               <el-radio-button value="cpu">{{ text.cpuMode }}</el-radio-button>
               <el-radio-button value="gpu">{{ text.gpuMode }}</el-radio-button>
@@ -344,7 +346,7 @@ import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
-import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getDetectionModelStatus, getVideoStatusApi } from "@/api/detection";
+import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getDetectionModelStatus, getVideoStatusApi, MAX_BATCH_IMAGES, MAX_VIDEO_FRAMES, MAX_ZIP_SIZE_BYTES } from "@/api/detection";
 import { getModelsApi, getScenesApi } from "@/api/models";
 import { createCameraWs } from "@/utils/cameraWs";
 import ModulePageHeader from "@/components/common/ModulePageHeader.vue";
@@ -384,7 +386,7 @@ const zipLoading = ref(false);
 
 const videoFileList = ref([]);
 const videoFrameInterval = ref(5);
-const videoMaxFrames = ref(50);
+const videoMaxFrames = ref(MAX_VIDEO_FRAMES);
 const videoStatus = ref("idle");
 const videoProgress = ref(0);
 const videoTaskId = ref("");
@@ -432,24 +434,23 @@ const text = computed(() => settingsStore.isEnglish ? {
   detecting: 'Detecting',
   startDetect: 'Start defect detection',
   batchTitle: 'Batch Image Detection',
-  batchHint: 'Up to 20 images; one failed image will not affect others.',
+  batchHint: `Up to ${MAX_BATCH_IMAGES} images; one failed image will not affect others.`,
   startBatch: 'Start batch detection',
   dragMore: 'Drop images to add more, or choose an action',
   addImages: 'Add images',
   reselect: 'Reselect',
   orZip: 'Or upload a ZIP package',
   selectZip: 'Select ZIP',
-  zipHint: 'Up to 20 images; ZIP must be under 50 MB',
+  zipHint: `Up to ${MAX_BATCH_IMAGES} images; ZIP must be under 50 MB`,
   detectZip: 'Detect ZIP',
   notSelected: 'Not selected',
   invalidImage: 'Please choose a JPG, PNG, BMP, TIF or WebP image',
   imageTooLarge: 'Single image cannot exceed 10 MB',
-  batchLimit: 'Batch mode supports up to 20 images',
+  batchLimit: `Batch mode supports up to ${MAX_BATCH_IMAGES} images`,
   optionsFailed: 'Failed to load scenes or models',
   detectSuccess: 'Detection completed',
   singleFailed: 'Single-image detection failed. Check the model service and try again.',
   videoTaskTitle: 'Short Video Task',
-  videoTaskHint: 'Sample frames with the selected local model, then show key-frame annotations and the annotated video.',
   selectVideo: 'Select an MP4 / AVI / MOV / MKV video',
   frameInterval: 'Frame interval',
   maxKeyFrames: 'Max key frames',
@@ -467,7 +468,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   noKeyFrames: 'No key frames to display',
   cameraNotStarted: 'Camera is not started',
   cameraTitle: 'Browser Camera',
-  cameraHint: 'Frames are sent to the local YOLO model through WebSocket and annotated frames are returned.',
   cpuMode: 'CPU power saving',
   gpuMode: 'GPU acceleration',
   status: 'Status',
@@ -509,24 +509,23 @@ const text = computed(() => settingsStore.isEnglish ? {
   detecting: '正在检测',
   startDetect: '开始缺陷检测',
   batchTitle: '批量图片检测',
-  batchHint: '一次最多 20 张；单张失败不会影响其他图片结果。',
+  batchHint: `一次最多 ${MAX_BATCH_IMAGES} 张；单张失败不会影响其他图片结果。`,
   startBatch: '开始批量检测',
   dragMore: '拖入图片可新增，或选择操作',
   addImages: '新增图片',
   reselect: '重新选择',
   orZip: '或上传 ZIP 压缩包',
   selectZip: '选择 ZIP',
-  zipHint: '最多 20 张图片，ZIP 不超过 50 MB',
+  zipHint: `最多 ${MAX_BATCH_IMAGES} 张图片，ZIP 不超过 50 MB`,
   detectZip: '检测 ZIP',
   notSelected: '未选择',
   invalidImage: '请选择 JPG、PNG、BMP、TIF 或 WebP 图片',
   imageTooLarge: '单张图片不能超过 10 MB',
-  batchLimit: '批量模式一次最多选择 20 张图片',
+  batchLimit: `批量模式一次最多选择 ${MAX_BATCH_IMAGES} 张图片`,
   optionsFailed: '检测场景或模型列表加载失败',
   detectSuccess: '检测完成',
   singleFailed: '单图检测失败，请检查模型服务后重试',
   videoTaskTitle: '短视频任务',
-  videoTaskHint: '使用当前选择的本地模型抽帧检测，展示关键帧标注图和完整标注视频。',
   selectVideo: '选择 MP4 / AVI / MOV / MKV 短视频',
   frameInterval: '抽帧间隔',
   maxKeyFrames: '最多关键帧',
@@ -544,7 +543,6 @@ const text = computed(() => settingsStore.isEnglish ? {
   noKeyFrames: '没有可展示的关键帧',
   cameraNotStarted: '摄像头尚未开启',
   cameraTitle: '浏览器摄像头',
-  cameraHint: '当前帧经 WebSocket 发送到本地 YOLO 模型，返回真实标注画面。',
   cpuMode: 'CPU 节能',
   gpuMode: 'GPU 加速',
   status: '状态',
@@ -662,6 +660,10 @@ function validateBatchFile(uploadFile) {
   if (!validateImage(uploadFile.raw)) {
     batchFileList.value = batchFileList.value.filter((item) => item.uid !== uploadFile.uid);
   }
+  if (batchFileList.value.length > MAX_BATCH_IMAGES) {
+    ElMessage.warning(text.value.batchLimit);
+    batchFileList.value = batchFileList.value.slice(0, MAX_BATCH_IMAGES);
+  }
 }
 
 function handleBatchExceed() {
@@ -729,6 +731,10 @@ async function startSingleDetection() {
 async function startBatchDetection() {
   const files = batchFileList.value.map((item) => item.raw).filter(Boolean);
   if (!files.length) return;
+  if (files.length > MAX_BATCH_IMAGES) {
+    ElMessage.warning(text.value.batchLimit);
+    return;
+  }
   batchLoading.value = true;
   batchResult.value = null;
   pageError.value = "";
@@ -749,7 +755,7 @@ function validateZipFile(uploadFile) {
     zipFileList.value = [];
     return;
   }
-  if (file.size > 50 * 1024 * 1024) {
+  if (file.size > MAX_ZIP_SIZE_BYTES) {
     ElMessage.warning("ZIP 文件不能超过 50 MB");
     zipFileList.value = [];
   }
@@ -772,7 +778,7 @@ async function startZipDetection() {
 }
 
 function validateVideoFile(uploadFile) {
-  if (uploadFile.raw?.size > 50 * 1024 * 1024) {
+  if (uploadFile.raw?.size > MAX_ZIP_SIZE_BYTES) {
     ElMessage.warning("视频文件不能超过 50 MB");
     videoFileList.value = [];
   }
@@ -851,8 +857,9 @@ async function startCamera() {
       },
       onResult: handleCameraResult,
       onFrameSkipped: (data) => window.setTimeout(sendCameraFrame, data.retry_after_ms ?? 300),
-      onError: (message) => {
+      onError: (error) => {
         cameraConnecting.value = false;
+        const message = typeof error === "string" ? error : `${error?.message || "WebSocket request failed"}${error?.requestId ? ` (Request ID: ${error.requestId})` : ""}`;
         pageError.value = message;
         ElMessage.error(message);
       },
@@ -972,11 +979,13 @@ onBeforeUnmount(() => {
 .mode-tabs :deep(.el-tabs__header) { margin-bottom: 18px; }
 .mode-tabs :deep(.el-tabs__item) { height: 44px; font-weight: 600; }
 .detection-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; height: 100%; }
-.control-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); display: flex; flex-direction: column; }
-.workspace-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(28, 39, 60, 0.05); }
+.control-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fff; box-shadow: none; display: flex; flex-direction: column; }
+.workspace-card { padding: 18px 20px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fff; box-shadow: none; }
 .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .section-title h3 { margin: 0; color: #1f2937; font-size: 16px; }
 .section-title p { margin: 4px 0 0; color: $text-secondary; font-size: 11px; line-height: 1.5; }
+.section-title--inline > div:first-child { display: flex; align-items: center; gap: 8px; }
+.batch-hint { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid #94a3b8; border-radius: 50%; color: #64748b; font-size: 12px; font-weight: 600; cursor: help; }
 .section-title--inline { align-items: center; }
 .full-width { width: 100%; }
 .model-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
@@ -1108,10 +1117,22 @@ onBeforeUnmount(() => {
   transition: background 0.2s;
 
   &:hover:not(:disabled) { background: #1d4ed8; }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
+  &:disabled { opacity: 0.72; background: #93b4f4; cursor: not-allowed; }
 
   .spin { animation: dash-spin 1s linear infinite; }
 }
+.workspace-card :deep(.el-upload-dragger) {
+  min-height: 160px;
+  border: 2px dashed #c8d4e5;
+  border-radius: 10px;
+  background: #fbfcfe;
+  padding: 24px 16px;
+}
+.workspace-card :deep(.el-upload-dragger:hover) { border-color: #2563eb; background: #f8faff; }
+.workspace-card :deep(.steel-uploader__icon) { color: #64748b; font-size: 34px; margin-bottom: 8px; }
+.workspace-card :deep(.el-upload__text) { color: #475569; font-size: 13px; }
+.workspace-card :deep(.el-button--primary) { min-height: 36px; border-radius: 8px; }
+.workspace-card :deep(.el-button) { border-radius: 8px; }
 @keyframes dash-spin { to { transform: rotate(360deg); } }
 .workspace-card { min-height: 240px; }
 .batch-summary { display: flex; align-items: center; gap: 9px; margin: 18px 0 12px; }
@@ -1127,6 +1148,7 @@ onBeforeUnmount(() => {
 .batch-image-card--annotated { border-color: #bfdbfe; }
 .batch-object-table { grid-column: 1 / -1; }
 .two-column-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.two-column-cards > .workspace-card { min-height: 320px; }
 .video-options { margin-top: 18px; }
 .field-suffix { margin-left: 8px; color: $text-secondary; }
 .video-progress-card { display: grid; place-items: center; text-align: center; }
@@ -1141,12 +1163,13 @@ onBeforeUnmount(() => {
 .key-frame-grid figure { margin: 0; overflow: hidden; border: 1px solid #e7ebf1; border-radius: 8px; background: #f8fafc; }
 .key-frame-grid :deep(.el-image) { display: block; width: 100%; aspect-ratio: 16 / 9; background: #101828; }
 .key-frame-grid figcaption { display: flex; flex-direction: column; gap: 3px; padding: 7px; color: $text-secondary; font-size: 11px; }
-.camera-stage { position: relative; display: grid; min-height: 390px; place-items: center; overflow: hidden; padding: 0; background: #101828; }
+.camera-stage { position: relative; display: grid; min-height: 390px; place-items: center; overflow: hidden; padding: 0; background: #f8fafc; }
 .camera-source { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .camera-canvas { display: block; width: 100%; min-height: 390px; object-fit: contain; }
-.camera-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #98a2b3; }
+.camera-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #64748b; }
 .camera-placeholder .el-icon { font-size: 52px; }
 .camera-control { display: flex; flex-direction: column; align-items: stretch; }
+.camera-control :deep(.el-button) { min-height: 36px; border-radius: 8px; }
 .camera-mode { margin-bottom: 4px; }
 .camera-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0; }
 .camera-metrics div { padding: 12px; border-radius: 9px; background: #f7f9fc; }

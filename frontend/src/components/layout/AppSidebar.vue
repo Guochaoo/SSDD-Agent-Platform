@@ -54,18 +54,30 @@
             :class="['session-item', { active: session.id === agentStore.currentSessionId && activeMenu === '/chat' }]"
             @click="handleSwitchSession(session.id)"
           >
-            <span class="session-title">
+            <input
+              v-if="editingSessionId === session.id"
+              v-model="editingTitle"
+              class="session-title-input"
+              @click.stop
+              @keydown.enter.stop.prevent="commitRename(session)"
+              @keydown.esc.stop.prevent="cancelRename"
+            />
+            <span v-else class="session-title">
               <template v-if="userStore.isSuperuser && session.ownerUsername">[{{ session.ownerUsername }}] </template>{{ session.title || text.newChat }}
             </span>
             <div
               v-if="!userStore.isSuperuser || session.ownerId === userStore.user?.id"
               class="session-actions"
             >
+              <button class="session-action" :title="text.rename" @click.stop="startRename(session)">✎</button>
               <button class="session-action danger" :title="text.delete" @click.stop="handleDeleteSession(session.id)">
                 <Trash />
               </button>
             </div>
           </div>
+          <div ref="sessionSentinel" class="sessions-sentinel" aria-hidden="true" />
+          <div v-if="agentStore.sessionsLoading" class="sessions-load-state">正在加载会话…</div>
+          <div v-else-if="agentStore.sessionTotal > 0 && agentStore.sessions.length >= agentStore.sessionTotal" class="sessions-load-state">没有更多会话</div>
         </div>
       </div>
     </div>
@@ -100,6 +112,9 @@
                 <span class="user-menu-label">{{ text.settings }}</span>
                 </button>
               </li>
+            </ul>
+            <ul class="user-menu-list">
+              <li><button type="button" class="user-menu-item" role="menuitem" @click="handleMenuCommand('help')"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.6 9a2.5 2.5 0 1 1 4.1 1.9c-1 .8-1.7 1.2-1.7 2.6" /><path d="M12 17h.01" /></svg><span class="user-menu-label">{{ text.help }}</span></button></li>
             </ul>
             <div class="user-menu-sep" />
             <ul class="user-menu-list">
@@ -149,8 +164,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
-import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Folder, Shield, ClipboardCheck } from '@boxicons/vue'
-import { ElMessage } from 'element-plus'
+import { ChevronsUpDown, MessageCircleDetail, Capture, Computer, History, ChartTrend, Plus, Trash, DockLeft, Shield, ClipboardCheck } from '@boxicons/vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { undoAction } from '@/api/undo'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 
 const props = defineProps({
@@ -164,8 +180,13 @@ const settingsVisible = ref(false)
 const settingsReturnTarget = ref(null)
 const menuOpen = ref(false)
 const showLogoutConfirm = ref(false)
+const sessionSearch = ref('')
 const footerRef = ref(null)
 const sessionQuery = ref('')
+const editingSessionId = ref('')
+const editingTitle = ref('')
+const sessionSentinel = ref(null)
+let sessionObserver = null
 let hoverLockTimer = null
 
 const menuStyle = computed(() => {
@@ -193,17 +214,21 @@ function handleMenuCommand(command) {
     settingsVisible.value = true
     return
   }
+  if (command === 'help') {
+    router.push({ path: '/help', query: { onboarding: '1' } })
+    return
+  }
   if (command === 'logout') {
     showLogoutConfirm.value = true
     return
   }
 }
 
-function handleLogoutConfirm() {
+async function handleLogoutConfirm() {
   showLogoutConfirm.value = false
   agentStore.clearUserScope()
-  userStore.logout()
-  router.push('/login')
+  await userStore.logout()
+  await router.replace('/login')
 }
 
 function restoreSettingsFocus() {
@@ -221,10 +246,15 @@ function closeMenuOnClick(e) {
 
 onMounted(() => {
   document.addEventListener('click', closeMenuOnClick)
+  sessionObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadNextSessionPage()
+  }, { root: document.querySelector('.sessions-list'), rootMargin: '120px' })
+  nextTick(() => sessionSentinel.value && sessionObserver.observe(sessionSentinel.value))
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeMenuOnClick)
+  sessionObserver?.disconnect()
 })
 
 const route = useRoute()
@@ -253,17 +283,46 @@ const text = computed(() => settingsStore.isEnglish ? {
   chatHistory: 'Chats',
   newChat: 'New chat',
   noSessions: 'No chats',
+  notifications: 'Notifications',
+  noNotifications: 'No notifications',
+  searchSessions: 'Search chats',
+  sessionRestoreFailed: 'Session restore failed.',
+  retry: 'Retry',
+  previous: 'Previous',
+  next: 'Next',
+  rename: 'Rename',
+  archive: 'Archive',
   delete: 'Delete',
+  rename: 'Rename',
+  archive: 'Archive',
   search: 'Search',
   searchSessions: 'Search chats',
-  loadFailed: 'Failed to load chat',
+  prev: 'Prev',
+  next: 'Next',
+  renameFailed: 'Failed to rename chat',
+  archiveFailed: 'Failed to archive chat',
+  restoreFailed: 'Failed to restore chat',
   settings: 'Settings',
+  help: 'Help',
   logout: 'Log out',
   logoutTitle: 'Confirm',
   logoutMessage: 'Are you sure you want to log out?',
   confirm: 'Confirm',
   cancel: 'Cancel',
+  undoTitle: 'Undo recent change?',
+  undoRename: 'The chat was renamed. Undo it now?',
+  undoArchive: 'The chat was archived. Undo it now?',
+  undoDelete: 'The chat was deleted. Undo it now?',
+  undo: 'Undo',
+  keep: 'Keep',
 } : {
+  searchSessions: '\u641c\u7d22\u4f1a\u8bdd',
+  sessionRestoreFailed: '\u4f1a\u8bdd\u6062\u590d\u5931\u8d25',
+  retry: '\u91cd\u8bd5',
+  previous: '\u4e0a\u4e00\u9875',
+  next: '\u4e0b\u4e00\u9875',
+  notifications: '通知中心',
+  noNotifications: '暂无通知',
   expandSidebar: '展开侧栏',
   collapseSidebar: '收起侧栏',
   chat: '智能对话',
@@ -278,23 +337,32 @@ const text = computed(() => settingsStore.isEnglish ? {
   newChat: '新对话',
   noSessions: '暂无会话',
   delete: '删除',
+  rename: '重命名',
+  archive: '归档',
   search: '搜索',
   searchSessions: '搜索会话',
-  loadFailed: '会话加载失败',
+  prev: '上一页',
+  next: '下一页',
+  renameFailed: '会话重命名失败',
+  archiveFailed: '会话归档失败',
+  restoreFailed: '会话恢复失败',
   settings: '设置',
+  help: '帮助',
   logout: '退出登录',
   logoutTitle: '提示',
   logoutMessage: '确定要退出登录吗？',
   confirm: '确定',
   cancel: '取消',
+  undoTitle: '撤销最近操作？',
+  undoDelete: '会话已删除，现在撤销吗？',
+  undo: '撤销',
+  keep: '保留',
 })
 
 const menuItems = computed(() => [
   { path: '/chat', title: text.value.chat, icon: MessageCircleDetail },
   { path: '/detection', title: text.value.detection, icon: Capture },
   { path: '/training', title: text.value.training, icon: Computer },
-  { path: '/tasks', title: text.value.tasks, icon: ClipboardCheck },
-  { path: '/files', title: text.value.files, icon: Folder },
   { path: '/history', title: text.value.history, icon: History },
   { path: '/dashboard', title: text.value.dashboard, icon: ChartTrend },
   { path: '/admin', title: text.value.admin, icon: Shield, adminOnly: true },
@@ -306,17 +374,24 @@ function handleNewChat() {
   if (route.path !== '/chat') router.push('/chat')
 }
 
-function handleSwitchSession(id) {
+async function handleSwitchSession(id) {
   agentStore.saveSession()
   agentStore.loadSession(id).catch((error) => {
-    ElMessage.error(error?.response?.data?.detail || error?.message || text.value.loadFailed)
+    ElMessage.error(error?.response?.data?.detail || error?.message || text.value.restoreFailed)
   })
   if (route.path !== '/chat') router.push('/chat')
 }
 
 async function handleDeleteSession(id) {
   try {
-    await agentStore.deleteSession(id)
+    const result = await agentStore.deleteSession(id)
+    if (result?.undo_id) {
+      try {
+        await ElMessageBox.confirm(text.value.undoDelete, text.value.undoTitle, { confirmButtonText: text.value.undo, cancelButtonText: text.value.keep, type: 'info' })
+        await undoAction(result.undo_id)
+        await agentStore.fetchSessions()
+      } catch { /* keep deleted */ }
+    }
   } catch {
     agentStore.fetchSessions().catch(() => {})
   }
@@ -325,6 +400,30 @@ async function handleDeleteSession(id) {
 function handleSearchSessions() {
   agentStore.sessionSearch = sessionQuery.value.trim()
   agentStore.fetchSessions({ userId: userStore.user?.id, search: agentStore.sessionSearch, page: 1 }).catch(() => {})
+}
+
+async function loadNextSessionPage() {
+  if (agentStore.sessionsLoading || agentStore.sessionTotal <= agentStore.sessions.length) return
+  await agentStore.fetchSessions({ userId: userStore.user?.id, search: agentStore.sessionSearch, page: agentStore.sessionPage + 1, append: true }).catch(() => {})
+}
+
+function startRename(session) {
+  editingSessionId.value = session.id
+  editingTitle.value = session.title || text.value.newChat
+}
+
+function cancelRename() {
+  editingSessionId.value = ''
+  editingTitle.value = ''
+}
+
+async function commitRename(session) {
+  try {
+    await agentStore.renameSession(session.id, editingTitle.value)
+    cancelRename()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || error?.message || text.value.renameFailed)
+  }
 }
 
 </script>
@@ -347,6 +446,22 @@ function handleSearchSessions() {
     width: $sidebar-collapsed-width;
   }
 }
+
+.sidebar-notifications { position: relative; padding: 8px 12px 0; }
+.notification-trigger {
+  width: 100%; border: 1px solid var(--app-border); border-radius: 8px; background: transparent;
+  color: var(--app-text); padding: 8px 10px; text-align: left; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.notification-panel {
+  position: absolute; z-index: 10; left: 12px; right: 12px; top: 48px; max-height: 280px; overflow: auto;
+  background: var(--app-surface, #fff); border: 1px solid var(--app-border); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .14); padding: 6px;
+}
+.notification-item { width: 100%; border: 0; border-radius: 7px; background: transparent; padding: 8px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.notification-item:hover, .notification-item.unread { background: var(--app-muted, #f4f4f5); }
+.notification-item-title { font-size: 12px; font-weight: 650; color: var(--app-text); }
+.notification-item-message { font-size: 11px; color: var(--app-text-secondary); line-height: 1.35; }
 
 /* ── Header ── */
 .sidebar-header {
@@ -585,7 +700,8 @@ function handleSearchSessions() {
   }
 }
 
-.session-tool-btn {
+.session-tool-btn,
+.sessions-pager button {
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--app-border);
@@ -618,6 +734,45 @@ function handleSearchSessions() {
   font-size: 13px;
   color: #b0b0b0;
   text-align: center;
+}
+.sessions-load-state { padding: 8px 14px; color: var(--app-text-secondary, #777); font-size: 11px; text-align: center; }
+
+.sessions-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  color: var(--app-danger, #b42318);
+  font-size: 11px;
+}
+.sessions-error button {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary, #2563eb);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.sessions-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  color: var(--app-text-secondary, #777);
+  font-size: 11px;
+}
+.sessions-pagination button {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary, #2563eb);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.sessions-pagination button:disabled {
+  color: var(--app-text-muted, #aaa);
+  cursor: not-allowed;
 }
 
 .session-item {
@@ -653,6 +808,19 @@ function handleSearchSessions() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.session-title-input {
+  min-width: 0;
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #8f8ab0;
+  border-radius: 6px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font: inherit;
+  outline: 0;
 }
 
 .session-actions {
@@ -695,6 +863,16 @@ function handleSearchSessions() {
     color: #f56c6c;
     background: rgba(245,108,108,0.15);
   }
+}
+
+.sessions-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 4px 0;
+  color: var(--app-muted);
+  font-size: 12px;
 }
 
 /* ── Footer ── */
@@ -860,6 +1038,9 @@ function handleSearchSessions() {
   z-index: 3000;
   background: rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .logout-card {

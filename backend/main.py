@@ -15,10 +15,13 @@ warnings.filterwarnings("ignore", message='Field "model_id" has conflict')
 from app.api.agent import router as agent_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
+from app.api.confirmations import router as confirmations_router
 from app.api.detection import router as detection_router
 from app.api.health import router as health_router
 from app.api.history import router as history_router
 from app.api.knowledge import router as knowledge_router
+from app.api.notifications import router as notifications_router
+from app.api.undo import router as undo_router
 from app.api.operation_logs import router as operation_logs_router
 from app.api.scenes import router as scenes_router
 from app.api.training import router as training_router
@@ -29,7 +32,7 @@ from app.core.redis_client import redis_client
 from app.database.session import SessionLocal
 from app.middleware.request_logger import RequestLogMiddleware
 from app.services.detection_service import detection_service
-from app.storage.cleanup import retry_pending_cleanups
+from app.storage.cleanup import cleanup_stale_agent_uploads, retry_pending_cleanups
 
 setup_logging()
 logger = get_logger(__name__)
@@ -72,6 +75,10 @@ def retry_resource_cleanups() -> dict:
     db = SessionLocal()
     try:
         result = retry_pending_cleanups(db)
+        if hasattr(db, "query"):
+            removed_uploads = cleanup_stale_agent_uploads(db)
+            if removed_uploads:
+                logger.info("Stale chat attachments removed: %s", removed_uploads)
         if result["attempted"]:
             logger.info("Pending resource cleanup retried: %s", result)
         return result
@@ -131,6 +138,7 @@ register_exception_handlers(app)
 
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(confirmations_router)
 app.include_router(detection_router)
 app.include_router(agent_router)
 app.include_router(health_router)
@@ -139,6 +147,8 @@ app.include_router(operation_logs_router)
 app.include_router(scenes_router)
 app.include_router(training_router)
 app.include_router(knowledge_router)
+app.include_router(notifications_router)
+app.include_router(undo_router)
 
 
 @app.get("/")

@@ -5,6 +5,7 @@ import {
   cancelAgentToolApi,
   deleteAgentSession,
   getAgentArtifact,
+  getAgentMessageAttachment,
   getAgentMessageImage,
   getAgentSession,
   listAgentSessions,
@@ -173,7 +174,7 @@ export const useAgentStore = defineStore('agent', {
         this.sessionTotal = response.total ?? response.count ?? sessions.length
         this.sessionPage = params.page || 1
         this.sessionPageSize = params.page_size || 20
-        this.sessions = sessions.map((session) => ({
+        const nextSessions = sessions.map((session) => ({
           id: session.id,
         ownerId: session.owner_id,
         ownerUsername: session.owner_username,
@@ -183,6 +184,9 @@ export const useAgentStore = defineStore('agent', {
         updatedAt: session.updated_at,
         messages: [],
         }))
+        this.sessions = options.append
+          ? [...this.sessions, ...nextSessions.filter((session) => !this.sessions.some((item) => item.id === session.id))]
+          : nextSessions
         if (this.sessions.some((session) => session.id === this.currentSessionId)) {
           await this.loadSession(this.currentSessionId)
         } else {
@@ -381,7 +385,8 @@ export const useAgentStore = defineStore('agent', {
     saveSession() {
       if (!this.hasMessages) return
       const existing = this.sessions.find(s => s.id === this.currentSessionId)
-      const title = this.messages.find(m => m.role === 'user')?.content?.slice(0, 30) || '新对话'
+      const generatedTitle = this.messages.find(m => m.role === 'user')?.content?.slice(0, 30) || '新对话'
+      const title = existing?.title || generatedTitle
       const messages = this.messages.map(serializeMessage)
       if (existing) {
         existing.messages = messages
@@ -413,10 +418,20 @@ export const useAgentStore = defineStore('agent', {
         session.title = remote.title
         session.messages = remote.messages || []
         this.messages = await Promise.all(session.messages.map(async (message) => {
+          const attachments = await Promise.all((message.attachments || []).map(async (attachment, index) => {
+            if (attachment.previewUrl || !attachment.path) return attachment
+            try {
+              const blob = await getAgentMessageAttachment(session.id, message.id, index)
+              return { ...attachment, previewUrl: URL.createObjectURL(blob) }
+            } catch {
+              return attachment
+            }
+          }))
           const restored = restoreMessageCards({
             id: String(message.id),
             role: message.role,
             content: message.content || '',
+            attachments,
             imagePreviewUrls: (await Promise.all(
               (message.image_urls || (message.image_url ? [message.image_url] : [])).map(async (_, index) => {
                 try {
@@ -506,12 +521,13 @@ export const useAgentStore = defineStore('agent', {
     },
 
     async deleteSession(id) {
-      await deleteAgentSession(id)
+      const result = await deleteAgentSession(id)
       this.sessions = this.sessions.filter(s => s.id !== id)
       this.saveSessionsMeta()
       if (this.currentSessionId === id) {
         this.newChat()
       }
+      return result
     },
   },
 })

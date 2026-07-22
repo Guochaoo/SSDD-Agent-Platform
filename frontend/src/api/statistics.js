@@ -53,9 +53,29 @@ export async function getDashboardApi(params = {}) {
         scene_id: params.sceneId,
         task_type: params.taskType,
         status: params.status,
+        media_type: params.mediaType,
+        keyword: params.keyword,
+        owner_user_id: params.userId,
         start_date: params.startDate,
         end_date: params.endDate,
       }).filter(([, value]) => value !== '' && value != null)),
     }),
   );
+}
+
+export function exportStatisticsApi(params = {}) {
+  return request.get('/history/statistics/export', {
+    responseType: 'blob',
+    params: {
+      days: params.days,
+      scene_id: params.sceneId || undefined,
+      task_type: params.taskType || undefined,
+      status: params.status || undefined,
+      media_type: params.mediaType || undefined,
+      keyword: params.keyword || undefined,
+      owner_user_id: params.ownerUserId || undefined,
+      start_date: params.startDate || undefined,
+      end_date: params.endDate || undefined,
+    },
+  })
 }

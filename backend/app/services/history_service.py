@@ -6,11 +6,12 @@
 from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import cast, func, or_, String
 from sqlalchemy.orm import Session
 
 from app.entity.db_models import DetectionTask, DetectionResult, DetectionScene, TrainingTask
 from app.storage.minio_client import MinIOClient
+from app.services.notification_service import notification_service
 
 
 class HistoryService:
@@ -73,6 +74,11 @@ class HistoryService:
         task.completed_at = datetime.now()
         db.commit()
         db.refresh(task)
+        notification_service.create(
+            db, task.user_id, "detection_completed", "Detection completed",
+            f"Detection task {task.id} completed with {total_objects} detected objects.",
+            task_id=task.id, resource_type="detection_task", resource_id=task.id,
+        )
         return task
 
     @staticmethod
@@ -83,6 +89,11 @@ class HistoryService:
         task.completed_at = datetime.now()
         db.commit()
         db.refresh(task)
+        notification_service.create(
+            db, task.user_id, "detection_failed", "Detection failed",
+            f"Detection task {task.id} failed.", task_id=task.id,
+            resource_type="detection_task", resource_id=task.id,
+        )
         return task
 
     @staticmethod
@@ -104,20 +115,43 @@ class HistoryService:
 
     @staticmethod
     def _apply_task_filters(query, user_id, is_superuser=False, scene_id=None, task_type=None,
-                            status=None, start_date=None, end_date=None):
+                            status=None, start_date=None, end_date=None, media_type=None,
+                            keyword=None, owner_user_id=None):
         """Apply the shared history/dashboard visibility and filter contract."""
+        query = query.filter(DetectionTask.status != "deleted")
         if not is_superuser:
             query = query.filter(DetectionTask.user_id == user_id)
+        elif owner_user_id is not None:
+            query = query.filter(DetectionTask.user_id == owner_user_id)
         if scene_id is not None:
             query = query.filter(DetectionTask.scene_id == scene_id)
         if task_type:
             query = query.filter(DetectionTask.task_type == task_type)
+        if media_type:
+            media_types = {
+                "image": ("single", "batch", "zip"),
+                "video": ("video",),
+                "frame": ("camera",),
+            }.get(media_type)
+            if media_types:
+                query = query.filter(DetectionTask.task_type.in_(media_types))
         if status:
             query = query.filter(DetectionTask.status == status)
         if start_date:
             query = query.filter(DetectionTask.created_at >= datetime.combine(start_date, time.min))
         if end_date:
             query = query.filter(DetectionTask.created_at < datetime.combine(end_date + timedelta(days=1), time.min))
+        if keyword:
+            pattern = f"%{keyword.strip()}%"
+            query = query.filter(or_(
+                cast(DetectionTask.id, String).ilike(pattern),
+                DetectionTask.task_type.ilike(pattern),
+                DetectionTask.scene.has(or_(
+                    DetectionScene.name.ilike(pattern),
+                    DetectionScene.display_name.ilike(pattern),
+                )),
+                DetectionTask.results.any(DetectionResult.image_path.ilike(pattern)),
+            ))
         return query
 
     @staticmethod
@@ -131,6 +165,8 @@ class HistoryService:
     def get_task_detail(db: Session, task_id: int, user_id: int, is_superuser: bool = False) -> DetectionTask:
         """获取任务详情，非管理员只能查看自己的记录"""
         task = HistoryService._get_task_or_404(db, task_id)
+        if task.status == "deleted":
+            raise HTTPException(status_code=404, detail="检测任务不存在")
         if task.user_id != user_id and not is_superuser:
             raise HTTPException(status_code=403, detail="无权访问该记录")
         return task
@@ -147,11 +183,14 @@ class HistoryService:
         end_date: date | None = None,
         page: int = 1,
         page_size: int = 20,
+        media_type: str | None = None,
+        keyword: str | None = None,
+        owner_user_id: int | None = None,
     ) -> tuple[list[DetectionTask], int]:
         """分页历史查询，支持按场景/类型/状态筛选；非管理员只能看到自己的记录"""
         query = HistoryService._apply_task_filters(
             db.query(DetectionTask), user_id, is_superuser, scene_id, task_type,
-            status, start_date, end_date,
+            status, start_date, end_date, media_type, keyword, owner_user_id,
         )
 
         total = query.count()
@@ -199,7 +238,8 @@ class HistoryService:
     def get_statistics(db: Session, user_id: int, is_superuser: bool = False, days: int = 30,
                        scene_id: int | None = None, task_type: str | None = None,
                        status: str | None = None, start_date: date | None = None,
-                       end_date: date | None = None) -> dict:
+                       end_date: date | None = None, media_type: str | None = None,
+                       keyword: str | None = None, owner_user_id: int | None = None) -> dict:
         """Statistics use history filters; absent status means completed tasks only."""
         if not start_date and not end_date:
             start_date = (datetime.now() - timedelta(days=days - 1)).date()
@@ -208,7 +248,7 @@ class HistoryService:
         effective_status = status or "completed"
         query = HistoryService._apply_task_filters(
             db.query(DetectionTask), user_id, is_superuser, scene_id, task_type,
-            effective_status, start_date, end_date,
+            effective_status, start_date, end_date, media_type, keyword, owner_user_id,
         )
 
         total_tasks = query.count()
@@ -222,12 +262,14 @@ class HistoryService:
                 DetectionTask, DetectionResult.task_id == DetectionTask.id
             ).filter(DetectionResult.class_name != ""),
             user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
+            media_type, keyword, owner_user_id,
         )
         class_distribution = {name: int(cnt) for name, cnt in result_query.group_by('display_name').all()}
 
         daily_query = HistoryService._apply_task_filters(
             db.query(func.date(DetectionTask.created_at), func.count(DetectionTask.id)),
             user_id, is_superuser, scene_id, task_type, effective_status, start_date, end_date,
+            media_type, keyword, owner_user_id,
         )
         daily_rows = daily_query.group_by(func.date(DetectionTask.created_at)).order_by(func.date(DetectionTask.created_at)).all()
         daily_counts = {str(d): int(c) for d, c in daily_rows}

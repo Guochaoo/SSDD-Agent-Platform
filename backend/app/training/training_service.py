@@ -33,6 +33,7 @@ import tempfile
 import threading
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import yaml
 
@@ -40,6 +41,7 @@ from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import SessionLocal
 from app.entity.db_models import ModelVersion, TrainingMetric, TrainingTask
+from app.services.notification_service import notification_service
 from app.entity.schemas import AdvancedTrainingConfig
 
 logger = get_logger(__name__)
@@ -372,6 +374,11 @@ class TrainingService:
             TrainingService._parse_final_results(db, task_id, task_uuid, config, project_path)
 
             logger.info("训练完成：task_id=%d, uuid=%s", task_id, task_uuid)
+            if task.status == "completed":
+                notification_service.safe_create(
+                    db, task.user_id, "training_completed", "训练完成",
+                    f"训练任务 {task_uuid} 已完成", task_id=task_id,
+                )
 
         except TrainingCancelled:
             db.rollback()
@@ -389,6 +396,10 @@ class TrainingService:
                 task.error_message = str(e)
                 task.completed_at = datetime.now()
                 db.commit()
+                notification_service.safe_create(
+                    db, task.user_id, "training_failed", "训练失败",
+                    f"训练任务 {task_uuid} 执行失败", task_id=task_id,
+                )
 
         except Exception as e:
             logger.error(
@@ -399,6 +410,10 @@ class TrainingService:
                 task.error_message = str(e)[:2000]  # 限制错误信息长度
                 task.completed_at = datetime.now()
                 db.commit()
+                notification_service.safe_create(
+                    db, task.user_id, "training_failed", "训练失败",
+                    f"训练任务 {task_uuid} 执行失败", task_id=task_id,
+                )
 
         finally:
             if runtime_data_yaml:
@@ -576,7 +591,6 @@ class TrainingService:
                 "dataset_path": task.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(task.dataset_path)) if task.dataset_path else None,
                 "dataset_size": task.dataset_size,
-                "data_yaml": task.data_yaml,
                 "started_at": str(task.started_at) if task.started_at else None,
                 "completed_at": str(task.completed_at) if task.completed_at else None,
                 "error_message": task.error_message,
@@ -636,6 +650,40 @@ class TrainingService:
         ]
 
     @staticmethod
+    def build_training_report(db, task_id: int) -> dict:
+        """Build a shareable Markdown report from persisted training/evaluation data."""
+        task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+        if not task:
+            return {"error": "training task not found"}
+        metrics = TrainingService.get_training_metrics(db, task_id)
+        model = db.query(ModelVersion).filter(ModelVersion.training_task_id == task_id).order_by(ModelVersion.id.desc()).first()
+        lines = [
+            f"# Training report: {task.task_uuid}", "",
+            "## Run", f"- Status: {task.status}", f"- Model: {task.model_name}",
+            f"- Epochs: {task.current_epoch}/{task.epochs}", f"- Dataset size: {task.dataset_size or '-'}",
+            f"- Created: {task.created_at}", f"- Completed: {task.completed_at or '-'}", "",
+            "## Evaluation",
+        ]
+        if model:
+            lines.extend([
+                f"- Model version: {model.version}",
+                f"- mAP@50: {model.map50 if model.map50 is not None else '-'}",
+                f"- mAP@50-95: {model.map50_95 if model.map50_95 is not None else '-'}",
+                f"- Precision: {model.precision if model.precision is not None else '-'}",
+                f"- Recall: {model.recall if model.recall is not None else '-'}",
+            ])
+            if model.per_class_ap:
+                lines.extend(["", "### Per-class AP", "", "| Class | AP50 | AP50-95 |", "|---|---:|---:|"])
+                for class_name, values in model.per_class_ap.items():
+                    lines.append(f"| {class_name} | {values.get('ap50', '-')} | {values.get('ap50_95', '-')} |")
+        else:
+            lines.append("Evaluation has not been exported for this run.")
+        lines.extend(["", "## Training metrics", "", "| Epoch | Precision | Recall | mAP50 | mAP50-95 |", "|---:|---:|---:|---:|---:|"])
+        for metric in metrics:
+            lines.append("| {epoch} | {precision} | {recall} | {map50} | {map50_95} |".format(**metric))
+        return {"filename": f"training_report_{task.task_uuid}.md", "content": "\n".join(lines) + "\n"}
+
+    @staticmethod
     def stop_training(db, task_id: int) -> dict:
         """
         停止正在运行的训练任务
@@ -691,7 +739,7 @@ class TrainingService:
         Returns:
             任务列表
         """
-        query = db.query(TrainingTask)
+        query = db.query(TrainingTask).filter(TrainingTask.status != "deleted")
         if user_id and not is_superuser:
             query = query.filter(TrainingTask.user_id == user_id)
 
@@ -718,7 +766,6 @@ class TrainingService:
                 "dataset_path": t.dataset_path,
                 "dataset_name": os.path.basename(os.path.normpath(t.dataset_path)) if t.dataset_path else None,
                 "dataset_size": t.dataset_size,
-                "data_yaml": t.data_yaml,
                 "created_at": str(t.created_at),
                 "started_at": str(t.started_at) if t.started_at else None,
                 "completed_at": str(t.completed_at) if t.completed_at else None,
@@ -1103,7 +1150,7 @@ class TrainingService:
                 minio_client = MinIOClient()
                 object_name = f"models/{scene.name}/{version}/best.pt"
                 minio_url = minio_client.upload_file(object_name, exported_weight)
-                logger.info("模型已上传 MinIO: %s", minio_url)
+                logger.info("模型已上传对象存储: object_key=%s", object_name)
             except Exception as e:
                 logger.warning("MinIO 上传失败（不影响导出）: %s", str(e))
 
@@ -1193,13 +1240,12 @@ class TrainingService:
 
         original_cwd = os.getcwd()
 
-        best_path = os.path.join(
-            original_cwd,
-            settings.TRAIN_OUTPUT_DIR,
-            f"task_{task.task_uuid}",
-            "weights",
-            "best.pt",
-        )
+        output_root = Path(original_cwd, settings.TRAIN_OUTPUT_DIR).resolve()
+        task_root = (output_root / f"task_{task.task_uuid}").resolve()
+        if output_root not in task_root.parents:
+            return {"error": "模型权重文件不存在"}
+
+        best_path = str(task_root / "weights" / "best.pt")
 
         if os.path.exists(best_path):
             return {
@@ -1208,13 +1254,7 @@ class TrainingService:
                 "file_size": os.path.getsize(best_path),
             }
 
-        last_path = os.path.join(
-            original_cwd,
-            settings.TRAIN_OUTPUT_DIR,
-            f"task_{task.task_uuid}",
-            "weights",
-            "last.pt",
-        )
+        last_path = str(task_root / "weights" / "last.pt")
 
         if os.path.exists(last_path):
             return {

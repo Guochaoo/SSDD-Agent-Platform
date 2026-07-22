@@ -21,6 +21,16 @@ describe("API 错误提示", () => {
     expect(getApiErrorMessage(error)).toBe("模型 ID 无效");
   });
 
+  it("不会把结构化 detail 对象直接传给界面", () => {
+    const error = {
+      response: {
+        status: 409,
+        data: { error_code: "RESOURCE_IN_USE", detail: { code: "RESOURCE_IN_USE", message: "资源正在使用" } },
+      },
+    };
+    expect(getApiErrorMessage(error)).toBe("资源正在使用");
+  });
+
   it("区分请求超时和后端无法连接", () => {
     expect(getApiErrorMessage({ code: "ECONNABORTED" })).toBe(
       "请求超时，请稍后重试",

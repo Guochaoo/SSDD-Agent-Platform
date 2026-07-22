@@ -12,12 +12,26 @@
 from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.entity.db_models import KnowledgeChunk, KnowledgeDocument
 from app.storage.minio_client import MinIOClient
 
 
 class KnowledgeService:
+    @staticmethod
+    def _with_short_lived_url(doc: KnowledgeDocument) -> KnowledgeDocument:
+        """Return a fresh signed URL only after visibility checks have passed."""
+        if doc.object_key:
+            # Keep the signed URL response-only; never mark it as a pending DB update.
+            set_committed_value(doc, "file_url", MinIOClient().get_presigned_url(doc.object_key))
+        else:
+            # Legacy rows without an object key must not expose a persisted or
+            # potentially permanent URL. The download endpoint will report the
+            # missing object until the record is migrated.
+            set_committed_value(doc, "file_url", None)
+        return doc
+
     """知识库服务"""
 
     # ── 创建 ─────────────────────────────────────────────
@@ -46,7 +60,7 @@ class KnowledgeService:
         db.add(doc)
         db.commit()
         db.refresh(doc)
-        return doc
+        return KnowledgeService._with_short_lived_url(doc)
 
     @staticmethod
     def add_chunks(db: Session, document_id: int, chunks: list[dict]) -> list[KnowledgeChunk]:
@@ -97,7 +111,9 @@ class KnowledgeService:
             raise HTTPException(status_code=404, detail="知识文档不存在")
         if not is_superuser and doc.user_id is not None and doc.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权访问该文档")
-        return doc
+        if doc.status == "deleted":
+            raise HTTPException(status_code=404, detail="知识文档不存在")
+        return KnowledgeService._with_short_lived_url(doc)
 
     @staticmethod
     def list_documents(
@@ -109,9 +125,10 @@ class KnowledgeService:
         """列出知识文档，可按处理状态筛选；非管理员只能看到自己的文档 + 系统文档"""
         query = db.query(KnowledgeDocument)
         query = KnowledgeService._visibility_filter(query, user_id, is_superuser)
+        query = query.filter(KnowledgeDocument.status != "deleted")
         if status:
             query = query.filter(KnowledgeDocument.status == status)
-        return query.order_by(KnowledgeDocument.created_at.desc()).all()
+        return [KnowledgeService._with_short_lived_url(doc) for doc in query.order_by(KnowledgeDocument.created_at.desc()).all()]
 
     @staticmethod
     def search_similar_chunks(

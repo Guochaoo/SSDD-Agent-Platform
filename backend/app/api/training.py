@@ -26,15 +26,20 @@ from pathlib import Path
 
 import cv2
 import yaml
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.config.settings import settings
+from app.config.detection import MAX_IMAGE_SIZE
 from app.core.logger import get_logger
+from app.services.action_confirmation_service import action_confirmation_service
+from app.services.operation_log_service import operation_log_service
+from app.services.undo_service import undo_service
 from app.database.session import get_db
-from app.entity.db_models import TrainingDataset, TrainingTask, User
+from app.entity.db_models import ModelVersion, TrainingDataset, TrainingTask, User
+from app.storage.minio_client import MinIOClient
 from app.entity.schemas import (
     ModelExportRequest,
     ModelValidateRequest,
@@ -171,6 +176,8 @@ def _get_dataset_record(db: Session, dataset_path: str, current_user: User) -> T
         raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "数据集不存在或尚未登记"})
     if record and not (_is_builtin_dataset_path(dataset_path, record) or record.owner_id == current_user.id or current_user.is_superuser):
         raise HTTPException(status_code=403, detail="无权访问该数据集")
+    if record and record.status == "deleted":
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "dataset not found"})
     return record
 
 
@@ -185,6 +192,8 @@ async def list_datasets(db: Session = Depends(get_db), current_user: User = Depe
         is_builtin = _is_builtin_dataset_path(directory.name, record)
         if record is None and not is_builtin:
             continue
+        if record and record.status == "deleted":
+            continue
         if record and not (is_builtin or record.owner_id == current_user.id or current_user.is_superuser):
             continue
         datasets.append({
@@ -195,6 +204,7 @@ async def list_datasets(db: Session = Depends(get_db), current_user: User = Depe
             "is_builtin": is_builtin,
             "display_name": record.display_name if record else None,
             "description": record.description if record else None,
+            "status": record.status if record else "active",
         })
     if (root / "data.yaml").is_file():
         datasets.insert(0, {"name": root.name, "path": ".", "ready": True, "owner_id": None, "is_builtin": True})
@@ -205,6 +215,8 @@ async def list_datasets(db: Session = Depends(get_db), current_user: User = Depe
 async def update_dataset_metadata(
     dataset_path: str,
     payload: TrainingDatasetMetadataUpdate,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -216,10 +228,40 @@ async def update_dataset_metadata(
         raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "数据集不存在"})
     if record.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "无权编辑该数据集"})
+    action_confirmation_service.require_or_prepare(
+        db,
+        confirmation_uuid=confirmation_id,
+        user_id=current_user.id,
+        operation="update_dataset_metadata",
+        target_type="dataset",
+        target_id=record.path,
+        impact={"scope": "change dataset display name or description; files remain unchanged", "reversible": True},
+        payload={"dataset_path": record.path, "display_name": payload.display_name, "description": payload.description},
+        request_id=getattr(request.state, "request_id", None),
+    )
+    previous_display_name = record.display_name
+    previous_description = record.description
     record.display_name = payload.display_name.strip() if payload.display_name else None
     record.description = payload.description.strip() if payload.description else None
     db.commit()
     db.refresh(record)
+    undo_id = None
+    if (previous_display_name, previous_description) != (record.display_name, record.description):
+        undo_id = undo_service.create(db, current_user.id, "rename_dataset", {
+            "dataset_path": record.path,
+            "previous_display_name": previous_display_name,
+            "previous_description": previous_description,
+        }).undo_uuid
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="training",
+        action="update_dataset_metadata",
+        target_type="dataset",
+        target_id=record.path,
+        description=f"Update dataset metadata {record.path}",
+        request=request,
+    )
     return {
         "name": record.display_name or record.path,
         "path": record.path,
@@ -227,7 +269,79 @@ async def update_dataset_metadata(
         "description": record.description,
         "owner_id": record.owner_id,
         "is_builtin": record.is_builtin,
+        "status": record.status,
+        "undo_id": undo_id,
     }
+
+
+@router.post("/datasets/{dataset_path}/archive")
+async def archive_dataset(
+    dataset_path: str,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    record = _get_dataset_record(db, dataset_path, current_user)
+    if record is None or _is_builtin_dataset_path(dataset_path, record):
+        raise HTTPException(status_code=403, detail={"code": "BUILTIN_RESOURCE", "message": "built-in dataset is read-only"})
+    if record.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "not allowed to archive this dataset"})
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="archive_dataset", target_type="dataset", target_id=dataset_path,
+        impact={"scope": "hide dataset from active training selection", "reversible": True},
+        payload={"dataset_path": dataset_path},
+        request_id=getattr(request.state, "request_id", None),
+    )
+    previous_status = record.status
+    record.status = "archived" if record.status != "archived" else "active"
+    db.commit()
+    undo_id = undo_service.create(db, current_user.id, "archive_dataset", {
+        "dataset_path": record.path,
+        "previous_status": previous_status,
+    }).undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="training", action="archive_dataset",
+        target_type="dataset", target_id=record.path,
+        description=f"Archive dataset {record.path}", request=request,
+    )
+    return {"path": record.path, "status": record.status, "undo_id": undo_id}
+
+
+@router.post("/datasets/{dataset_path}/reprocess")
+async def reprocess_dataset(
+    dataset_path: str,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-validate an extracted dataset before it is selected for training."""
+    record = _get_dataset_record(db, dataset_path, current_user)
+    dataset = _safe_dataset_path(dataset_path)
+    if record is None or not dataset.is_dir():
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "dataset not found"})
+    if record.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "not allowed to reprocess this dataset"})
+    if not (dataset / "data.yaml").is_file():
+        raise HTTPException(status_code=422, detail={"code": "INVALID_DATASET", "message": "data.yaml is missing"})
+    _validate_dataset_classes(dataset)
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="reprocess_dataset", target_type="dataset", target_id=record.path,
+        impact={"scope": "revalidate dataset and make it selectable for training", "reversible": True},
+        payload={"dataset_path": record.path},
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    )
+    record.status = "active"
+    db.commit()
+    operation_log_service.record(
+        db, user=current_user, module="training", action="reprocess_dataset",
+        target_type="dataset", target_id=record.path,
+        description=f"Reprocess dataset {record.path}", request=request,
+    )
+    return {"path": record.path, "status": record.status, "ready": True}
 
 
 @router.get("/datasets/{dataset_path}/download")
@@ -253,6 +367,8 @@ async def download_dataset(
 @router.delete("/datasets/{dataset_path}")
 async def delete_dataset(
     dataset_path: str,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -269,6 +385,14 @@ async def delete_dataset(
     if record.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="无权删除该数据集")
 
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="delete_dataset", target_type="dataset", target_id=dataset_path,
+        impact={"scope": "hide dataset and retain files during the undo window", "reversible": True},
+        payload={"dataset_path": dataset_path},
+        request_id=getattr(request.state, "request_id", None),
+    )
+
     active_paths = {
         Path(task.dataset_path).resolve()
         for task in db.query(TrainingTask).filter(TrainingTask.status.in_(("pending", "running"))).all()
@@ -277,10 +401,19 @@ async def delete_dataset(
     if dataset in active_paths:
         raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "该数据集正在被训练任务使用，暂不能删除"})
 
-    shutil.rmtree(dataset)
-    db.delete(record)
+    previous_status = record.status
+    record.status = "deleted"
     db.commit()
-    return {"path": dataset_path, "deleted": True}
+    undo_id = undo_service.create(db, current_user.id, "delete_dataset", {
+        "dataset_path": dataset_path,
+        "previous_status": previous_status,
+    }).undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="training", action="delete_dataset",
+        target_type="dataset", target_id=dataset_path,
+        description=f"Delete dataset {dataset_path}", request=request,
+    )
+    return {"path": dataset_path, "deleted": True, "undo_id": undo_id}
 
 
 @router.post("/datasets/upload")
@@ -303,7 +436,9 @@ async def upload_dataset(
     existing = db.query(TrainingDataset).filter(TrainingDataset.path == dataset_name).first()
     if existing or target.exists():
         raise HTTPException(status_code=409, detail="同名数据集已存在")
-    archive = await file.read()
+    # Read only one byte beyond the configured limit so an oversized upload
+    # cannot allocate an unbounded request-sized buffer before validation.
+    archive = await file.read(MAX_DATASET_ARCHIVE_BYTES + 1)
     if len(archive) > MAX_DATASET_ARCHIVE_BYTES:
         raise HTTPException(status_code=413, detail={"code": "DATASET_TOO_LARGE", "message": "数据集压缩包不能超过 500 MB"})
     dataset_root = _dataset_root()
@@ -339,6 +474,9 @@ async def upload_dataset(
         ) from exc
     except HTTPException:
         raise
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     finally:
         shutil.rmtree(staging_root, ignore_errors=True)
     record = TrainingDataset(path=dataset_name, owner_id=current_user.id, is_builtin=False)
@@ -371,12 +509,41 @@ def _check_task_access(db: Session, task_id: str | int, current_user):
         raise HTTPException(status_code=404, detail="训练任务不存在")
     if task.user_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="无权访问该训练任务")
+    if task.status == "deleted":
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "训练任务不存在"})
     return task
+
+
+def _retry_dataset_path(task: TrainingTask, db: Session, current_user: User) -> tuple[Path, str | None]:
+    """Resolve the persisted dataset without trusting a stale or arbitrary path."""
+    root = _dataset_root()
+    raw_path = Path(task.dataset_path).resolve() if task.dataset_path else root
+    if raw_path != root and root not in raw_path.parents:
+        raise HTTPException(status_code=409, detail={
+            "code": "DATASET_UNAVAILABLE",
+            "message": "The dataset used by the previous run is no longer available",
+        })
+
+    requested_path = None if raw_path == root else raw_path.relative_to(root).as_posix()
+    if requested_path:
+        record = _get_dataset_record(db, requested_path, current_user)
+        if record and record.status == "archived":
+            raise HTTPException(status_code=409, detail={
+                "code": "DATASET_ARCHIVED",
+                "message": "The dataset used by the previous run is archived",
+            })
+    if not (raw_path / "data.yaml").is_file():
+        raise HTTPException(status_code=409, detail={
+            "code": "DATASET_UNAVAILABLE",
+            "message": "The dataset used by the previous run is missing data.yaml",
+        })
+    return raw_path, requested_path
 
 
 @router.post("/start")
 async def start_training(
     request: TrainingTaskCreate,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -419,7 +586,9 @@ async def start_training(
     requested_dataset = request.dataset_path
     dataset_path = os.path.join(project_root, settings.DATASET_BASE_DIR)
     if requested_dataset:
-        _get_dataset_record(db, requested_dataset, current_user)
+        dataset_record = _get_dataset_record(db, requested_dataset, current_user)
+        if dataset_record and dataset_record.status == "archived":
+            raise HTTPException(status_code=409, detail={"code": "DATASET_ARCHIVED", "message": "该数据集已归档，不能用于训练"})
         dataset_path = str(_safe_dataset_path(requested_dataset))
     config["dataset_path"] = dataset_path
     config["dataset_size"] = _dataset_image_count(Path(dataset_path))
@@ -429,7 +598,7 @@ async def start_training(
     if not os.path.exists(data_yaml):
         raise HTTPException(
             status_code=400,
-            detail=f"data.yaml 不存在：{data_yaml}，请先完成数据集准备",
+            detail="数据集缺少 data.yaml，请先完成数据集准备",
         )
     config["data_yaml"] = data_yaml
 
@@ -441,15 +610,26 @@ async def start_training(
             scene_id=request.scene_id,
             config=config,
         )
-    except Exception as e:
-        logger.error("启动训练失败：%s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"启动训练失败：{str(e)}")
+    except Exception:
+        logger.error("启动训练失败 scene_id=%s user_id=%s", request.scene_id, current_user.id)
+        raise HTTPException(status_code=500, detail="启动训练失败，请稍后重试")
 
     logger.info(
         "用户 %s 启动训练任务：scene=%s, model=%s, epochs=%d",
         current_user.username, scene.name, request.model_name, request.epochs,
     )
 
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="training",
+        action="start",
+        target_type="training_task",
+        target_id=str(task.id),
+        description=f"Start training task {task.id}",
+        task_id=str(task.id),
+        request=http_request,
+    )
     return {
         "id": task.id,
         "task_uuid": task.task_uuid,
@@ -475,15 +655,119 @@ async def list_training_tasks(
 @router.delete("/tasks/{task_id}")
 async def delete_training_task(
     task_id: str,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """删除已结束的训练历史及其指标，保留已发布的模型版本。"""
+    """隐藏已结束的训练历史；撤销窗口后才清理指标和未发布输出。"""
     task = _check_task_access(db, task_id, current_user)
-    result = training_service.delete_training_task(db, task.id)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="delete_training_task", target_type="training_task", target_id=str(task_id),
+        impact={"scope": "hide training history during the undo window; published model versions remain", "reversible": True},
+        payload={"task_id": task_id},
+        request_id=getattr(request.state, "request_id", None),
+    )
+    if task.status in {"pending", "running"}:
+        raise HTTPException(status_code=400, detail="运行中的训练任务不能删除，请先停止训练")
+    previous_status = task.status
+    task.status = "deleted"
+    db.commit()
+    undo_id = undo_service.create(db, current_user.id, "delete_training_task", {
+        "task_id": task.id,
+        "previous_status": previous_status,
+    }).undo_uuid
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="training",
+        action="delete",
+        target_type="training_task",
+        target_id=str(task_id),
+        description=f"Delete training task {task_id}",
+        task_id=str(task_id),
+        request=request,
+    )
+    return {"task_id": task.id, "message": "训练任务已删除", "undo_id": undo_id}
+
+
+@router.post("/retry/{task_id}")
+async def retry_training_task(
+    task_id: str,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Retry a failed/cancelled run using its persisted configuration."""
+    task = _check_task_access(db, task_id, current_user)
+    if task.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail={
+            "code": "TASK_NOT_RETRYABLE",
+            "message": "Only failed or cancelled training tasks can be retried",
+        })
+    action_confirmation_service.require_or_prepare(
+        db,
+        confirmation_uuid=confirmation_id,
+        user_id=current_user.id,
+        operation="retry_training",
+        target_type="training_task",
+        target_id=str(task_id),
+        impact={
+            "scope": "creates a new training task using the saved configuration and dataset; the previous run is retained",
+            "reversible": False,
+        },
+        payload={"task_id": task_id, "status": task.status},
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+    dataset_path, requested_dataset = _retry_dataset_path(task, db, current_user)
+    config = {
+        "model_name": task.model_name,
+        "epochs": task.epochs,
+        "img_size": task.img_size,
+        "batch_size": task.batch_size,
+        "device": task.device,
+        "optimizer": task.optimizer,
+        "lr0": task.lr0,
+        "augment_config": task.augment_config,
+        "dataset_path": str(dataset_path),
+        "dataset_size": _dataset_image_count(dataset_path),
+        "data_yaml": str(dataset_path / "data.yaml"),
+    }
+    try:
+        retried = training_service.start_training(
+            db=db,
+            user_id=current_user.id,
+            scene_id=task.scene_id,
+            config=config,
+        )
+    except Exception as exc:
+        logger.error("Training retry failed: %s", str(exc), exc_info=True)
+        raise HTTPException(status_code=500, detail="Training retry failed") from exc
+
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="training",
+        action="retry",
+        target_type="training_task",
+        target_id=str(retried.id),
+        description=f"Retry training task {task.id}",
+        task_id=str(retried.id),
+        request=request,
+    )
+
+    return {
+        "id": retried.id,
+        "task_uuid": retried.task_uuid,
+        "status": retried.status,
+        "model_name": retried.model_name,
+        "epochs": retried.epochs,
+        "source_task_id": task.id,
+        "dataset_path": requested_dataset,
+    }
 
 
 @router.get("/status/{task_id}")
@@ -524,14 +808,34 @@ async def get_training_metrics(
 @router.post("/stop/{task_id}")
 async def stop_training(
     task_id: str,
+    request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """停止正在运行的训练任务"""
     task = _check_task_access(db, task_id, current_user)
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="stop_training", target_type="training_task", target_id=str(task_id),
+        impact={"scope": "stop active training process; partial outputs may remain", "reversible": False},
+        payload={"task_id": task_id},
+        request_id=getattr(request.state, "request_id", None),
+    )
     result = training_service.stop_training(db, task.id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="training",
+        action="stop",
+        target_type="training_task",
+        target_id=str(task_id),
+        description=f"Stop training task {task_id}",
+        task_id=str(task_id),
+        request=request,
+    )
     return result
 
 
@@ -550,12 +854,12 @@ async def get_results_csv(
     if not task:
         raise HTTPException(status_code=404, detail="训练任务不存在")
     _check_task_access(db, task.id, current_user)
-    results_path = os.path.join(
-        settings.TRAIN_OUTPUT_DIR,
-        f"task_{task_uuid}",
-        "results.csv",
-    )
-    if not os.path.exists(results_path):
+    output_root = Path(os.getcwd(), settings.TRAIN_OUTPUT_DIR).resolve()
+    task_root = (output_root / f"task_{task_uuid}").resolve()
+    if output_root not in task_root.parents:
+        raise HTTPException(status_code=404, detail="results.csv 文件不存在")
+    results_path = (task_root / "results.csv").resolve()
+    if output_root not in results_path.parents or not results_path.is_file():
         raise HTTPException(status_code=404, detail="results.csv 文件不存在")
 
     return FileResponse(
@@ -633,7 +937,12 @@ async def export_training_model(
         "用户 %s 导出模型: task_id=%d, version=%s",
         current_user.username, task_id, result.get("version"),
     )
-    return result
+    # Keep internal filesystem and object-store locations server-side.
+    return {
+        key: value
+        for key, value in result.items()
+        if key not in {"model_path", "export_dir", "minio_url", "object_key"}
+    }
 
 
 @router.get("/download/{task_id}")
@@ -643,7 +952,21 @@ async def download_training_model(
     current_user=Depends(get_current_user),
 ):
     """下载训练好的模型权重文件（best.pt）"""
-    _check_task_access(db, task_id, current_user)
+    task = _check_task_access(db, task_id, current_user)
+    stored_model = (
+        db.query(ModelVersion)
+        .filter(ModelVersion.training_task_id == task_id, ModelVersion.object_key.isnot(None))
+        .order_by(ModelVersion.created_at.desc())
+        .first()
+    )
+    if stored_model and stored_model.object_key:
+        url = MinIOClient().get_presigned_url(stored_model.object_key)
+        if url:
+            logger.info(
+                "用户 %s 下载训练模型: task_id=%d, object_key=%s",
+                current_user.username, task_id, stored_model.object_key,
+            )
+            return RedirectResponse(url=url, status_code=307)
     result = training_service.get_model_download_path(db, task_id)
 
     if "error" in result:
@@ -657,6 +980,23 @@ async def download_training_model(
         path=result["file_path"],
         media_type="application/octet-stream",
         filename=result["filename"],
+    )
+
+
+@router.get("/report/{task_id}")
+async def download_training_report(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Export persisted training metrics, evaluation and model lineage as Markdown."""
+    _check_task_access(db, task_id, current_user)
+    report = training_service.build_training_report(db, task_id)
+    if "error" in report:
+        raise HTTPException(status_code=404, detail=report["error"])
+    return PlainTextResponse(
+        report["content"], media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{report["filename"]}"'},
     )
 
 
@@ -689,10 +1029,11 @@ async def predict_training_image(
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="训练任务未完成")
 
-    weights_path = os.path.join(
-        os.getcwd(), settings.TRAIN_OUTPUT_DIR,
-        f"task_{task.task_uuid}", "weights", "best.pt",
-    )
+    output_root = Path(os.getcwd(), settings.TRAIN_OUTPUT_DIR).resolve()
+    task_root = (output_root / f"task_{task.task_uuid}").resolve()
+    weights_path = (task_root / "weights" / "best.pt").resolve()
+    if output_root not in task_root.parents or output_root not in weights_path.parents:
+        raise HTTPException(status_code=404, detail="模型权重不存在")
     if not os.path.exists(weights_path):
         raise HTTPException(status_code=404, detail="模型权重不存在")
 
@@ -700,6 +1041,8 @@ async def predict_training_image(
         suffix=os.path.splitext(file.filename)[1] or ".jpg", delete=False,
     ) as tmp:
         content = await file.read()
+        if len(content) > MAX_IMAGE_SIZE:
+            raise HTTPException(status_code=413, detail="图片大小不能超过限制")
         tmp.write(content)
         tmp_path = tmp.name
 

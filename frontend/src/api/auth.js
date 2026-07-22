@@ -20,6 +20,30 @@ export function loginApi(data) {
   return request.post('/auth/login', data)
 }
 
+export function refreshTokenApi(refreshToken) {
+  return request.post('/auth/refresh', null, { headers: { Authorization: `Bearer ${refreshToken}` } })
+}
+
+export function logoutApi() {
+  return request.post('/auth/logout')
+}
+
+export function listAuthSessionsApi() {
+  return request.get('/auth/sessions')
+}
+
+export function revokeAuthSessionApi(sessionId) {
+  return request.delete(`/auth/sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export function requestPasswordResetApi(email) {
+  return request.post('/auth/password-reset/request', { email })
+}
+
+export function confirmPasswordResetApi(payload) {
+  return request.post('/auth/password-reset/confirm', payload)
+}
+
 /**
  * 获取当前用户信息（需要 Token）
  */
