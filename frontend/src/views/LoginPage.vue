@@ -27,8 +27,8 @@
         <div class="form-container">
 
           <div class="form-header">
-            <h1>欢迎回来</h1>
-            <p>输入账号与密码继续。</p>
+            <h1>{{ text.heading }}</h1>
+            <p>{{ text.subtitle }}</p>
           </div>
 
           <el-form
@@ -39,10 +39,10 @@
             @submit.prevent="handleLogin"
           >
             <el-form-item prop="username">
-              <label class="field-label">用户名</label>
+              <label class="field-label">{{ text.username }}</label>
               <el-input
                 v-model="loginForm.username"
-                placeholder="输入您的用户名"
+                :placeholder="text.usernamePlaceholder"
                 :prefix-icon="User"
                 autofocus
                 autocomplete="username"
@@ -50,7 +50,10 @@
             </el-form-item>
 
             <el-form-item prop="password">
-              <label class="field-label">密码</label>
+              <div class="field-label-row">
+                <label class="field-label">{{ text.password }}</label>
+                <button type="button" class="forgot-link" @click="forgotOpen = true">{{ text.forgot }}</button>
+              </div>
               <div class="pwd-wrap">
                 <el-input
                   v-model="loginForm.password"
@@ -81,13 +84,13 @@
               :loading="loading"
               @click="handleLogin"
             >
-              {{ loading ? '登录中…' : '登录' }}
+              {{ loading ? text.loggingIn : text.login }}
             </el-button>
           </el-form>
 
           <div class="form-footer">
-            <span>还没有账号？</span>
-            <router-link to="/register">立即注册</router-link>
+            <span>{{ text.noAccount }}</span>
+            <router-link to="/register">{{ text.register }}</router-link>
           </div>
         </div>
       </div>
@@ -106,42 +109,79 @@
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15" fill="currentColor" class="login-toast-close" @click="showSuccess = false"><path d="M11.7816 4.03157C12.0062 3.80702 12.0062 3.44295 11.7816 3.2184C11.5571 2.99385 11.193 2.99385 10.9685 3.2184L7.50005 6.68682L4.03164 3.2184C3.80708 2.99385 3.44301 2.99385 3.21846 3.2184C2.99391 3.44295 2.99391 3.80702 3.21846 4.03157L6.68688 7.49999L3.21846 10.9684C2.99391 11.193 2.99391 11.557 3.21846 11.7816C3.44301 12.0061 3.80708 12.0061 4.03164 11.7816L7.50005 8.31316L10.9685 11.7816C11.193 12.0061 11.5571 12.0061 11.7816 11.7816C12.0062 11.557 12.0062 11.193 11.7816 10.9684L8.31322 7.49999L11.7816 4.03157Z" clip-rule="evenodd" fill-rule="evenodd"/></svg>
       </div>
     </transition>
+    <el-dialog v-model="forgotOpen" :title="text.resetTitle" width="420px">
+      <el-form label-position="top">
+        <el-form-item :label="text.email">
+          <el-input v-model="resetForm.email" autocomplete="email" />
+        </el-form-item>
+        <el-button type="primary" :loading="resetLoading" @click="requestReset">{{ text.sendReset }}</el-button>
+        <el-divider />
+        <el-form-item :label="text.resetToken">
+          <el-input v-model="resetForm.token" autocomplete="one-time-code" />
+        </el-form-item>
+        <el-form-item :label="text.newPassword">
+          <el-input v-model="resetForm.newPassword" type="password" autocomplete="new-password" />
+        </el-form-item>
+        <el-button :loading="resetLoading" @click="confirmReset">{{ text.setPassword }}</el-button>
+      </el-form>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { computed, ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, View, Hide } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import { useSettingsStore } from '@/stores/settings'
 import SilkCanvas from '@/components/SilkCanvas.vue'
+import { confirmPasswordResetApi, requestPasswordResetApi } from '@/api/auth'
+import { getApiErrorMessage } from '@/utils/apiError'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const settingsStore = useSettingsStore()
+
+const text = computed(() => settingsStore.isEnglish ? {
+  heading: 'Welcome back', subtitle: 'Enter your account and password to continue.', username: 'Username', usernamePlaceholder: 'Enter your username', password: 'Password', forgot: 'Forgot password?', login: 'Sign in', loggingIn: 'Signing in…', noAccount: "Don't have an account?", register: 'Create account', resetTitle: 'Reset password', email: 'Email', resetToken: 'Reset token', newPassword: 'New password', sendReset: 'Send reset request', setPassword: 'Set new password', loginSuccess: 'Signed in successfully', loginFailed: 'Sign-in failed. Please check your credentials.', emailRequired: 'Enter your email', resetRequested: 'If the email is registered, reset instructions will be sent.', resetSuccess: 'Password reset. Please sign in.', resetInputRequired: 'Enter the reset token and new password', passwordMin: 'Password must be at least 6 characters', usernameRequired: 'Enter your username', usernameLength: 'Username must be 3-50 characters', passwordRequired: 'Enter your password', resetFailed: 'Password reset failed. Check whether the token is valid',
+} : {
+  heading: '欢迎回来', subtitle: '输入账号与密码继续。', username: '用户名', usernamePlaceholder: '输入您的用户名', password: '密码', forgot: '忘记密码？', login: '登录', loggingIn: '登录中…', noAccount: '还没有账号？', register: '立即注册', resetTitle: '找回密码', email: '邮箱', resetToken: '重置令牌', newPassword: '新密码', sendReset: '发送重置请求', setPassword: '设置新密码', loginSuccess: '登录成功', loginFailed: '登录失败，请检查账号或密码', emailRequired: '请输入邮箱', resetRequested: '如果该邮箱已注册，重置链接将发送到您的邮箱。', resetSuccess: '密码重置成功，请重新登录。', resetInputRequired: '请输入重置令牌和新密码', passwordMin: '密码至少需要 6 个字符', usernameRequired: '请输入用户名', usernameLength: '用户名需要 3-50 个字符', passwordRequired: '请输入密码', resetFailed: '密码重置失败，请检查令牌是否有效',
+})
 
 const formRef = ref(null)
 const loading = ref(false)
 const showPwd = ref(false)
 const errorMsg = ref('')
 const showSuccess = ref(false)
+const forgotOpen = ref(false)
+const resetLoading = ref(false)
+const resetForm = reactive({ email: '', token: '', newPassword: '' })
+
+onMounted(() => {
+  const token = typeof route.query.token === 'string' ? route.query.token : ''
+  if (token) {
+    resetForm.token = token
+    forgotOpen.value = true
+  }
+})
 
 const loginForm = reactive({
   username: '',
   password: '',
 })
 
-const loginRules = {
+const loginRules = computed(() => ({
   username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 50, message: '用户名需要 3-50 个字符', trigger: 'blur' },
+    { required: true, message: text.value.usernameRequired, trigger: 'blur' },
+    { min: 3, max: 50, message: text.value.usernameLength, trigger: 'blur' },
   ],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码至少需要 6 个字符', trigger: 'blur' },
+    { required: true, message: text.value.passwordRequired, trigger: 'blur' },
+    { min: 6, message: text.value.passwordMin, trigger: 'blur' },
   ],
-}
+}))
 
 async function handleLogin() {
   errorMsg.value = ''
@@ -161,10 +201,48 @@ async function handleLogin() {
       router.push(redirect)
     }, 1200)
   } catch (err) {
-    const data = err?.response?.data
-    errorMsg.value = data?.detail || data?.error || '登录失败，请检查账号或密码'
+    errorMsg.value = getApiErrorMessage(err, text.value.loginFailed)
   } finally {
     loading.value = false
+  }
+}
+
+async function requestReset() {
+  if (!resetForm.email) {
+    ElMessage.error(text.value.emailRequired)
+    return
+  }
+  resetLoading.value = true
+  try {
+    await requestPasswordResetApi(resetForm.email)
+    ElMessage.success(text.value.resetRequested)
+  } catch (err) {
+    errorMsg.value = getApiErrorMessage(err, '密码找回请求失败，请稍后重试')
+    ElMessage.error(errorMsg.value)
+  } finally {
+    resetLoading.value = false
+  }
+}
+
+async function confirmReset() {
+  if (!resetForm.token || !resetForm.newPassword) {
+    ElMessage.error(text.value.resetInputRequired)
+    return
+  }
+  if (resetForm.newPassword.length < 6) {
+    ElMessage.error(text.value.passwordMin)
+    return
+  }
+  resetLoading.value = true
+  try {
+    await confirmPasswordResetApi({ token: resetForm.token, new_password: resetForm.newPassword })
+    ElMessage.success(text.value.resetSuccess)
+    forgotOpen.value = false
+  } catch (err) {
+    errorMsg.value = getApiErrorMessage(err, text.value.resetFailed)
+    ElMessage.error(errorMsg.value)
+  } finally {
+    resetLoading.value = false
   }
 }
 </script>
@@ -288,12 +366,44 @@ async function handleLogin() {
 }
 
 .field-label {
-  display: block;
-  width: 100%;
-  margin-bottom: 0px;
   font-size: 13px;
   font-weight: 600;
   color: #404040;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.forgot-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  color: #737373;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.25;
+  cursor: pointer;
+  text-align: right;
+  transition: color 0.2s ease, text-decoration-color 0.2s ease;
+
+  &:hover {
+    color: #404040;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #8f8ab0;
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
 }
 
 :deep(.el-form-item) {

@@ -27,9 +27,16 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
+from app.core.privacy import redact_text, redact_value
 from app.entity.db_models import OperationLog, User
 
 logger = get_logger(__name__)
+
+
+def _redact_log_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    return redact_text(value)
 
 
 class OperationLogService:
@@ -48,6 +55,9 @@ class OperationLogService:
         status: str = "success",
         error_message: Optional[str] = None,
         request: Optional[Request] = None,
+        request_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         commit: bool = True,
     ) -> Optional[OperationLog]:
         """
@@ -74,15 +84,20 @@ class OperationLogService:
         """
         try:
             log = OperationLog(
-                user_id=user.id if user else None,
-                username=user.username if user else None,
+                # Keep audit recording tolerant of lightweight user objects
+                # used by background jobs and compatibility integrations.
+                user_id=getattr(user, "id", None) if user else None,
+                username=getattr(user, "username", None) if user else None,
                 module=module,
                 action=action,
                 target_type=target_type,
                 target_id=target_id,
-                description=description,
+                description=_redact_log_text(description),
                 status=status,
-                error_message=error_message,
+                error_message=redact_value(error_message),
+                request_id=request_id or getattr(getattr(request, "state", None), "request_id", None),
+                task_id=task_id,
+                session_id=session_id,
             )
 
             if request is not None:

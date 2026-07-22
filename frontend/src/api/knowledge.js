@@ -1,5 +1,7 @@
 import request from '@/utils/request'
 
+// @pending-integration: backend knowledge APIs are used by Agent RAG, but no
+// standalone frontend knowledge-management page currently consumes these calls.
 export function getKnowledgeDocumentsApi() {
   return request.get('/knowledge/documents')
 }

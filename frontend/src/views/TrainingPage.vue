@@ -23,13 +23,14 @@
             <span class="card-title">{{ text.taskList }}</span>
             <span class="card-caption">{{ text.taskCount(taskList.length) }}</span>
           </div>
-          <el-button text :loading="loadingTasks" @click="fetchTasks">
-            <el-icon><Refresh /></el-icon>
-            {{ text.refresh }}
-          </el-button>
+          <div class="section-header-actions">
+            <el-button text :loading="loadingTasks" @click="fetchTasks"><el-icon><Refresh /></el-icon>{{ text.refresh }}</el-button>
+            <el-button text @click="taskExpanded = !taskExpanded">{{ taskExpanded ? '收起' : '展开' }}</el-button>
+          </div>
         </div>
       </template>
 
+      <div v-if="taskExpanded">
       <el-table
         v-loading="loadingTasks"
         :data="taskList"
@@ -91,7 +92,7 @@
               {{ text.stop }}
             </el-button>
             <el-button
-              v-if="row.status === 'failed'"
+              v-if="row.status === 'failed' || row.status === 'cancelled'"
               size="small"
               type="warning"
               text
@@ -111,9 +112,10 @@
           </template>
         </el-table-column>
       </el-table>
+      </div>
     </el-card>
 
-    <el-card class="section-card dataset-card" shadow="never">
+    <el-card v-if="false" class="section-card dataset-card" shadow="never">
       <template #header>
         <div class="card-header">
           <div><span class="card-title">{{ bilingual('训练数据集管理', 'Training datasets') }}</span><span class="card-caption">{{ bilingual('仅可删除自己上传且未被任务使用的数据集', 'Only unused datasets uploaded by you can be deleted') }}</span></div>
@@ -135,7 +137,9 @@
       </el-table>
     </el-card>
 
-    <el-card v-if="selectedTask" class="section-card" shadow="never">
+    <FileBrowserPage embedded />
+
+    <el-card v-if="selectedTask && monitorExpanded" class="section-card" shadow="never">
       <template #header>
         <div class="card-header monitor-header">
           <div>
@@ -150,10 +154,14 @@
             <span>{{ text.device }}: {{ selectedTask.device }}</span>
             <span>{{ text.epoch }}：{{ selectedTask.current_epoch || 0 }}/{{ selectedTask.epochs || 0 }}</span>
           </div>
+          <el-button text class="monitor-toggle" @click="monitorExpanded = false">
+            {{ monitorExpanded ? '收起监控' : '展开监控' }}
+          </el-button>
         </div>
       </template>
 
-    <PageErrorAlert
+      <div class="monitor-body">
+      <PageErrorAlert
       v-if="monitorError"
       class="monitor-alert"
       :message="monitorError.message"
@@ -198,10 +206,11 @@
           <div ref="mapChartRef" class="chart-panel" />
         </el-col>
       </el-row>
+      </div>
     </el-card>
 
     <el-card
-      v-if="selectedTask && selectedTask.status === 'completed'"
+      v-if="selectedTask && monitorExpanded && selectedTask.status === 'completed'"
       class="section-card"
       shadow="never"
     >
@@ -209,7 +218,6 @@
         <div class="card-header">
           <div>
             <span class="card-title">{{ text.modelActions }}</span>
-            <span class="card-caption">{{ text.modelActionsHelp }}</span>
           </div>
         </div>
       </template>
@@ -218,15 +226,17 @@
         <el-button type="primary" :loading="validating" @click="validateModel">
           {{ text.evaluate }}
         </el-button>
-        <el-button type="success" @click="showExportDialog = true">
-          {{ text.exportModel }}
-        </el-button>
-        <el-button :loading="downloading" @click="downloadModel">
-          {{ text.downloadWeights }}
-        </el-button>
-        <el-button type="warning" @click="openPredictDialog">
-          {{ text.testValidate }}
-        </el-button>
+        <el-button :loading="downloading" @click="downloadModel">{{ text.downloadWeights }}</el-button>
+        <el-dropdown trigger="click">
+          <el-button>更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="showExportDialog = true">{{ text.exportModel }}</el-dropdown-item>
+              <el-dropdown-item @click="downloadReport">{{ text.exportReport }}</el-dropdown-item>
+              <el-dropdown-item @click="openPredictDialog">{{ text.testValidate }}</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </el-space>
     </el-card>
 
@@ -306,15 +316,8 @@
                 :key="dataset.path || dataset.name"
                 :label="dataset.name"
                 :value="dataset.path"
-                :disabled="!dataset.ready"
+                :disabled="!dataset.ready || dataset.status === 'archived'"
               />
-            </el-select>
-            <el-select v-model="datasetUpload.dataset_format" style="width: 130px" :disabled="uploadingDataset">
-              <el-option :label="bilingual('自动识别', 'Auto detect')" value="auto" />
-              <el-option label="YOLO" value="yolo" />
-              <el-option label="VOC" value="voc" />
-              <el-option label="COCO" value="coco" />
-              <el-option label="LabelMe" value="labelme" />
             </el-select>
             <el-upload
               :show-file-list="false"
@@ -325,15 +328,7 @@
               <el-button :loading="uploadingDataset" :icon="UploadFilled">{{ bilingual('上传 ZIP', 'Upload ZIP') }}</el-button>
             </el-upload>
           </div>
-          <span class="form-hint">{{ bilingual('支持任意目录名；通过标注内容引用图片，无法唯一配对时会明确报错', 'Directory names are ignored; images are resolved from annotation references') }}</span>
-        </el-form-item>
-        <el-form-item :label="bilingual('自动划分', 'Auto split')">
-          <el-space wrap>
-            <span>Train</span><el-input-number v-model="datasetUpload.train_ratio" :min="0.05" :max="0.95" :step="0.05" :precision="2" size="small" />
-            <span>Val</span><el-input-number v-model="datasetUpload.val_ratio" :min="0.05" :max="0.9" :step="0.05" :precision="2" size="small" />
-            <span>Test</span><el-input-number v-model="datasetUpload.test_ratio" :min="0" :max="0.9" :step="0.05" :precision="2" size="small" />
-          </el-space>
-          <span class="form-hint">{{ bilingual('仅在源数据没有显式划分元数据时使用，三项之和必须为 1', 'Used only without explicit split metadata; values must total 1') }}</span>
+          <span class="form-hint">{{ bilingual('ZIP 根目录必须包含 data.yaml', 'The ZIP root must contain data.yaml') }}</span>
         </el-form-item>
         <el-form-item :label="bilingual('检测场景', 'Detection scene')">
           <el-select v-model="trainForm.scene_id" class="full-width" :placeholder="bilingual('选择场景', 'Select a scene')">
@@ -383,13 +378,9 @@
 
         <el-form-item :label="bilingual('优化器', 'Optimizer')">
           <el-select v-model="trainForm.optimizer" class="full-width">
-            <el-option label="Auto" value="auto" />
             <el-option label="SGD（推荐）" value="SGD" />
             <el-option label="Adam" value="Adam" />
             <el-option label="AdamW" value="AdamW" />
-            <el-option label="NAdam" value="NAdam" />
-            <el-option label="RAdam" value="RAdam" />
-            <el-option label="RMSProp" value="RMSProp" />
           </el-select>
         </el-form-item>
 
@@ -402,36 +393,6 @@
             :precision="4"
           />
         </el-form-item>
-
-        <el-collapse class="advanced-settings">
-          <el-collapse-item :title="bilingual('高级设置', 'Advanced settings')" name="advanced">
-            <el-row :gutter="16">
-              <el-col :span="12"><el-form-item label="LRF"><el-input-number v-model="trainForm.train_config.lrf" :min="0" :max="1" :step="0.01" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item :label="bilingual('动量', 'Momentum')"><el-input-number v-model="trainForm.train_config.momentum" :min="0" :max="1" :step="0.01" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item :label="bilingual('权重衰减', 'Weight decay')"><el-input-number v-model="trainForm.train_config.weight_decay" :min="0" :max="0.1" :step="0.0001" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item :label="bilingual('耐心轮数', 'Patience')"><el-input-number v-model="trainForm.train_config.patience" :min="0" :max="500" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Warmup epochs"><el-input-number v-model="trainForm.train_config.warmup_epochs" :min="0" :max="20" :step="0.5" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Workers"><el-input-number v-model="trainForm.train_config.workers" :min="0" :max="64" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Seed"><el-input-number v-model="trainForm.train_config.seed" :min="0" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Close mosaic"><el-input-number v-model="trainForm.train_config.close_mosaic" :min="0" :max="500" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Mosaic"><el-slider v-model="trainForm.train_config.mosaic" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="MixUp"><el-slider v-model="trainForm.train_config.mixup" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Flip LR"><el-slider v-model="trainForm.train_config.fliplr" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Flip UD"><el-slider v-model="trainForm.train_config.flipud" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Scale"><el-slider v-model="trainForm.train_config.scale" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Translate"><el-slider v-model="trainForm.train_config.translate" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Dropout"><el-slider v-model="trainForm.train_config.dropout" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Erasing"><el-slider v-model="trainForm.train_config.erasing" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="Label smoothing"><el-slider v-model="trainForm.train_config.label_smoothing" :min="0" :max="1" :step="0.05" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="Cos LR"><el-switch v-model="trainForm.train_config.cos_lr" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="AMP"><el-switch v-model="trainForm.train_config.amp" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item :label="bilingual('确定性', 'Deterministic')"><el-switch v-model="trainForm.train_config.deterministic" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="Cache"><el-switch v-model="trainForm.train_config.cache" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="Rect"><el-switch v-model="trainForm.train_config.rect" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="Multi-scale"><el-switch v-model="trainForm.train_config.multi_scale" /></el-form-item></el-col>
-            </el-row>
-          </el-collapse-item>
-        </el-collapse>
       </el-form>
 
       <template #footer>
@@ -571,35 +532,39 @@ import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
 import { useTaskStore } from '@/stores/tasks'
-import { Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import echarts from '@/utils/echarts'
+import * as echarts from 'echarts'
 import {
   downloadTrainingModel,
+  downloadTrainingReport,
   deleteTrainingTask,
   exportTrainingModel,
   getTrainingDatasets,
   getTrainingMetrics,
   getTrainingStatus,
   predictTrainingImage,
+  retryTrainingTask,
   startTraining,
   stopTraining,
   uploadTrainingDataset,
   deleteTrainingDataset,
   validateTrainingModel,
 } from '@/api/training'
-
+import { undoAction } from '@/api/undo'
 import { getScenesApi } from '@/api/models'
+import FileBrowserPage from '@/views/FileBrowserPage.vue'
 import ModulePageHeader from '@/components/common/ModulePageHeader.vue'
 import PageErrorAlert from '@/components/common/PageErrorAlert.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import { getApiErrorInfo } from '@/utils/apiError'
 
-const route = useRoute()
 const POLL_INTERVAL = 5000
 const RUNNING_STATUSES = new Set(['pending', 'running'])
 const settingsStore = useSettingsStore()
+const route = useRoute()
 const taskStore = useTaskStore()
+const reportDownloading = ref(false)
 
 const text = computed(() => settingsStore.isEnglish ? {
   title: 'Model Training & Monitoring',
@@ -622,10 +587,10 @@ const text = computed(() => settingsStore.isEnglish ? {
   task: 'Task',
   trainingMonitor: 'Training Monitor',
   modelActions: 'Model Actions',
-  modelActionsHelp: 'Only completed training tasks can be evaluated, exported and validated.',
   evaluate: 'Evaluate model',
   exportModel: 'Export model',
   downloadWeights: 'Download weights',
+  exportReport: 'Export report',
   testValidate: 'Test validation',
   pending: 'Pending',
   running: 'Running',
@@ -653,8 +618,13 @@ const text = computed(() => settingsStore.isEnglish ? {
   fetchTasksFailed: 'Failed to load training tasks',
   fetchDatasetsFailed: 'Failed to load training datasets',
   retry: 'Retry',
+  deleteSuccess: 'Training history task deleted',
+  undoTitle: 'Undo recent change?',
+  undoDelete: 'The training task was hidden. Undo it now?',
+  undo: 'Undo',
+  keep: 'Keep deleted',
 } : {
-  title: '模型训练与监控',
+  title: '模型训练与管理',
   newTask: '新建训练任务',
   taskList: '训练任务列表',
   taskCount: (count) => `共 ${count} 个任务`,
@@ -674,10 +644,10 @@ const text = computed(() => settingsStore.isEnglish ? {
   task: '任务',
   trainingMonitor: '训练监控',
   modelActions: '模型操作',
-  modelActionsHelp: '仅已完成的训练任务可评估、导出和验证',
   evaluate: '评估模型',
   exportModel: '导出模型',
   downloadWeights: '下载权重',
+  exportReport: '导出报告',
   testValidate: '测试验证',
   pending: '等待中',
   running: '训练中',
@@ -705,6 +675,11 @@ const text = computed(() => settingsStore.isEnglish ? {
   fetchTasksFailed: '训练任务列表加载失败',
   fetchDatasetsFailed: '训练数据集加载失败',
   retry: '重试',
+  deleteSuccess: '训练历史任务已删除',
+  undoTitle: '撤销最近操作？',
+  undoDelete: '训练任务已隐藏，现在撤销吗？',
+  undo: '撤销',
+  keep: '保留删除',
 })
 
 const { trainingTasks: taskList, loadingTrainingTasks: loadingTasks } = storeToRefs(taskStore)
@@ -713,6 +688,8 @@ const monitorError = ref(null)
 const selectedTask = ref(null)
 const showCreateDialog = ref(false)
 const creating = ref(false)
+const taskExpanded = ref(true)
+const monitorExpanded = ref(true)
 
 const lossChartRef = ref(null)
 const mapChartRef = ref(null)
@@ -762,53 +739,11 @@ const trainForm = ref({
   device: 'cpu',
   optimizer: 'SGD',
   lr0: 0.01,
-  train_config: {
-    lrf: 0.01,
-    momentum: 0.937,
-    weight_decay: 0.0005,
-    warmup_epochs: 3,
-    warmup_momentum: 0.8,
-    warmup_bias_lr: 0.1,
-    patience: 100,
-    cos_lr: false,
-    amp: true,
-    pretrained: true,
-    deterministic: true,
-    seed: 0,
-    workers: 8,
-    cache: false,
-    rect: false,
-    multi_scale: false,
-    close_mosaic: 10,
-    save_period: -1,
-    mosaic: 1,
-    mixup: 0,
-    fliplr: 0.5,
-    flipud: 0,
-    scale: 0.3,
-    degrees: 0,
-    translate: 0.1,
-    shear: 0,
-    perspective: 0,
-    hsv_h: 0.015,
-    hsv_s: 0.7,
-    hsv_v: 0.4,
-    erasing: 0,
-    label_smoothing: 0.1,
-    dropout: 0.1,
-  },
 })
 const scenes = ref([])
 const datasets = ref([])
 const uploadingDataset = ref(false)
 const loadingDatasets = ref(false)
-const datasetUpload = ref({
-  dataset_format: 'auto',
-  train_ratio: 0.8,
-  val_ratio: 0.1,
-  test_ratio: 0.1,
-  split_seed: 42,
-})
 
 const metricCards = computed(() => {
   const task = selectedTask.value
@@ -1009,7 +944,7 @@ async function fetchDatasets() {
     const response = await getTrainingDatasets()
     datasets.value = response.items || []
     if (!trainForm.value.dataset_path) {
-      trainForm.value.dataset_path = datasets.value.find((item) => item.ready)?.path ?? ''
+      trainForm.value.dataset_path = datasets.value.find((item) => item.ready && item.status !== 'archived')?.path ?? ''
     }
   } catch (error) {
     console.error('获取训练数据集失败', error)
@@ -1041,13 +976,10 @@ async function handleDatasetUpload(uploadFile) {
   uploadingDataset.value = true
   pageError.value = null
   try {
-    const dataset = await uploadTrainingDataset(uploadFile.raw, datasetUpload.value)
+    const dataset = await uploadTrainingDataset(uploadFile.raw)
     await fetchDatasets()
     trainForm.value.dataset_path = dataset.path
-    const summary = dataset.conversion
-    ElMessage.success(summary
-      ? `已转换 ${summary.images} 张图片，识别 ${summary.classes.length} 个类别`
-      : '数据集上传并校验通过')
+    ElMessage.success('数据集上传并校验通过')
   } catch (error) {
     console.error('上传训练数据集失败', error)
     reportPageError(error, '训练数据集上传失败', () => handleDatasetUpload(uploadFile))
@@ -1059,6 +991,7 @@ async function handleDatasetUpload(uploadFile) {
 async function selectTask(task) {
   stopPolling()
   hasExplicitTaskSelection = true
+  monitorExpanded.value = true
   const selectionVersion = ++monitorSelectionVersion
   selectedTask.value = { ...task }
   taskStore.selectTrainingTask(task.id)
@@ -1229,19 +1162,7 @@ async function retryTask(task) {
   creating.value = true
   pageError.value = null
   try {
-    const response = await startTraining({
-      scene_id: task.scene_id,
-      dataset_path: task.dataset_name || task.dataset_path,
-      model_name: task.model_name,
-      epochs: task.epochs,
-      batch_size: task.batch_size,
-      img_size: task.img_size,
-      device: task.device,
-      optimizer: task.optimizer || 'SGD',
-      lr0: task.lr0 || 0.01,
-      augment_config: task.augment_config || null,
-      train_config: task.train_config || {},
-    })
+    const response = await retryTrainingTask(task.id)
     ElMessage.success(`训练任务已重新创建：${response.task_uuid}`)
     await fetchTasks()
     const retriedTask = taskList.value.find((item) => item.id === response.id)
@@ -1274,7 +1195,10 @@ async function stopTask(taskId) {
 async function deleteTask(task) {
   try {
     await ElMessageBox.confirm(
-      `Delete training task ${task.task_uuid}? Its metrics and unexported run files will be removed.`,
+      bilingual(
+        `确定删除训练任务 ${task.task_uuid}？任务将在撤销窗口后清理。`,
+        `Delete training task ${task.task_uuid}? It will be permanently cleaned after the undo window.`,
+      ),
       text.value.delete,
       { type: 'warning' },
     )
@@ -1288,10 +1212,19 @@ async function deleteTask(task) {
       predictResult.value = null
     }
     await fetchTasks()
-    ElMessage.success('Training history task deleted')
+    ElMessage.success(text.value.deleteSuccess)
+    if (result?.undo_id) {
+      try {
+        await ElMessageBox.confirm(text.value.undoDelete, text.value.undoTitle, {
+          confirmButtonText: text.value.undo, cancelButtonText: text.value.keep, type: 'info',
+        })
+        await undoAction(result.undo_id)
+        await fetchTasks()
+      } catch { /* keep deleted */ }
+    }
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      reportPageError(error, '删除训练任务失败', () => deleteTask(task))
+      reportPageError(error, bilingual('删除训练任务失败', 'Failed to delete training task'), () => deleteTask(task))
     }
   }
 }
@@ -1385,6 +1318,19 @@ async function downloadModel() {
     reportPageError(error, '模型权重下载失败', downloadModel)
   } finally {
     downloading.value = false
+  }
+}
+
+async function downloadReport() {
+  if (!selectedTask.value) return
+  reportDownloading.value = true
+  try {
+    const blob = await downloadTrainingReport(selectedTask.value.id)
+    triggerBlobDownload(blob, `training_report_${selectedTask.value.task_uuid}.md`)
+  } catch (error) {
+    reportPageError(error, text.value.exportReport, downloadReport)
+  } finally {
+    reportDownloading.value = false
   }
 }
 
@@ -1515,6 +1461,12 @@ onBeforeUnmount(() => {
 .section-card {
   margin-bottom: 20px;
 }
+
+.resource-section { margin-top: 18px; }
+.resource-section-hint { color: var(--app-text-secondary); font-size: 12px; }
+.monitor-header { align-items: center; }
+.monitor-header .monitor-info { flex: 1; }
+.monitor-toggle { margin-left: auto; flex-shrink: 0; }
 
 .card-header {
   display: flex;

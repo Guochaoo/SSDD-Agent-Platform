@@ -22,13 +22,15 @@ from app.config.detection import (
     DEFAULT_IMAGE_SIZE,
     MAX_BATCH_SIZE,
     MAX_IMAGE_SIZE,
+    DEFAULT_VIDEO_MAX_FRAMES,
     MAX_ZIP_EXTRACTED_SIZE,
 )
 from app.core.logger import get_logger
 from app.core.artifact_access import register_artifact
-from app.entity.db_models import ModelVersion
+from app.entity.db_models import ModelVersion, User
 from app.database.session import SessionLocal
 from app.services.history_service import history_service
+from app.services.notification_service import notification_service
 from app.storage.minio_client import MinIOClient
 
 
@@ -70,8 +72,14 @@ class DetectionService:
             self._warmup_status = "ready"
         except Exception as exc:
             self._warmup_status = "error"
-            self._warmup_error = str(exc)
-            logger.warning("检测模型预热失败: %s", exc)
+            self._warmup_error = "Detection model warmup failed"
+            logger.warning("检测模型预热失败 error_type=%s", type(exc).__name__)
+            for admin in db.query(User).filter(User.is_superuser.is_(True), User.is_active.is_(True)).all():
+                notification_service.safe_create(
+                    db, admin.id, "model_anomaly", "Detection model unavailable",
+                    "One or more detection models failed to warm up; check the server and retry.",
+                    resource_type="detection_model",
+                )
         finally:
             db.close()
 
@@ -98,7 +106,7 @@ class DetectionService:
             path = PROJECT_ROOT / path
         path = path.resolve()
         if not path.is_file():
-            raise HTTPException(status_code=500, detail=f"模型权重不存在: {path}")
+            raise HTTPException(status_code=500, detail="模型权重不存在")
         return path
 
     def _get_model(self, model_version: ModelVersion):
@@ -116,9 +124,12 @@ class DetectionService:
 
                     cached = YOLO(str(model_path))
                 except ImportError as exc:
-                    raise HTTPException(status_code=500, detail="未安装 Ultralytics 推理依赖") from exc
+                    if getattr(exc, "name", None) == "ultralytics":
+                        raise HTTPException(status_code=500, detail="未安装 Ultralytics 推理依赖") from exc
+                    logger.error("Ultralytics 推理依赖加载失败 error_type=%s", type(exc).__name__)
+                    raise HTTPException(status_code=500, detail="Ultralytics 推理依赖加载失败") from exc
                 except Exception as exc:
-                    logger.exception("模型加载失败 model_id=%s path=%s", model_version.id, model_path)
+                    logger.error("模型加载失败 model_id=%s error_type=%s", model_version.id, type(exc).__name__)
                     raise HTTPException(status_code=500, detail="模型权重加载失败") from exc
                 self._models[cache_key] = cached
                 self._inference_locks[cache_key] = threading.Lock()
@@ -283,8 +294,13 @@ class DetectionService:
                 total_inference_time=result["inference_time_ms"],
             )
         except Exception as exc:
-            detail = exc.detail if isinstance(exc, HTTPException) else "检测处理失败"
-            history_service.mark_failed(db, task.id, str(detail))
+            raw_detail = exc.detail if isinstance(exc, HTTPException) else None
+            detail = (
+                raw_detail
+                if isinstance(raw_detail, str) and "/" not in raw_detail and "\\" not in raw_detail and "://" not in raw_detail
+                else "Detection failed"
+            )
+            history_service.mark_failed(db, task.id, detail)
             raise
         result.pop("db_results")
         return {"task_id": task.id, "status": "completed", **result}
@@ -317,8 +333,7 @@ class DetectionService:
             model = self._get_model(model_version)
             minio_client = MinIOClient()
         except Exception as exc:
-            detail = exc.detail if isinstance(exc, HTTPException) else "检测服务初始化失败"
-            history_service.mark_failed(db, task.id, str(detail))
+            history_service.mark_failed(db, task.id, "Detection service initialization failed")
             raise
 
         items = []
@@ -558,7 +573,7 @@ class DetectionService:
         conf=0.25,
         iou=0.45,
         frame_sample_rate=5,
-        max_frames=50,
+        max_frames=DEFAULT_VIDEO_MAX_FRAMES,
         progress_callback=None,
     ):
         """按采样间隔处理视频，生成关键帧、标注视频和检测记录。"""
@@ -730,7 +745,7 @@ class DetectionService:
             }
         except Exception as exc:
             logger.exception("视频检测失败 task_id=%s", task_id)
-            history_service.mark_failed(db, task_id, str(exc))
+            history_service.mark_failed(db, task_id, "Video detection failed")
             raise
         finally:
             if cap is not None:
@@ -743,7 +758,9 @@ class DetectionService:
                         os.unlink(path)
                     except FileNotFoundError:
                         pass
-            db.close()
+            # The video worker owns this session in production, but tests and
+            # callers may inject a shared session. Leave lifecycle ownership
+            # to the caller so returned ORM identities remain usable.
 
     def warmup_camera(self, db, model_id, mode, conf, iou, user_id=None):
         import numpy as np
@@ -879,7 +896,7 @@ class DetectionService:
             annotated_bytes = self._encode_annotated_image(result)
             (artifact_dir / artifact_name).write_bytes(annotated_bytes)
             register_artifact(artifact_name)
-            logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
+            logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", Path(image_path).name, total_objects, inference_time)
 
             image_width = int(result.orig_shape[1])
             image_height = int(result.orig_shape[0])
@@ -942,7 +959,7 @@ class DetectionService:
         except Exception as exc:
             if _db and task_id:
                 try:
-                    history_service.mark_failed(_db, task_id, f"Agent 检测失败: {exc}")
+                    history_service.mark_failed(_db, task_id, "Agent detection failed")
                 except Exception:
                     logger.exception("Agent检测标记失败状态失败: task_id=%s", task_id)
             raise

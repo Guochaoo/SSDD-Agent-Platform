@@ -1,5 +1,9 @@
 import request from "@/utils/request";
 
+export const MAX_BATCH_IMAGES = 100;
+export const MAX_VIDEO_FRAMES = 1000;
+export const MAX_ZIP_SIZE_BYTES = 50 * 1024 * 1024;
+
 function unwrap(payload) {
   return payload?.data ?? payload;
 }
@@ -128,7 +132,7 @@ export async function detectVideoApi(file, options) {
   formData.append("conf_threshold", String(options.confThreshold ?? 0.25));
   formData.append("iou_threshold", String(options.iouThreshold ?? 0.45));
   formData.append("frame_sample_rate", String(options.frameSampleRate ?? 5));
-  formData.append("max_frames", String(options.maxFrames ?? 50));
+  formData.append("max_frames", String(options.maxFrames ?? MAX_VIDEO_FRAMES));
   return unwrap(await request.post("/detection/video", formData, {
     headers: { "Content-Type": "multipart/form-data" },
     timeout: 120000,

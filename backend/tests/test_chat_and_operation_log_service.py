@@ -1,4 +1,6 @@
 """Tests for chat_service and operation_log_service (both new)."""
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -278,6 +280,18 @@ def test_log_persists_username_after_user_delete(db_session):
     log = db_session.query(OperationLog).first()
     assert log.user_id is None
     assert log.username == "alice"  # 冗余字段仍然可读
+
+
+def test_record_accepts_compatibility_user_without_username(db_session):
+    user = SimpleNamespace(id=77)
+
+    log = operation_log_service.record(
+        db_session, user=user, module="system", action="background_job",
+    )
+
+    assert log is not None
+    assert log.user_id == 77
+    assert log.username is None
 
 
 def test_record_failure_never_raises(db_session, monkeypatch):

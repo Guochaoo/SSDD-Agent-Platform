@@ -260,6 +260,15 @@ class SceneService:
         return model
 
     @staticmethod
+    def archive_model_version(db, scene_id, model_version_id, user_id, is_superuser):
+        model = SceneService.get_model_version(db, scene_id, model_version_id, user_id, is_superuser)
+        if model.is_builtin or model.is_default:
+            raise HTTPException(status_code=409, detail={"code": "RESOURCE_IN_USE", "message": "built-in or default model cannot be archived"})
+        model.status = "archived" if model.status != "archived" else "active"
+        db.commit(); db.refresh(model)
+        return model
+
+    @staticmethod
     def deactivate_scene(db: Session, scene_id: int) -> DetectionScene:
         """停用场景（不物理删除，避免破坏历史检测记录的外键引用）"""
         scene = SceneService.get_scene(db, scene_id)

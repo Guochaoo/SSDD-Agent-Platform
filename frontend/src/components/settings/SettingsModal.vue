@@ -24,7 +24,8 @@
           <main class="settings-content">
             <h2 :id="titleId">{{ activeTitle }}</h2>
             <GeneralSettings v-if="activeTab === 'general'" :text="text" />
-            <AccountSettings v-else :text="text" />
+            <AccountSettings v-else-if="activeTab === 'account'" :text="text" />
+            <SessionSettings v-else-if="activeTab === 'sessions'" :text="text" />
           </main>
         </section>
       </div>
@@ -39,6 +40,7 @@ import { useSettingsStore } from '@/stores/settings'
 import SettingsSidebar from './SettingsSidebar.vue'
 import GeneralSettings from './GeneralSettings.vue'
 import AccountSettings from './AccountSettings.vue'
+import SessionSettings from './SessionSettings.vue'
 
 const props = defineProps({
   modelValue: {
@@ -56,6 +58,17 @@ const titleId = `settings-title-${Math.random().toString(36).slice(2)}`
 let previousOverflow = ''
 
 const zhText = {
+  expired: '已过期',
+  sessions: '登录会话',
+  sessionsHelp: '查看仍有效的登录会话，并撤销不再使用的设备。',
+  current: '当前会话',
+  otherSession: '其他会话',
+  unknownDevice: '未知设备',
+  active: '有效',
+  revoked: '已撤销',
+  revoke: '撤销',
+  refresh: '刷新',
+  noSessions: '暂无登录会话',
   close: '关闭设置',
   general: '常规',
   account: '账户',
@@ -81,6 +94,17 @@ const zhText = {
 }
 
 const enText = {
+  expired: 'Expired',
+  sessions: 'Sessions',
+  sessionsHelp: 'Review active sign-ins and revoke devices you no longer use.',
+  current: 'Current session',
+  otherSession: 'Other session',
+  unknownDevice: 'Unknown device',
+  active: 'Active',
+  revoked: 'Revoked',
+  revoke: 'Revoke',
+  refresh: 'Refresh',
+  noSessions: 'No login sessions',
   close: 'Close settings',
   general: 'General',
   account: 'Account',
@@ -106,7 +130,7 @@ const enText = {
 }
 
 const text = computed(() => (settingsStore.isEnglish ? enText : zhText))
-const activeTitle = computed(() => activeTab.value === 'general' ? text.value.general : text.value.account)
+const activeTitle = computed(() => text.value[activeTab.value] || text.value.account)
 
 watch(() => props.modelValue, async (open) => {
   if (open) {

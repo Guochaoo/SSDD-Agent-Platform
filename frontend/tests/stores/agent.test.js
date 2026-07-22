@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/api/agent', () => ({
+  archiveAgentSession: vi.fn(),
+  cancelAgentRunApi: vi.fn(),
+  cancelAgentToolApi: vi.fn(),
   deleteAgentSession: vi.fn(),
   getAgentArtifact: vi.fn(),
   getAgentMessageImage: vi.fn(),
   getAgentSession: vi.fn(),
   listAgentSessions: vi.fn().mockResolvedValue([]),
+  renameAgentSession: vi.fn(),
 }))
 
 import { getAgentArtifact, getAgentSession, listAgentSessions } from '@/api/agent'

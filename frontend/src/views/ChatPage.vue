@@ -16,9 +16,11 @@
         <div class="prompt-area">
           <div :class="['prompt-card', { dragover: isDragover }]">
             <div class="prompt-primary">
-              <div v-if="agentStore.imagePreviewUrls.length" class="inline-previews">
-                <div v-for="(url, i) in agentStore.imagePreviewUrls" :key="url" class="inline-preview">
-                  <img :src="url" alt="preview" />
+              <div v-if="agentStore.selectedImages.length" class="inline-previews">
+              <div v-for="(file, i) in agentStore.selectedImages" :key="`${file.name}-${i}`" class="inline-preview">
+                  <img v-if="file.type?.startsWith('image/')" :src="agentStore.imagePreviewUrls[i]" alt="preview" />
+                  <video v-else-if="file.type?.startsWith('video/')" class="inline-video-preview" :src="agentStore.imagePreviewUrls[i]" controls preload="metadata" />
+                  <span v-else class="file-preview-name">{{ file.name }}</span>
                   <button class="remove-preview" @click="agentStore.removeSelectedImage(i)">
                     <el-icon :size="12"><Close /></el-icon>
                   </button>
@@ -39,7 +41,7 @@
             <div class="card-footer">
               <div class="footer-left">
                 <ModelSelect v-model="model" />
-                <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
+                <button class="footer-btn" :title="chatText.uploadFile" @click="triggerFileInput">
                   <img :src="addIcon" width="16" height="16" />
                 </button>
                 <input
@@ -107,9 +109,11 @@
       <div class="chat-bottom chat-composer">
         <div :class="['prompt-card', { dragover: isDragover }]">
           <div class="prompt-primary">
-            <div v-if="agentStore.imagePreviewUrls.length" class="inline-previews">
-              <div v-for="(url, i) in agentStore.imagePreviewUrls" :key="url" class="inline-preview">
-                <img :src="url" alt="preview" />
+            <div v-if="agentStore.selectedImages.length" class="inline-previews">
+              <div v-for="(file, i) in agentStore.selectedImages" :key="`${file.name}-${i}`" class="inline-preview">
+                <img v-if="file.type?.startsWith('image/')" :src="agentStore.imagePreviewUrls[i]" alt="preview" />
+                <video v-else-if="file.type?.startsWith('video/')" class="inline-video-preview" :src="agentStore.imagePreviewUrls[i]" controls preload="metadata" />
+                <span v-else class="file-preview-name">{{ file.name }}</span>
                 <button class="remove-preview" @click="agentStore.removeSelectedImage(i)">
                   <el-icon :size="12"><Close /></el-icon>
                 </button>
@@ -130,7 +134,7 @@
           <div class="card-footer">
             <div class="footer-left">
               <ModelSelect v-model="model" />
-              <button class="footer-btn" :title="chatText.uploadImage" @click="triggerFileInput">
+              <button class="footer-btn" :title="chatText.uploadFile" @click="triggerFileInput">
                 <img :src="addIcon" width="16" height="16" />
               </button>
               <input
@@ -183,12 +187,13 @@ import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { DEFAULT_LLM_MODEL_VALUE, useLlmStore } from '@/stores/llm'
 import {
-  getAgentDetectionHistoryApi,
   streamAgentChat,
 } from '@/api/agent'
-import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi } from '@/api/detection'
+import { getHistoryApi } from '@/api/history'
+import { detectBatchApi, detectSingleApi, detectVideoApi, detectZipApi, getVideoStatusApi, MAX_BATCH_IMAGES, MAX_VIDEO_FRAMES } from '@/api/detection'
 import { getModelsApi, getScenesApi } from '@/api/models'
 import { normalizeAgentError, normalizeAgentEvent } from '@/utils/agentCards'
+import { reportError } from '@/utils/errorReporter'
 import MessageList from '@/components/agent/MessageList.vue'
 import ModelSelect from '@/components/agent/ModelSelect.vue'
 
@@ -224,14 +229,15 @@ const greeting = computed(() => {
 
 const chatText = computed(() => settingsStore.isEnglish ? {
   inputPlaceholder: 'Enter a detection question...',
-  uploadImage: 'Upload image',
+  uploadFile: 'Upload file',
   send: 'Send',
   stop: 'Stop',
-  dropToUpload: 'Release to upload image',
+  dropToUpload: 'Release to upload file',
   onlyImages: 'Unsupported file type',
   imageTooLarge: 'Image size cannot exceed 10MB',
   zipDetecting: 'Running ZIP image detection...',
   videoDetecting: 'Uploading and analyzing video...',
+  videoQueued: (taskId) => `Video detection task #${taskId} has been recorded. It may take a while; you can check the result in History while it runs.`,
   videoProgress: (progress) => `Video detection in progress (${progress}%)...`,
   videoDone: (frames, count) => `Video detection completed. Analyzed ${frames} key frames and found ${count} possible defects.`,
   zipFailed: 'ZIP detection failed. Please check the archive contents and try again.',
@@ -256,10 +262,10 @@ const chatText = computed(() => settingsStore.isEnglish ? {
   ],
 } : {
   inputPlaceholder: '输入检测问题…',
-  uploadImage: '上传图片',
+  uploadFile: '上传文件',
   send: '发送',
   stop: '停止',
-  dropToUpload: '释放以上传图片',
+  dropToUpload: '释放以上传文件',
   onlyImages: '不支持的文件类型',
   imageTooLarge: '图片大小不能超过 10MB',
   zipDetecting: '正在进行 ZIP 图片检测…',
@@ -420,6 +426,11 @@ async function handleQuickDetect(type) {
     })
     if (!files.length) return
 
+    if (type === 'batch' && files.length > MAX_BATCH_IMAGES) {
+      ElMessage.warning(settingsStore.isEnglish ? `Batch detection supports up to ${MAX_BATCH_IMAGES} images.` : `批量检测最多支持 ${MAX_BATCH_IMAGES} 张图片。`)
+      return
+    }
+
     const options = await getQuickDetectOptions()
     if (type === 'single') {
       await runSingleDetect(files[0], options)
@@ -540,8 +551,12 @@ async function runVideoDetect(file, options) {
     const task = await detectVideoApi(file, {
       ...options,
       frameSampleRate: 5,
-      maxFrames: 50,
+      maxFrames: MAX_VIDEO_FRAMES,
     })
+    assistantMessage.content = settingsStore.isEnglish
+      ? chatText.value.videoQueued(task.task_id)
+      : `视频检测任务 #${task.task_id} 已入库。处理时间可能较长，可在历史记录中查看进度，完成后将在本对话中显示结果。`
+    agentStore.saveSession()
 
     let status
     for (let attempt = 0; attempt < 240; attempt += 1) {
@@ -651,7 +666,14 @@ function handleAgentEvent(event) {
     agentStore.setConnectionStatus('idle')
     agentStore.activeRunId = ''
     const lastMsg = agentStore.messages[agentStore.messages.length - 1]
-    if (lastMsg?.role === 'assistant') lastMsg.status = 'done'
+    if (lastMsg?.role === 'assistant') {
+      lastMsg.status = 'done'
+      lastMsg.trace = {
+        requestId: event.request_id || '',
+        sessionId: event.session_id || agentStore.currentSessionId,
+        taskIds: event.task_ids || [],
+      }
+    }
     saveCurrentSession()
     _currentAgentLabel = ''
   }
@@ -663,6 +685,15 @@ function handleAgentEvent(event) {
   if (normalized.type === 'error') {
     const mapped = normalizeAgentError(normalized.error || normalized, chatText.value.agentFailed)
     agentStore.errorMessage = mapped.code ? `[${mapped.code}] ${mapped.message}` : mapped.message
+    reportError(new Error(mapped.message), {
+      type: 'sse_error',
+      request_id: mapped.requestId,
+      task_id: normalized.task_id || normalized.task_ids?.[0],
+      session_id: normalized.session_id || agentStore.currentSessionId,
+      user_id: normalized.user_id || userStore.user?.id,
+      error_code: mapped.code || normalized.error_code,
+      retryable: Boolean(mapped.retryable || normalized.retryable),
+    })
     agentStore.isStreaming = false
     agentStore.setConnectionStatus('error')
     agentStore.activeRunId = ''
@@ -711,6 +742,15 @@ function doSend(text) {
       agentStore.activeRunId = ''
       const mapped = normalizeAgentError(error, chatText.value.agentUnavailable)
       const detail = mapped.code ? `[${mapped.code}] ${mapped.message}${mapped.requestId ? ` (Request ID: ${mapped.requestId})` : ''}` : mapped.message
+      reportError(error, {
+        type: 'sse_transport_error',
+        request_id: error?.requestId,
+        task_id: error?.taskId,
+        session_id: error?.sessionId || agentStore.currentSessionId,
+        user_id: error?.userId || userStore.user?.id,
+        error_code: error?.errorCode || error?.code,
+        retryable: Boolean(error?.retryable),
+      })
       agentStore.markLastAssistantError(detail)
       ElMessage.error(detail)
     },
@@ -719,7 +759,7 @@ function doSend(text) {
 
 function handleSend(text) {
   if (!text.trim() && !agentStore.selectedImages.length) return
-  const imgUrls = agentStore.selectedImages.map(f => URL.createObjectURL(f))
+  const imgUrls = agentStore.selectedImages.map(file => URL.createObjectURL(file))
   agentStore.addMessage({ role: 'user', content: text, imagePreviewUrls: imgUrls })
   doSend(text)
 }
@@ -728,7 +768,7 @@ async function checkAgentToolContracts() {
   if (!localStorage.getItem('ssdd_token')) return
 
   try {
-    await getAgentDetectionHistoryApi({ page: 1, pageSize: 1 })
+    await getHistoryApi({ page: 1, pageSize: 1 })
   } catch {
     // Contract probes are best-effort and must not block chat.
   }
@@ -740,7 +780,7 @@ function handleRegenerate(message) {
   const userMsg = agentStore.messages[idx - 1]
   if (userMsg?.role !== 'user') return
   agentStore.messages.splice(idx - 1, 2)
-  agentStore.addMessage({ role: 'user', content: userMsg.content || '', imagePreviewUrls: userMsg.imagePreviewUrls || [] })
+  agentStore.addMessage({ role: 'user', content: userMsg.content || '', imagePreviewUrls: userMsg.imagePreviewUrls || [], attachments: userMsg.attachments || [] })
   doSend(userMsg.content || '')
 }
 
@@ -809,8 +849,11 @@ checkAgentToolContracts()
   grid-template-areas:
     "primary"
     "bottom";
-  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
+  background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  position: relative;
+  z-index: 1;
   border: 0;
   border-radius: 28px;
   padding: 9px 8px;
@@ -875,11 +918,33 @@ checkAgentToolContracts()
 .inline-preview {
   position: relative;
 
+  .file-preview-name {
+    display: inline-flex;
+    align-items: center;
+    width: 120px;
+    height: 48px;
+    padding: 0 8px;
+    border: 1px solid var(--app-border);
+    border-radius: 8px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+  }
+
   img {
     width: 48px; height: 48px;
     border-radius: 8px;
     object-fit: cover;
     border: 1px solid var(--app-border);
+  }
+
+  .inline-video-preview {
+    display: block;
+    width: 180px;
+    max-height: 110px;
+    border-radius: 8px;
+    background: #111827;
   }
 
   .remove-preview {
@@ -1053,13 +1118,14 @@ checkAgentToolContracts()
   right: 0;
   z-index: 10;
   padding: 12px 16px 16px;
-  background:
-    linear-gradient(to top, var(--app-bg) 76%, color-mix(in srgb, var(--app-bg) 0%, transparent));
-  border-top: 1px solid var(--app-border);
   .prompt-card {
     max-width: 790px;
     margin: 0 auto;
   }
+}
+
+:global(:root[data-theme='dark']) .prompt-card {
+  background: rgba(39, 39, 42, 0.72);
 }
 
 @media (max-width: 900px) {

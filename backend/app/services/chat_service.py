@@ -44,6 +44,8 @@ class ChatService:
         db.add(session)
         db.commit()
         db.refresh(session)
+        if session.status == "deleted":
+            raise HTTPException(status_code=404, detail="浼氳瘽涓嶅瓨鍦?")
         return session
 
     @staticmethod
@@ -71,6 +73,7 @@ class ChatService:
         user_id: int,
         is_superuser: bool = False,
         status: Optional[str] = None,
+        search: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[ChatSession], int]:
@@ -78,8 +81,11 @@ class ChatService:
         query = db.query(ChatSession)
         if not is_superuser:
             query = query.filter(ChatSession.user_id == user_id)
+        query = query.filter(ChatSession.status != "deleted")
         if status:
             query = query.filter(ChatSession.status == status)
+        if search:
+            query = query.filter(ChatSession.title.ilike(f"%{search.strip()}%"))
 
         total = query.count()
         items = (

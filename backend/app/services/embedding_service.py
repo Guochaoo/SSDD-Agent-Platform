@@ -52,7 +52,7 @@ class EmbeddingService:
             )
         except Exception as exc:
             logger.warning("Embedding 调用失败: %s", exc)
-            raise HTTPException(status_code=502, detail=f"向量化失败: {exc}") from exc
+            raise HTTPException(status_code=502, detail="向量化失败，请稍后重试") from exc
 
         vectors = [item.embedding for item in resp.data]
         for vec in vectors:

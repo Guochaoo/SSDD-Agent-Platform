@@ -45,7 +45,7 @@ def extract_text(filename: str, content: bytes) -> str:
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"文档解析失败（{file_type}）: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"文档解析失败（{file_type}）") from exc
 
     raise HTTPException(status_code=400, detail=f"不支持的文档类型: {file_type}")
 

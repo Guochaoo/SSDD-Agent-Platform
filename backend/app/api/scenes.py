@@ -5,10 +5,12 @@
 - POST /api/scenes            创建场景（管理员）
 - POST /api/scenes/{scene_id}/default-model  切换该场景的默认模型（已登录用户）
 """
+import shutil
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -18,10 +20,13 @@ from app.entity.db_models import User
 from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief, ModelVersionResponse
 from app.services.operation_log_service import operation_log_service
 from app.services.scene_service import scene_service
+from app.services.action_confirmation_service import action_confirmation_service
 from app.storage.minio_client import MinIOClient
+from app.services.undo_service import undo_service
 
 router = APIRouter(prefix="/api/scenes", tags=["检测场景"])
 MAX_MODEL_UPLOAD_BYTES = 1024 * 1024 * 1024
+MODEL_UNDO_DIR = Path(tempfile.gettempdir()) / "ssdd-model-undo"
 
 
 def _require_admin(current_user: User):
@@ -33,6 +38,14 @@ def _scene_to_response(db: Session, scene) -> SceneResponse:
     default_model = scene_service.get_default_model(db, scene.id)
     data = SceneResponse.model_validate(scene)
     data.default_model = ModelVersionBrief.model_validate(default_model) if default_model else None
+    return data
+
+
+def _model_to_response(model) -> ModelVersionResponse:
+    data = ModelVersionResponse.model_validate(model)
+    data.model_path = Path(model.model_path).name if model.model_path else ""
+    data.minio_url = None
+    data.object_key = None
     return data
 
 
@@ -59,7 +72,9 @@ def list_scene_models(
     db: Session = Depends(get_db),
 ):
     """List every non-deleted model version that can be inspected or selected."""
-    return scene_service.list_model_versions(db, scene_id, current_user.id, current_user.is_superuser)
+    return [_model_to_response(model) for model in scene_service.list_model_versions(
+        db, scene_id, current_user.id, current_user.is_superuser,
+    )]
 
 
 @router.post("/{scene_id}/models/upload", response_model=ModelVersionResponse, status_code=201)
@@ -70,6 +85,7 @@ async def upload_model_version(
     model_name: str = Form(...),
     model_type: str = Form("yolo11n"),
     description: str | None = Form(None),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -90,10 +106,16 @@ async def upload_model_version(
                     raise HTTPException(status_code=413, detail="model file exceeds 1 GB")
                 output.write(chunk)
         minio_url = MinIOClient().upload_file(object_key, str(target))
-        return scene_service.create_uploaded_model(
+        model = scene_service.create_uploaded_model(
             db, scene_id, current_user.id, version.strip(), model_name.strip(), model_type.strip(),
             str(target.relative_to(project_root)), size, description, object_key, minio_url,
         )
+        operation_log_service.record(
+            db, user=current_user, module="scenes", action="upload_model",
+            target_type="model", target_id=str(model.id),
+            description=f"Upload model {model.id}", request=request,
+        )
+        return _model_to_response(model)
     except HTTPException:
         target.unlink(missing_ok=True)
         raise
@@ -110,16 +132,51 @@ async def upload_model_version(
 def update_model_version(
     scene_id: int,
     model_version_id: int,
+    http_request: Request,
     version: str | None = Form(None),
     model_name: str | None = Form(None),
     description: str | None = Form(None),
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return scene_service.update_model_version(
+    previous = scene_service.get_model_version(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
+    )
+    action_confirmation_service.require_or_prepare(
+        db,
+        confirmation_uuid=confirmation_id,
+        user_id=current_user.id,
+        operation="update_model_version",
+        target_type="model",
+        target_id=str(model_version_id),
+        impact={"scope": "change model name, version, or description", "reversible": True},
+        payload={"scene_id": scene_id, "model_version_id": model_version_id, "version": version, "model_name": model_name, "description": description},
+        request_id=getattr(http_request.state, "request_id", None),
+    )
+    model = scene_service.update_model_version(
         db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
         description, version, model_name,
     )
+    data = _model_to_response(model)
+    if (previous.model_name, previous.version) != (model.model_name, model.version):
+        data.undo_id = undo_service.create(db, current_user.id, "rename_model", {
+            "scene_id": scene_id,
+            "model_version_id": model_version_id,
+            "previous_model_name": previous.model_name,
+            "previous_version": previous.version,
+        }).undo_uuid
+    operation_log_service.record(
+        db,
+        user=current_user,
+        module="training",
+        action="update_model_version",
+        target_type="model",
+        target_id=str(model_version_id),
+        description=f"Update model version {model_version_id}",
+        request=http_request,
+    )
+    return data
 
 
 @router.get("/{scene_id}/models/{model_version_id}/download")
@@ -132,13 +189,17 @@ def download_model_version(
     model = scene_service.get_model_version(
         db, scene_id, model_version_id, current_user.id, current_user.is_superuser
     )
+    project_root = Path(__file__).resolve().parents[3]
     model_path = Path(model.model_path)
     if not model_path.is_absolute():
-        model_path = Path(__file__).resolve().parents[3] / model_path
+        model_path = project_root / model_path
+    model_path = model_path.resolve()
+    if project_root not in model_path.parents:
+        raise HTTPException(status_code=404, detail="模型文件不存在")
     if model_path.is_file():
         return FileResponse(path=model_path, media_type="application/octet-stream", filename=model_path.name)
-    if model.minio_url:
-        return RedirectResponse(url=model.minio_url)
+    if model.object_key:
+        return RedirectResponse(url=MinIOClient().get_presigned_url(model.object_key))
     raise HTTPException(status_code=404, detail="模型文件不存在")
 
 
@@ -174,10 +235,19 @@ def set_default_model(
     scene_id: int,
     model_version_id: int,
     http_request: Request,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """切换当前用户可访问的场景模型版本。"""
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="set_default_model", target_type="model", target_id=str(model_version_id),
+        impact={"scope": f"scene {scene_id} default model selection", "reversible": True},
+        payload={"scene_id": scene_id, "model_version_id": model_version_id},
+        request_id=getattr(http_request.state, "request_id", None),
+    )
+    previous = scene_service.get_default_model(db, scene_id)
     model = scene_service.set_default_model(
         db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
     )
@@ -187,29 +257,124 @@ def set_default_model(
         description=f"场景 {scene_id} 默认模型切换为版本 {model_version_id}",
         request=http_request,
     )
-    return ModelVersionBrief.model_validate(model)
+    data = ModelVersionBrief.model_validate(model).model_dump()
+    data["undo_id"] = undo_service.create(db, current_user.id, "set_default_model", {
+        "scene_id": scene_id,
+        "previous_model_id": previous.id if previous else model_version_id,
+    }).undo_uuid
+    return data
 
 
 @router.delete("/{scene_id}/models/{model_version_id}")
 def delete_model_version(
     scene_id: int,
     model_version_id: int,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    model = scene_service.get_model_version(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser
+    )
+    project_root = Path(__file__).resolve().parents[3]
+    model_path = Path(model.model_path)
+    if not model_path.is_absolute():
+        model_path = project_root / model_path
+    model_path = model_path.resolve()
+    if project_root not in model_path.parents:
+        raise HTTPException(status_code=404, detail="模型文件不存在")
+    reversible = model_path.is_file()
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="delete_model", target_type="model", target_id=str(model_version_id),
+        impact={"scope": "soft-delete model and clean stored model files", "reversible": reversible},
+        payload={"scene_id": scene_id, "model_version_id": model_version_id},
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    )
+    backup_path = None
+    if reversible:
+        MODEL_UNDO_DIR.mkdir(parents=True, exist_ok=True)
+        backup_path = MODEL_UNDO_DIR / f"{uuid4().hex}{model_path.suffix or '.pt'}"
+        shutil.copy2(model_path, backup_path)
     model = scene_service.delete_model_version(
         db, scene_id, model_version_id, current_user.id, current_user.is_superuser
     )
-    return {"id": model.id, "status": model.status}
+    undo_id = None
+    if backup_path:
+        undo_id = undo_service.create(db, current_user.id, "delete_model", {
+            "scene_id": scene_id,
+            "model_version_id": model_version_id,
+            "previous_status": "active",
+            "model_path": str(model_path),
+            "backup_path": str(backup_path),
+        }).undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="scenes", action="delete_model",
+        target_type="model", target_id=str(model_version_id),
+        description=f"Delete model {model_version_id}", request=request,
+    )
+    return {"id": model.id, "status": model.status, "undo_id": undo_id}
+
+
+@router.post("/{scene_id}/models/{model_version_id}/archive", response_model=ModelVersionResponse)
+def archive_model_version(
+    scene_id: int,
+    model_version_id: int,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    request: Request = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="archive_model", target_type="model", target_id=str(model_version_id),
+        impact={"scope": "hide model from active model selection", "reversible": True},
+        payload={"scene_id": scene_id, "model_version_id": model_version_id},
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    )
+    previous = scene_service.get_model_version(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
+    )
+    model = scene_service.archive_model_version(
+        db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
+    )
+    data = _model_to_response(model)
+    data.undo_id = undo_service.create(db, current_user.id, "archive_model", {
+        "scene_id": scene_id,
+        "model_version_id": model_version_id,
+        "previous_status": previous.status,
+    }).undo_uuid
+    operation_log_service.record(
+        db, user=current_user, module="scenes", action="archive_model",
+        target_type="model", target_id=str(model_version_id),
+        description=f"Archive model {model_version_id}", request=request,
+    )
+    return data
 
 
 @router.post("/{scene_id}/models/{model_version_id}/retry-cleanup", response_model=ModelVersionResponse)
 def retry_model_cleanup(
     scene_id: int,
     model_version_id: int,
+    confirmation_id: str | None = Header(default=None, alias="X-Confirmation-ID"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return scene_service.retry_model_cleanup(
+    action_confirmation_service.require_or_prepare(
+        db, confirmation_uuid=confirmation_id, user_id=current_user.id,
+        operation="retry_model_cleanup", target_type="model", target_id=str(model_version_id),
+        impact={"scope": "retry deletion of model object-store files", "reversible": False},
+        payload={"scene_id": scene_id, "model_version_id": model_version_id},
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    )
+    model = scene_service.retry_model_cleanup(
         db, scene_id, model_version_id, current_user.id, current_user.is_superuser,
     )
+    operation_log_service.record(
+        db, user=current_user, module="scenes", action="retry_model_cleanup",
+        target_type="model", target_id=str(model_version_id),
+        description=f"Retry model cleanup {model_version_id}", request=request,
+    )
+    return _model_to_response(model)

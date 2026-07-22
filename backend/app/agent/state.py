@@ -18,6 +18,7 @@ class AgentState(TypedDict):
     next_agent: str          # "detection" | "data" | "general" | "training" | "FINISH"
     current_agent: str       # 当前正在执行的 Agent 名称（前端展示）
     user_id: int             # 当前用户 ID（工具鉴权/过滤用）
+    attachment_hint: str     # 附件后缀与 MIME，用于确定路由边界
 
 
 # Agent 路由常量

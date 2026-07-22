@@ -18,7 +18,7 @@ export function getHistoryTaskTypeLabel(value) {
 
 export function getHistoryMediaType(value) {
   if (value === "video") return "video";
-  if (value === "camera") return "camera";
+  if (value === "camera") return "frame";
   return "image";
 }
 
@@ -32,7 +32,7 @@ function numericId(value) {
   return Number.isFinite(parsed) ? parsed : value;
 }
 
-export function normalizeHistoryTask(task = {}) {
+function normalizeHistoryTask(task = {}) {
   const totalImages = Number(task.total_images ?? task.totalImages ?? 0);
   const totalInferenceTimeMs = Number(
     task.total_inference_time ?? task.totalInferenceTimeMs ?? 0,
@@ -103,6 +103,9 @@ export async function getHistoryApi(params = {}) {
         scene_id: params.sceneId,
         task_type: params.taskType,
         status: params.status,
+        media_type: params.mediaType,
+        keyword: params.keyword,
+        owner_user_id: params.ownerUserId,
         start_date: params.startDate,
         end_date: params.endDate,
         page: params.page ?? 1,
@@ -119,4 +122,20 @@ export async function getHistoryDetailApi(taskId) {
 
 export function deleteHistoryApi(taskId) {
   return request.delete(`/history/${taskId}`);
+}
+
+export function exportHistoryApi(params = {}) {
+  return request.get('/history/export', {
+    responseType: 'blob',
+    params: {
+      scene_id: params.sceneId || undefined,
+      task_type: params.taskType || undefined,
+      status: params.status || undefined,
+      media_type: params.mediaType || undefined,
+      keyword: params.keyword || undefined,
+      owner_user_id: params.ownerUserId || undefined,
+      start_date: params.startDate || undefined,
+      end_date: params.endDate || undefined,
+    },
+  })
 }

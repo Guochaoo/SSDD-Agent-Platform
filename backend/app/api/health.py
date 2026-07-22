@@ -16,8 +16,8 @@ def check_database() -> dict:
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         return {"status": "healthy", "message": "PostgreSQL connection ok"}
-    except Exception as exc:
-        return {"status": "unhealthy", "message": str(exc)}
+    except Exception:
+        return {"status": "unhealthy", "message": "PostgreSQL connection failed"}
     finally:
         if "db" in locals():
             db.close()
@@ -30,8 +30,8 @@ def check_redis() -> dict:
         client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
         client.ping()
         return {"status": "healthy", "message": "Redis connection ok"}
-    except Exception as exc:
-        return {"status": "unhealthy", "message": str(exc)}
+    except Exception:
+        return {"status": "unhealthy", "message": "Redis connection failed"}
 
 
 def check_minio() -> dict:
@@ -42,8 +42,8 @@ def check_minio() -> dict:
             "status": "healthy" if exists else "unhealthy",
             "message": f"Bucket {client.bucket_name} {'exists' if exists else 'does not exist'}",
         }
-    except Exception as exc:
-        return {"status": "unhealthy", "message": str(exc)}
+    except Exception:
+        return {"status": "unhealthy", "message": "Object storage connection failed"}
 
 
 @router.get("")

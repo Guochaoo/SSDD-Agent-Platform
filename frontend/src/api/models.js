@@ -51,6 +51,10 @@ export function deleteModelVersionApi(sceneId, modelVersionId) {
   return request.delete(`/scenes/${sceneId}/models/${modelVersionId}`)
 }
 
+export function archiveModelVersionApi(sceneId, modelVersionId) {
+  return request.post(`/scenes/${sceneId}/models/${modelVersionId}/archive`)
+}
+
 export function retryModelCleanupApi(sceneId, modelVersionId) {
   return request.post(`/scenes/${sceneId}/models/${modelVersionId}/retry-cleanup`)
 }

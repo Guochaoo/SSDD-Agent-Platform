@@ -40,15 +40,9 @@ const routes = [
         meta: { title: '模型训练', icon: 'Cpu' },
       },
       {
-        path: 'tasks',
-        name: 'TaskCenter',
-        component: () => import('@/views/TaskCenterPage.vue'),
-        meta: { title: '任务中心', icon: 'List' },
-      },
-      {
         path: 'files',
         name: 'Files',
-        component: () => import('@/views/FileBrowserPage.vue'),
+        redirect: '/training',
         meta: { title: '文件查看', icon: 'FolderOpened' },
       },
       {
@@ -62,6 +56,12 @@ const routes = [
         name: 'Dashboard',
         component: () => import('@/views/DashboardPage.vue'),
         meta: { title: '数据看板', icon: 'DataAnalysis' },
+      },
+      {
+        path: 'help',
+        name: 'Help',
+        component: () => import('@/views/HelpPage.vue'),
+        meta: { title: '帮助与引导', icon: 'QuestionFilled' },
       },
       {
         path: 'admin',

@@ -6,8 +6,21 @@ from fastapi import HTTPException
 from sqlalchemy.orm import sessionmaker
 
 from app.api import agent
+from app.agent.detection_agent import make_detection_tools
 from app.core.artifact_access import artifact_owner_id, can_read_artifact, register_artifact
 from app.entity.db_models import ChatMessage, ChatSession, User
+from app.services.action_confirmation_service import action_confirmation_service
+
+
+def _confirm_delete_chat_session(db_session, user_id, session_id):
+    item = action_confirmation_service.prepare(
+        db_session, user_id=user_id, operation="delete_chat_session",
+        target_type="chat_session", target_id=session_id,
+        impact={"scope": "conversation messages, attachments, and generated artifacts", "reversible": False},
+        payload={"session_id": session_id},
+    )
+    action_confirmation_service.confirm(db_session, item.confirmation_uuid, user_id)
+    return item.confirmation_uuid
 
 
 def test_history_restores_the_original_image_path_for_agent_context(db_session, monkeypatch):
@@ -45,6 +58,12 @@ def test_uploaded_image_path_is_isolated_by_user(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         agent._validate_uploaded_image_path(str(owner_path), user_id=202)
     assert exc.value.status_code == 403
+
+
+def test_detection_agent_registers_video_tool():
+    tools = make_detection_tools(101)
+
+    assert "detect_video_file" in {item.name for item in tools}
 
 
 def test_chat_stream_rejects_another_users_uploaded_image(client):
@@ -195,7 +214,11 @@ def test_delete_chat_session_removes_persisted_messages(db_session):
     db_session.add(ChatMessage(session_id=session.id, role="user", content="delete me"))
     db_session.commit()
 
-    result = agent.delete_chat_session(session.session_uuid, current_user=user, db=db_session)
+    confirmation_id = _confirm_delete_chat_session(db_session, user.id, session.session_uuid)
+    result = agent.delete_chat_session(
+        session.session_uuid, confirmation_id=confirmation_id,
+        current_user=user, db=db_session,
+    )
 
     assert result["id"] == session.session_uuid
     assert db_session.query(ChatSession).filter_by(id=session.id).first() is None
@@ -233,7 +256,11 @@ def test_delete_chat_session_removes_its_attachment_and_artifact(db_session, mon
     ))
     db_session.commit()
 
-    agent.delete_chat_session(session.session_uuid, current_user=user, db=db_session)
+    confirmation_id = _confirm_delete_chat_session(db_session, user.id, session.session_uuid)
+    agent.delete_chat_session(
+        session.session_uuid, confirmation_id=confirmation_id,
+        current_user=user, db=db_session,
+    )
 
     assert not attachment.exists()
     assert not artifact.exists()

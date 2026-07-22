@@ -6,6 +6,7 @@ search_knowledge 接入了真正的 RAG 向量检索（knowledge_service + embed
 检索范围按调用方 user_id 做了权限边界过滤（自己的文档 + 系统内置文档）。
 """
 
+import io
 import json
 
 from langchain_core.tools import tool
@@ -51,6 +52,8 @@ def _make_general_tools(user_id: int):
 
             results = [
                 {
+                    "document_id": c.document.id if c.document else None,
+                    "chunk_id": c.id,
                     "document_title": c.document.title if c.document else "",
                     "content": c.content,
                 }
@@ -60,9 +63,43 @@ def _make_general_tools(user_id: int):
         except Exception as exc:
             logger.warning("search_knowledge 工具异常: %s", exc)
             return json.dumps(
-                {"found": False, "message": f"知识库检索暂时不可用: {exc}"}, ensure_ascii=False
+                {"found": False, "message": "知识库检索暂时不可用"}, ensure_ascii=False
             )
         finally:
             db.close()
 
-    return [search_knowledge]
+    @tool
+    def read_attachment(path: str) -> str:
+        """Read common user-provided text, office and PDF attachments safely."""
+        from pathlib import Path
+        from app.api.agent import _validate_uploaded_image_path
+        from app.services.document_parser import extract_text
+
+        safe_path = _validate_uploaded_image_path(path, user_id=user_id)
+        filename = Path(safe_path).name
+        suffix = Path(filename).suffix.lower()
+        raw = Path(safe_path).read_bytes()
+        if suffix in {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".log", ".xml"}:
+            content = raw.decode("utf-8", errors="replace")
+        elif suffix in {".pdf", ".docx"}:
+            content = extract_text(filename, raw)
+        elif suffix == ".xlsx":
+            from openpyxl import load_workbook
+            workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            rows = []
+            for sheet in workbook.worksheets:
+                rows.append(f"[{sheet.title}]")
+                rows.extend("\t".join("" if value is None else str(value) for value in row) for row in sheet.iter_rows(values_only=True))
+            content = "\n".join(rows)
+        elif suffix == ".pptx":
+            from pptx import Presentation
+            presentation = Presentation(io.BytesIO(raw))
+            content = "\n".join(
+                shape.text for slide in presentation.slides for shape in slide.shapes
+                if hasattr(shape, "text") and shape.text
+            )
+        else:
+            return json.dumps({"name": filename, "readable": False, "message": "Attachment was uploaded but has no text extractor; use a compatible tool or convert it first."}, ensure_ascii=False)
+        return json.dumps({"name": filename, "content": content[:20000]}, ensure_ascii=False)
+
+    return [search_knowledge, read_attachment]

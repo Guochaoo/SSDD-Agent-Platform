@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   HISTORY_TASK_TYPE_OPTIONS,
+  getHistoryMediaType,
   getHistoryTaskTypeLabel,
   normalizeHistoryDetail,
   normalizeHistoryPage,
@@ -68,5 +69,8 @@ describe("前端 B 历史记录适配", () => {
       confidence: 0.92,
       inferenceTimeMs: 18,
     });
+  });
+  it("maps camera tasks to the video-frame media grain", () => {
+    expect(getHistoryMediaType("camera")).toBe("frame");
   });
 });

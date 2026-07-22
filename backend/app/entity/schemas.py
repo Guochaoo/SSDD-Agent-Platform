@@ -49,8 +49,8 @@ class UserBrief(BaseModel):
 class TokenResponse(BaseModel):
     """登录成功响应"""
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
-    user: UserBrief
     user: UserBrief
 
 
@@ -98,6 +98,10 @@ class PasswordResetConfirm(BaseModel):
 
 
 # --- 角色权限 ---
+
+class AdminPasswordReset(BaseModel):
+    new_password: str = Field(..., min_length=6, max_length=100)
+
 
 class RoleResponse(BaseModel):
     """角色响应"""
@@ -399,6 +403,7 @@ class ModelVersionBrief(BaseModel):
     map50: Optional[float] = None
     is_default: bool
     created_at: datetime
+    undo_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
@@ -511,6 +516,7 @@ class ChatSessionResponse(BaseModel):
     message_count: int
     last_message_at: Optional[datetime] = None
     created_at: datetime
+    undo_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -530,6 +536,9 @@ class ChatMessageResponse(BaseModel):
     agent_used: Optional[str] = None
     tool_calls: Optional[list] = None
     tool_result: Optional[str] = None
+    attachments: Optional[list] = None
+    image_urls: Optional[list[str]] = None
+    has_image: bool = False
     tokens_used: Optional[int] = None
     latency_ms: Optional[int] = None
     created_at: datetime
@@ -560,6 +569,9 @@ class OperationLogResponse(BaseModel):
     ip_address: Optional[str] = None
     request_method: Optional[str] = None
     request_path: Optional[str] = None
+    request_id: Optional[str] = None
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
     status: str
     error_message: Optional[str] = None
     created_at: datetime
@@ -575,7 +587,7 @@ class KnowledgeDocumentCreate(BaseModel):
     """创建知识文档（原文件已上传至 MinIO 之后调用）"""
     title: str = Field(..., description="文档标题")
     filename: str = Field(..., description="原始文件名")
-    file_url: str = Field(..., description="MinIO 原文件 URL")
+    file_url: Optional[str] = Field(default=None, description="短期文件访问 URL")
     file_type: Optional[str] = Field(None, description="pdf/docx/txt/md")
 
 
@@ -585,7 +597,7 @@ class KnowledgeDocumentResponse(BaseModel):
     user_id: Optional[int] = None
     title: str
     filename: str
-    file_url: str
+    file_url: Optional[str] = None
     object_key: Optional[str] = None
     cleanup_pending: bool = False
     cleanup_error: Optional[str] = None

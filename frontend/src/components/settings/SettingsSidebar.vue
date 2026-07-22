@@ -14,7 +14,7 @@
 </template>
 
 <script setup>
-import { Setting, User } from '@element-plus/icons-vue'
+import { Setting, User, Lock } from '@element-plus/icons-vue'
 
 const model = defineModel({ default: 'general' })
 
@@ -28,6 +28,7 @@ defineProps({
 const items = [
   { key: 'general', icon: Setting },
   { key: 'account', icon: User },
+  { key: 'sessions', icon: Lock },
 ]
 </script>
 

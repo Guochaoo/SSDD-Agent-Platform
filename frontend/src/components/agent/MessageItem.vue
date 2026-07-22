@@ -4,11 +4,18 @@
     <div v-if="message.imagePreviewUrls?.length" class="user-images">
       <img
         v-for="(url, i) in message.imagePreviewUrls"
+        v-show="url"
         :key="i"
         :src="url"
         class="user-image"
         :alt="text.uploadAlt"
       />
+    </div>
+    <div v-if="message.attachments?.length" class="user-attachments">
+      <div v-for="(attachment, i) in message.attachments" :key="`${attachment.name || 'attachment'}-${i}`" class="user-attachment">
+        <video v-if="attachment.content_type?.startsWith('video/') && attachment.previewUrl" class="user-video" :src="attachment.previewUrl" controls preload="metadata" />
+        <span>{{ attachment.name || 'attachment' }}</span>
+      </div>
     </div>
     <span v-if="message.content" class="user-text">{{ message.content }}</span>
   </div>
@@ -29,6 +36,7 @@
           >
             <span class="tool-name">{{ getToolName(tool) }}</span>
             <el-tag :type="getToolTag(tool)" size="small">{{ getToolStatus(tool) }}</el-tag>
+            <span v-if="getToolResource(tool)" class="tool-resource">{{ text.resource }}: {{ getToolResource(tool) }}</span>
           </div>
         </div>
       </div>
@@ -113,6 +121,13 @@ const text = computed(() => settingsStore.isEnglish ? {
   historyTool: 'Detection history tool',
   knowledgeTool: 'Knowledge search tool',
 } : {
+  resource: '\u8d44\u6e90',
+  openTask: '\u6253\u5f00\u4efb\u52a1',
+  document: '\u6587\u6863',
+  chunk: '\u5206\u5757',
+  request: 'Request ID',
+  session: '\u4f1a\u8bdd',
+  task: '\u4efb\u52a1',
   uploadAlt: '上传图片',
   agentError: '智能体响应失败，请重试',
   copy: '复制',
@@ -210,6 +225,18 @@ function getToolTag(tool) {
   return 'warning'
 }
 
+function getToolResource(tool) {
+  const value = tool.task_id
+    || tool.taskId
+    || tool.file_id
+    || tool.fileId
+    || tool.knowledge_document_id
+    || tool.knowledgeDocumentId
+    || tool.model_id
+    || tool.modelId
+  return value == null || value === '' ? '' : String(value)
+}
+
 </script>
 
 <style lang="scss" scoped>
@@ -232,6 +259,28 @@ function getToolTag(tool) {
   gap: 6px;
   max-width: 70%;
 }
+
+.user-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 70%;
+}
+
+.user-attachment {
+  max-width: 240px;
+  overflow: hidden;
+  padding: 5px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-video { display: block; width: min(280px, 100%); max-height: 160px; border-radius: 6px; background: #111827; }
 
 .user-image {
   width: 64px;
@@ -410,6 +459,14 @@ function getToolTag(tool) {
 
 .tool-name {
   color: var(--app-text);
+}
+.tool-resource {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .message-error {

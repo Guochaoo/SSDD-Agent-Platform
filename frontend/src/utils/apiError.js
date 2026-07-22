@@ -2,7 +2,10 @@ export function getApiErrorMessage(error, fallback = "请求失败，请稍后�
   const status = error?.response?.status;
   const detail = error?.response?.data?.detail;
   const errorCode = error?.response?.data?.error_code || detail?.code;
-  const message = error?.response?.data?.message || detail?.message;
+  const detailMessage = Array.isArray(detail)
+    ? detail[0]?.msg
+    : (typeof detail === "string" ? detail : detail?.message);
+  const message = error?.response?.data?.message || detailMessage;
 
   if (status === 401) return "登录状态已失效，请重新登录";
   if (errorCode === "CLEANUP_RETRY") return "文件清理失败，状态已记录，请点击重试";
@@ -12,8 +15,7 @@ export function getApiErrorMessage(error, fallback = "请求失败，请稍后�
   if (status === 403) return "当前账号没有权限访问此数据";
   if (status === 404) return "请求的数据不存在或已被删除";
   if (status === 422) {
-    if (Array.isArray(detail)) return detail[0]?.msg || "筛选参数不正确";
-    return detail || "筛选参数不正确";
+    return detailMessage || "筛选参数不正确";
   }
   if (status >= 500) return "后端服务暂时异常，请稍后重试";
   if (error?.code === "ECONNABORTED") return "请求超时，请稍后重试";
@@ -32,5 +34,12 @@ export function getApiErrorInfo(error, fallback) {
     || (!error?.response ? 'NETWORK_ERROR' : `HTTP_${status}`)
   const requestId = error?.response?.data?.request_id || error?.response?.headers?.['x-request-id']
   const message = getApiErrorMessage(error, fallback)
-  return { code, message: requestId ? `${message} (Request ID: ${requestId})` : message, requestId }
+  return {
+    code,
+    message: requestId ? `${message} (Request ID: ${requestId})` : message,
+    requestId,
+    statusCode: error?.response?.data?.status_code || status || null,
+    detail,
+    retryable: error?.response?.data?.retryable ?? [408, 425, 429, 500, 502, 503, 504].includes(status),
+  }
 }

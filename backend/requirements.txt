@@ -35,6 +35,8 @@ psycopg2-binary==2.9.9  # PostgreSQL数据库驱动
 pgvector==0.3.0   #PostgreSQL 向量存储扩展（RAG 用）
 pypdf==4.3.1  # 知识库 PDF 文档文本提取
 python-docx==1.1.2  # 知识库 DOCX 文档文本提取
+openpyxl==3.1.5  # Agent 读取 XLSX 附件
+python-pptx==1.0.2  # Agent 读取 PPTX 附件
 
 alembic==1.13.0  # Alembic 数据库迁移框架
 

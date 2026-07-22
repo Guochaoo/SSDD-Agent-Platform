@@ -25,10 +25,7 @@ export function createCameraWs(options) {
         : `${protocol}//${window.location.host}`;
       const wsBase = configuredBase || defaultBase;
       closing = false;
-      const token = encodeURIComponent(useUserStore().token);
-      const currentSocket = new WebSocket(
-        `${wsBase}/api/detection/camera?token=${token}`,
-      );
+      const currentSocket = new WebSocket(`${wsBase}/api/detection/camera`);
       socket = currentSocket;
       currentSocket.onopen = () => {
         if (closing) {
@@ -37,6 +34,7 @@ export function createCameraWs(options) {
         }
         connected = true;
         reconnectAttempts = 0;
+        currentSocket.send(JSON.stringify({ type: "auth", token: useUserStore().token }));
         currentSocket.send(JSON.stringify({
           type: "config",
           mode: options.mode ?? "cpu",
@@ -52,13 +50,27 @@ export function createCameraWs(options) {
           if (data.type === "result") options.onResult?.(data);
           else if (data.type === "config_ok") options.onConfigOk?.(data);
           else if (data.type === "frame_skipped") options.onFrameSkipped?.(data);
-          else if (data.type === "error") options.onError?.(data.message);
+          else if (data.type === "error") {
+            const detail = typeof data.detail === "string" ? data.detail : data.detail?.message;
+            options.onError?.({
+            code: data.code || "WEBSOCKET_ERROR",
+            errorCode: data.error_code || data.code || "WEBSOCKET_ERROR",
+            statusCode: data.status_code || 502,
+            message: data.message || detail || "WebSocket request failed",
+            detail: data.detail || { code: data.error_code || data.code || "WEBSOCKET_ERROR", message: data.message || detail || "WebSocket request failed" },
+            requestId: data.request_id || "",
+            taskId: data.task_id || null,
+            sessionId: data.session_id || null,
+            userId: data.user_id || null,
+            retryable: Boolean(data.retryable),
+            });
+          }
         } catch {
-          options.onError?.("摄像头响应解析失败");
+          options.onError?.({ code: "INVALID_WEBSOCKET_RESPONSE", errorCode: "INVALID_WEBSOCKET_RESPONSE", statusCode: 502, message: "Invalid WebSocket response", detail: { code: "INVALID_WEBSOCKET_RESPONSE", message: "Invalid WebSocket response" }, requestId: "", retryable: false });
         }
       };
       currentSocket.onerror = () => {
-        if (!closing) options.onError?.("WebSocket 连接失败，请检查后端服务");
+        if (!closing) options.onError?.({ code: "WEBSOCKET_CONNECT_FAILED", errorCode: "WEBSOCKET_CONNECT_FAILED", statusCode: 503, message: "WebSocket connection failed", detail: { code: "WEBSOCKET_CONNECT_FAILED", message: "WebSocket connection failed" }, requestId: "", retryable: true });
       };
       currentSocket.onclose = (event) => {
         connected = false;

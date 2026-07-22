@@ -80,10 +80,12 @@ _DETECTION_SYSTEM = """你是一个专业的目标检测助手，可以帮助用
 
 重要规则：
 - 当用户消息中包含 [附件图片路径: xxx] 时，xxx 就是服务端的图片路径，你必须直接使用它调用检测工具
+- 当用户消息中包含 `[attachment: ... | path: ...]` 时，使用 `path:` 后的服务端路径调用检测工具
 - 不要要求用户再次提供路径，直接使用附件中给出的路径
 - 单张图片 → 调用 detect_single_image
 - 多张图片 → 调用 detect_batch_images
 - ZIP 压缩包 → 调用 detect_zip_images_file
+- 视频附件（.mp4/.avi/.mov/.mkv/.wmv/.flv）应路由到检测 Agent，并使用可用的视频检测工具或明确说明当前工具限制
 
 工作流程：
 1. 理解用户意图
@@ -113,6 +115,8 @@ _GENERAL_SYSTEM = """你是一个工业缺陷检测平台的智能助手，帮�
 - 解释检测参数（置信度、IoU）的含义
 - 介绍平台使用方法（单图检测、批量检测、模型训练等）
 - 搜索知识库（使用 search_knowledge 工具）
+- 如果消息包含 `[attachment: ... | path: ...]`，必须先调用 `read_attachment` 读取该服务端路径；不要只根据文件名猜测内容
+- 对无法解析的格式要明确告知用户，不要声称已经读取或分析了文件
 
 回复要求：
 - 使用中文，简洁专业，不要输出emoji
@@ -196,6 +200,20 @@ class SupervisorAgent:
             messages = state["messages"]
             last_msg = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
 
+            attachment_hint = state.get("attachment_hint", "")
+            if attachment_hint:
+                detection_suffixes = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".zip", ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv")
+                detection_mime_markers = ("image/", "video/", "application/zip", "application/x-zip")
+                attachment_tokens = [token.strip().lower() for token in attachment_hint.split()]
+                forced_agent = (
+                    AGENT_DETECTION
+                    if any(token in detection_suffixes for token in attachment_tokens)
+                    or any(token.startswith(marker) for token in attachment_tokens for marker in detection_mime_markers)
+                    else AGENT_GENERAL
+                )
+                logger.info("Supervisor attachment route -> %s", forced_agent)
+                return {"next_agent": forced_agent, "current_agent": "supervisor"}
+
             response = await supervisor_llm.ainvoke([
                 ("system", _SUPERVISOR_PROMPT),
                 ("human", f"用户消息：{last_msg}\n\n请决定下一个 Agent，使用 route_to_agent 工具。"),
@@ -275,13 +293,20 @@ class SupervisorAgent:
         self,
         message: str,
         image_paths: list[str] | None = None,
+        attachments: list[dict] | None = None,
         model: str | None = None,
         chat_history: list[dict] | None = None,
         user_id: int = 1,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """流式对话 — 兼容原 DetectionAgent.chat_stream 接口"""
 
-        if image_paths:
+        if attachments:
+            paths_text = "\n".join(
+                f"[attachment: {item.get('name', 'attachment')} | type: {item.get('content_type', '')} | path: {item.get('path', '')}]"
+                for item in attachments
+            )
+            message = f"{message}\n{paths_text}"
+        elif image_paths:
             paths_text = "\n".join(f"[附件图片路径: {p}]" for p in image_paths)
             message = f"{message}\n{paths_text}"
 
@@ -305,6 +330,10 @@ class SupervisorAgent:
             "next_agent": "",
             "current_agent": "",
             "user_id": user_id,
+            "attachment_hint": " ".join(
+                f"{item.get('suffix', '')} {item.get('content_type', '')}"
+                for item in (attachments or [])
+            ),
         }
 
         try:
@@ -348,7 +377,15 @@ class SupervisorAgent:
 
         except Exception as exc:
             logger.exception("Supervisor graph 执行异常")
-            yield {"type": "error", "content": f"处理出错：{exc}"}
+            # Keep the stream contract structured and do not expose provider
+            # errors, prompts, or attachment paths to the browser.
+            yield {
+                "type": "error",
+                "code": "AGENT_EXECUTION_FAILED",
+                "status_code": 502,
+                "message": "Agent execution failed",
+                "retryable": True,
+            }
 
 
 # ══════════════════════════════════════════════════════════
