@@ -337,6 +337,38 @@ body {
   white-space: nowrap;
 }
 
+// ── 统一刷新/操作按钮 (与数据看板一致) ──────────────
+.period-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+
+  &:hover { border-color: var(--app-muted); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+.period-val {
+  font-weight: 500;
+}
+
+.refresh-btn {
+  .spin {
+    animation: dash-spin 1s linear infinite;
+  }
+}
+
+@keyframes dash-spin {
+  to { transform: rotate(360deg); }
+}
+
 // ── 滚动条美化 ──────────────────────────────────────
 ::-webkit-scrollbar {
   width: 6px;
