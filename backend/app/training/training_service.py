@@ -48,7 +48,25 @@ logger = get_logger(__name__)
 # 存储正在运行的训练任务的 model 引用，用于中途停止训练
 # key: task_uuid, value: YOLO model 实例
 _running_tasks: dict = {}
+_stop_requested: set[str] = set()
 _running_lock = threading.Lock()
+
+
+class TrainingCancelled(RuntimeError):
+    """Controlled exception used to leave Ultralytics' batch loop immediately."""
+
+
+def _ensure_training_not_cancelled(db, task: TrainingTask, task_uuid: str) -> None:
+    """Raise when cancellation was requested in this or another API process."""
+    with _running_lock:
+        requested_in_process = task_uuid in _stop_requested
+    try:
+        db.refresh(task, attribute_names=["status"])
+    except Exception:
+        db.rollback()
+        raise
+    if requested_in_process or task.status == "cancelled":
+        raise TrainingCancelled(task_uuid)
 
 
 def _create_runtime_data_yaml(source_path: str) -> str:
@@ -193,9 +211,6 @@ class TrainingService:
             if not task:
                 logger.error("训练任务不存在：task_id=%d", task_id)
                 return
-
-            # Stop may arrive while the worker is still loading.  Do not turn
-            # a durably cancelled task into running after that request.
             if task.status == "cancelled":
                 return
 
@@ -215,6 +230,9 @@ class TrainingService:
             # ── 注册到运行中任务表（用于中途停止）──
             with _running_lock:
                 _running_tasks[task_uuid] = model
+                stop_requested = task_uuid in _stop_requested
+            if stop_requested:
+                return
 
             # ── 确定 data.yaml 路径 ──
             data_yaml = config.get("data_yaml", "")
@@ -319,6 +337,7 @@ class TrainingService:
 
             def on_train_batch_end(trainer):
                 """Persist coarse batch progress so the monitor moves during long epochs."""
+                _ensure_training_not_cancelled(db, task, task_uuid)
                 try:
                     total_batches = max(int(getattr(trainer, "nb", 0) or 0), 1)
                     batch_index = int(getattr(trainer, "batch_i", 0) or 0) + 1
@@ -354,6 +373,15 @@ class TrainingService:
 
             logger.info("训练完成：task_id=%d, uuid=%s", task_id, task_uuid)
 
+        except TrainingCancelled:
+            db.rollback()
+            task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+            if task:
+                task.status = "cancelled"
+                task.completed_at = task.completed_at or datetime.now()
+                db.commit()
+            logger.info("训练线程已终止：task_id=%d, uuid=%s", task_id, task_uuid)
+
         except FileNotFoundError as e:
             logger.error("训练文件缺失：task_id=%d, error=%s", task_id, str(e))
             if task.status != "cancelled":
@@ -388,6 +416,7 @@ class TrainingService:
 
             with _running_lock:
                 _running_tasks.pop(task_uuid, None)
+                _stop_requested.discard(task_uuid)
             db.close()
 
     @staticmethod
@@ -630,6 +659,7 @@ class TrainingService:
             return {"error": f"任务当前状态为 {task.status}，无法停止"}
 
         with _running_lock:
+            _stop_requested.add(task.task_uuid)
             model = _running_tasks.get(task.task_uuid)
             if model:
                 # ultralytics 支持通过设置 model.train 的 interrupt 来停止

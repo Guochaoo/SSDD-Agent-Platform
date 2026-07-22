@@ -720,11 +720,8 @@ let lossChart = null
 let mapChart = null
 let pollTimer = null
 let monitorSelectionVersion = 0
-// Keep the active task identifier rather than a global boolean. A user can
-// select a second task while the first task's request is pending; blocking the
-// second request would leave the new monitor empty after the stale response is
-// discarded below.
 let metricsRequestInFlight = null
+let hasExplicitTaskSelection = false
 
 const confusionChartRef = ref(null)
 const prChartRef = ref(null)
@@ -1061,6 +1058,7 @@ async function handleDatasetUpload(uploadFile) {
 
 async function selectTask(task) {
   stopPolling()
+  hasExplicitTaskSelection = true
   const selectionVersion = ++monitorSelectionVersion
   selectedTask.value = { ...task }
   taskStore.selectTrainingTask(task.id)
@@ -1482,7 +1480,7 @@ onMounted(() => {
     if (requestedTask) selectTask(requestedTask)
     else {
       const initialTask = restoredTask || taskList.value[0]
-      if (initialTask && !selectedTask.value) selectTask(initialTask)
+      if (initialTask && !selectedTask.value && !hasExplicitTaskSelection) selectTask(initialTask)
     }
   })
   fetchDatasets()
