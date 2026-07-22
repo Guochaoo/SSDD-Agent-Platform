@@ -45,7 +45,7 @@ def test_export_does_not_create_artifacts_when_validation_fails(
     assert not (tmp_path / "models").exists()
 
 
-def test_delete_finished_training_task_removes_metrics_and_keeps_model_version(
+def test_delete_finished_training_task_recycles_metrics_and_model_provenance(
     db_session, monkeypatch, tmp_path
 ):
     user = User(username="deleter", email="deleter@example.com", hashed_password="x")
@@ -79,11 +79,12 @@ def test_delete_finished_training_task_removes_metrics_and_keeps_model_version(
     result = TrainingService.delete_training_task(db_session, task.id)
 
     assert result["task_id"] == task.id
-    assert db_session.query(TrainingTask).filter_by(id=task.id).first() is None
-    assert db_session.query(TrainingMetric).filter_by(task_id=task.id).count() == 0
+    recycled = db_session.query(TrainingTask).filter_by(id=task.id).one()
+    assert recycled.deletion_status == "trashed"
+    assert db_session.query(TrainingMetric).filter_by(task_id=task.id).count() == 1
     db_session.refresh(model)
-    assert model.training_task_id is None
-    assert not output_dir.exists()
+    assert model.training_task_id == task.id
+    assert output_dir.exists()
 
 
 def test_export_keeps_existing_model_metadata_in_sync_with_requested_version(

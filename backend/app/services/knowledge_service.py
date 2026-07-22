@@ -10,11 +10,12 @@
 """
 
 from fastapi import HTTPException
+from datetime import datetime
+
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.entity.db_models import KnowledgeChunk, KnowledgeDocument
-from app.storage.minio_client import MinIOClient
+from app.entity.db_models import KnowledgeChunk, KnowledgeDocument, default_purge_after
 
 
 class KnowledgeService:
@@ -79,10 +80,12 @@ class KnowledgeService:
     @staticmethod
     def _visibility_filter(query, user_id: int, is_superuser: bool):
         """非管理员只能看到：自己的文档 + 系统内置文档（user_id IS NULL）"""
-        if is_superuser:
-            return query
+        if not is_superuser:
+            query = query.filter(
+                or_(KnowledgeDocument.user_id == user_id, KnowledgeDocument.user_id.is_(None))
+            )
         return query.filter(
-            or_(KnowledgeDocument.user_id == user_id, KnowledgeDocument.user_id.is_(None))
+            KnowledgeDocument.deletion_status == "active"
         )
 
     @staticmethod
@@ -92,6 +95,8 @@ class KnowledgeService:
         """根据 ID 获取知识文档，非管理员只能访问自己的文档或系统文档"""
         doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
         if not doc:
+            raise HTTPException(status_code=404, detail="知识文档不存在")
+        if doc.deletion_status != "active":
             raise HTTPException(status_code=404, detail="知识文档不存在")
         if not is_superuser and doc.user_id is not None and doc.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权访问该文档")
@@ -126,6 +131,7 @@ class KnowledgeService:
             db.query(KnowledgeChunk)
             .join(KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id)
             .filter(KnowledgeDocument.status == "indexed")
+            .filter(KnowledgeDocument.deletion_status == "active")
         )
         if not is_superuser:
             query = query.filter(
@@ -143,24 +149,57 @@ class KnowledgeService:
 
     @staticmethod
     def delete_document(
-        db: Session, document_id: int, user_id: int, is_superuser: bool = False
-    ) -> None:
-        """删除知识文档：非管理员只能删自己上传的文档，系统内置文档只有管理员能删。
-        knowledge_chunks 由数据库 ON DELETE CASCADE 自动清除；这里同时清理 MinIO 原文件，
-        MinIO 清理失败不阻断数据库删除（策略与 history_service.delete_task 保持一致）。"""
+        db: Session, document_id: int, user_id: int, is_superuser: bool = False,
+        expected_version: int | None = None,
+    ) -> KnowledgeDocument:
+        """Move a knowledge document to the recoverable recycle bin."""
         doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
         if not doc:
             raise HTTPException(status_code=404, detail="知识文档不存在")
         if not is_superuser and doc.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权删除该文档")
+        if expected_version is not None and doc.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": doc.resource_version,
+            })
 
-        try:
-            MinIOClient().delete_by_url(doc.file_url)
-        except Exception:
-            pass
-
-        db.delete(doc)
+        if doc.deletion_status != "active":
+            raise HTTPException(status_code=409, detail="知识文档已在回收站中")
+        doc.deletion_status = "trashed"
+        doc.deleted_at = datetime.now()
+        doc.deleted_by_id = user_id
+        doc.purge_after = default_purge_after()
+        doc.resource_version += 1
         db.commit()
+        db.refresh(doc)
+        return doc
+
+    @staticmethod
+    def restore_document(
+        db: Session, document_id: int, user_id: int, can_manage_all: bool = False,
+        expected_version: int | None = None,
+    ) -> KnowledgeDocument:
+        doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="知识文档不存在")
+        if doc.user_id != user_id and not can_manage_all:
+            raise HTTPException(status_code=403, detail="无权恢复该文档")
+        if expected_version is not None and doc.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": doc.resource_version,
+            })
+        if doc.deletion_status != "trashed":
+            raise HTTPException(status_code=409, detail="知识文档不在可恢复状态")
+        doc.deletion_status = "active"
+        doc.deleted_at = None
+        doc.deleted_by_id = None
+        doc.purge_after = None
+        doc.resource_version += 1
+        db.commit()
+        db.refresh(doc)
+        return doc
 
 
 # 全局单例

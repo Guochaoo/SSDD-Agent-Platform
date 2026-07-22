@@ -3,8 +3,11 @@
 处理检测场景（如"钢铁表面缺陷检测"）的创建、查询、更新与删除
 对应任务文档步骤 11 的场景部分。
 """
+from datetime import datetime, timedelta
+
 from fastapi import HTTPException
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.entity.db_models import DetectionScene, ModelVersion
@@ -87,7 +90,12 @@ class SceneService:
 
     @staticmethod
     def set_default_model(
-        db: Session, scene_id: int, model_version_id: int, user_id: int | None = None, is_superuser: bool = False
+        db: Session,
+        scene_id: int,
+        model_version_id: int,
+        user_id: int | None = None,
+        is_superuser: bool = False,
+        expected_version: int | None = None,
     ) -> ModelVersion:
         """切换某场景的默认模型：先把旧默认取消，再把新的设为默认（同一事务）"""
         query = db.query(ModelVersion).filter(
@@ -97,18 +105,30 @@ class SceneService:
         )
         if user_id is not None and not is_superuser:
             query = query.filter(or_(ModelVersion.is_builtin.is_(True), ModelVersion.owner_id == user_id))
-        model = query.first()
+        model = query.with_for_update().first()
         if not model:
             raise HTTPException(status_code=404, detail="模型版本不存在、不属于该场景或不可用")
+        if expected_version is not None and model.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": model.resource_version,
+            })
 
         try:
             db.query(ModelVersion).filter(
                 ModelVersion.scene_id == scene_id, ModelVersion.is_default.is_(True)
             ).update({ModelVersion.is_default: False}, synchronize_session=False)
             model.is_default = True
+            model.resource_version += 1
             db.commit()
             db.refresh(model)
             return model
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail={
+                "code": "default_model_conflict",
+                "message": "默认模型已被其他请求修改，请刷新后重试",
+            }) from exc
         except Exception:
             db.rollback()
             raise
@@ -158,7 +178,8 @@ class SceneService:
 
     @staticmethod
     def delete_model_version(
-        db: Session, scene_id: int, model_version_id: int, user_id: int, is_superuser: bool = False
+        db: Session, scene_id: int, model_version_id: int, user_id: int,
+        is_superuser: bool = False, expected_version: int | None = None,
     ) -> ModelVersion:
         """Soft-delete a model without breaking detection-history references."""
         model = SceneService.get_model_version(db, scene_id, model_version_id, user_id, is_superuser)
@@ -168,15 +189,55 @@ class SceneService:
             raise HTTPException(status_code=403, detail="无权删除该模型")
         if model.is_default:
             raise HTTPException(status_code=400, detail="请先将其他模型设为默认模型")
+        if expected_version is not None and model.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": model.resource_version,
+            })
         try:
             model.status = "deleted"
             model.is_default = False
+            model.deleted_at = datetime.now()
+            model.deleted_by_id = user_id
+            model.purge_after = datetime.now() + timedelta(days=30)
+            model.resource_version += 1
             db.commit()
             db.refresh(model)
             return model
         except Exception:
             db.rollback()
             raise
+
+    @staticmethod
+    def restore_model_version(
+        db: Session, scene_id: int, model_version_id: int, user_id: int,
+        is_superuser: bool = False, expected_version: int | None = None,
+    ) -> ModelVersion:
+        query = db.query(ModelVersion).filter(
+            ModelVersion.id == model_version_id,
+            ModelVersion.scene_id == scene_id,
+            ModelVersion.status == "deleted",
+        )
+        if not is_superuser:
+            query = query.filter(ModelVersion.owner_id == user_id)
+        model = query.with_for_update().first()
+        if not model:
+            raise HTTPException(status_code=404, detail="回收站中不存在该模型")
+        if expected_version is not None and model.resource_version != expected_version:
+            raise HTTPException(status_code=409, detail={
+                "code": "resource_changed",
+                "current_version": model.resource_version,
+            })
+        model.status = "active"
+        model.is_default = False
+        model.deleted_at = None
+        model.deleted_by_id = None
+        model.purge_after = None
+        model.cleanup_error = None
+        model.resource_version += 1
+        db.commit()
+        db.refresh(model)
+        return model
 
     @staticmethod
     def deactivate_scene(db: Session, scene_id: int) -> DetectionScene:

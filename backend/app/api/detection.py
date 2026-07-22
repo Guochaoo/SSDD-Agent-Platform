@@ -11,6 +11,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     UploadFile,
     WebSocket,
@@ -39,6 +40,7 @@ from app.entity.schemas import BatchDetectionResponse, DetectionResponse
 from app.services.detection_service import detection_service
 from app.services.history_service import history_service
 from app.services.user_service import user_service
+from app.services.authorization_service import authorization_service
 
 router = APIRouter(prefix="/api/detection", tags=["detection"])
 logger = get_logger(__name__)
@@ -57,11 +59,12 @@ async def detect_single(
     model_id: int = Form(...),
     conf_threshold: float = Form(DEFAULT_CONF_THRESHOLD, ge=0, le=1),
     iou_threshold: float = Form(DEFAULT_IOU_THRESHOLD, ge=0, le=1),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return await detection_service.detect_single(
-        db, current_user.id, file, model_id, conf_threshold, iou_threshold
+        db, current_user.id, file, model_id, conf_threshold, iou_threshold, idempotency_key
     )
 
 
@@ -71,11 +74,13 @@ async def detect_batch(
     model_id: int = Form(...),
     conf_threshold: float = Form(DEFAULT_CONF_THRESHOLD, ge=0, le=1),
     iou_threshold: float = Form(DEFAULT_IOU_THRESHOLD, ge=0, le=1),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return await detection_service.detect_batch(
-        db, current_user.id, files, model_id, conf_threshold, iou_threshold
+        db, current_user.id, files, model_id, conf_threshold, iou_threshold,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -85,6 +90,7 @@ async def detect_zip(
     model_id: int = Form(...),
     conf_threshold: float = Form(DEFAULT_CONF_THRESHOLD, ge=0, le=1),
     iou_threshold: float = Form(DEFAULT_IOU_THRESHOLD, ge=0, le=1),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -110,6 +116,7 @@ async def detect_zip(
             conf_threshold,
             iou_threshold,
             file.filename,
+            idempotency_key,
         )
     finally:
         if tmp_path:
@@ -127,6 +134,7 @@ async def detect_video(
     iou_threshold: float = Form(DEFAULT_IOU_THRESHOLD, ge=0, le=1),
     frame_sample_rate: int = Form(DEFAULT_VIDEO_FRAME_SAMPLE_RATE, ge=1, le=60),
     max_frames: int = Form(DEFAULT_VIDEO_MAX_FRAMES, ge=1, le=100),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -136,7 +144,7 @@ async def detect_video(
             status_code=400,
             detail=f"不支持的视频格式: {suffix or '无扩展名'}",
         )
-    model_version = detection_service._resolve_model(db, model_id)
+    model_version = detection_service._resolve_model(db, model_id, current_user.id)
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -165,6 +173,7 @@ async def detect_video(
         model_version_id=model_version.id,
         conf_threshold=conf_threshold,
         iou_threshold=iou_threshold,
+        idempotency_key=idempotency_key,
     )
     history_service.mark_processing(db, task.id)
     task_id = task.id
@@ -229,6 +238,7 @@ async def detect_video(
     )
     return {
         "task_id": task_id,
+        "public_task_id": task.public_task_id,
         "status": "processing",
         "message": "视频已上传，正在后台处理中",
         "filename": file.filename,
@@ -241,16 +251,16 @@ async def get_video_status(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = history_service.get_task_detail(
-        db, task_id, current_user.id, current_user.is_superuser
-    )
+    can_read_all = authorization_service.has_permission(db, current_user, "detection:task:read_all")
+    task = history_service.get_task_detail(db, task_id, current_user.id, can_read_all)
     if task.task_type != "video":
         raise HTTPException(status_code=400, detail="该任务不是视频检测任务")
     progress = redis_client.get_video_task(task_id)
     if progress:
-        return {"task_id": task_id, **progress}
+        return {"task_id": task_id, "public_task_id": task.public_task_id, **progress}
     return {
         "task_id": task.id,
+        "public_task_id": task.public_task_id,
         "status": task.status,
         "progress": 100 if task.status == "completed" else 0,
         "message": task.error_message or task.status,
@@ -313,7 +323,7 @@ async def camera_detection(websocket: WebSocket):
                 try:
                     model_id = int(message.get("model_id"))
                     model_version, model = await run_in_threadpool(
-                        detection_service.warmup_camera, db, model_id, mode, conf, iou
+                        detection_service.warmup_camera, db, model_id, mode, conf, iou, user.id
                     )
                 except Exception as exc:
                     logger.exception("摄像头模型初始化失败 connection_id=%s", connection_id)

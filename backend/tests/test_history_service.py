@@ -95,11 +95,7 @@ def test_statistics_matches_actual_data(db_session):
     assert stats["class_distribution"] == {"scratches": 1, "crazing": 1}
 
 
-def test_delete_task_removes_task_and_results(db_session, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.history_service.MinIOClient",
-        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url: None)})(),
-    )
+def test_delete_task_moves_task_and_results_to_recycle_bin(db_session):
     user = _make_user(db_session, "alice")
     scene = _make_scene(db_session)
     task = history_service.create_task(db_session, user.id, scene.id, task_type="single")
@@ -107,7 +103,9 @@ def test_delete_task_removes_task_and_results(db_session, monkeypatch):
         {"image_path": "/a.jpg", "class_name": "scratches", "class_id": 5, "confidence": 0.9, "bbox": [0, 0, 1, 1]},
     ])
 
-    history_service.delete_task(db_session, task.id, user.id)
+    recycled = history_service.delete_task(db_session, task.id, user.id)
 
     items, total = history_service.list_tasks(db_session, user_id=user.id)
     assert total == 0
+    assert recycled.deletion_status == "trashed"
+    assert len(recycled.results) == 1

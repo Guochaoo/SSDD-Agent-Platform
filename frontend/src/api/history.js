@@ -27,13 +27,17 @@ function numericId(value) {
 }
 
 export function normalizeHistoryTask(task = {}) {
+  const id = numericId(task.id ?? task.task_id ?? task.taskId);
   const totalImages = Number(task.total_images ?? task.totalImages ?? 0);
   const totalInferenceTimeMs = Number(
     task.total_inference_time ?? task.totalInferenceTimeMs ?? 0,
   );
 
   return {
-    id: numericId(task.id ?? task.task_id ?? task.taskId),
+    id,
+    publicTaskId: String(
+      task.public_task_id ?? task.publicTaskId ?? id ?? "",
+    ),
     sceneId: numericId(task.scene_id ?? task.sceneId),
     sceneName: task.scene_name ?? task.sceneName ?? "未命名场景",
     modelVersionId: numericId(

@@ -60,6 +60,14 @@ def test_video_detection_rejects_unsupported_format(client, db_session):
 
 
 def test_camera_websocket_config_frame_and_close(client, db_session, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cv2",
+        SimpleNamespace(IMREAD_COLOR=1, imdecode=lambda data, _mode: data),
+    )
     user = User(username="camera-user", email="camera@example.com", hashed_password="x")
     db_session.add(user)
     db_session.commit()
@@ -140,7 +148,7 @@ def test_zip_detection_rejects_invalid_archive(client, db_session, monkeypatch, 
     weights.write_bytes(b"weights")
     model = ModelVersion(
         scene_id=scene.id, version="v1", model_name="zip-model",
-        model_type="yolo11n", model_path=str(weights), is_default=True,
+        model_type="yolo11n", model_path=str(weights), is_default=True, is_builtin=True,
     )
     db_session.add(model)
     db_session.commit()

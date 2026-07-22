@@ -165,6 +165,7 @@ class SceneResponse(BaseModel):
 class DetectionTaskResponse(BaseModel):
     """检测任务响应"""
     id: int
+    public_task_id: str
     user_id: int
     scene_id: int
     scene_name: Optional[str] = None
@@ -179,6 +180,8 @@ class DetectionTaskResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+    resource_version: int = 1
+    deletion_status: str = "active"
 
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
@@ -220,6 +223,7 @@ class DetectionObject(BaseModel):
 class DetectionResponse(BaseModel):
     """单图检测响应。"""
     task_id: int
+    public_task_id: str
     status: str
     filename: str
     image_url: str
@@ -248,6 +252,7 @@ class BatchDetectionItem(BaseModel):
 class BatchDetectionResponse(BaseModel):
     """批量检测响应。"""
     task_id: int
+    public_task_id: str
     status: str
     source: str = "batch"
     zip_filename: Optional[str] = None
@@ -295,6 +300,7 @@ class TrainingTaskCreate(BaseModel):
 class TrainingTaskResponse(BaseModel):
     """训练任务响应"""
     id: int
+    public_task_id: str
     user_id: int
     scene_id: int
     scene_name: Optional[str] = None
@@ -312,6 +318,8 @@ class TrainingTaskResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    resource_version: int = 1
+    deletion_status: str = "active"
 
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
@@ -342,6 +350,7 @@ class ModelVersionBrief(BaseModel):
     map50: Optional[float] = None
     is_default: bool
     created_at: datetime
+    resource_version: int = 1
 
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
@@ -369,6 +378,8 @@ class ModelVersionResponse(BaseModel):
     file_size: Optional[int] = None
     is_default: bool
     created_at: datetime
+    resource_version: int = 1
+    deleted_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
@@ -450,6 +461,8 @@ class ChatSessionResponse(BaseModel):
     message_count: int
     last_message_at: Optional[datetime] = None
     created_at: datetime
+    resource_version: int = 1
+    deletion_status: str = "active"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -529,9 +542,29 @@ class KnowledgeDocumentResponse(BaseModel):
     status: str
     chunk_count: int
     created_at: datetime
+    resource_version: int = 1
+    deletion_status: str = "active"
+    deleted_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class ResourceCleanupJobResponse(BaseModel):
+    id: int
+    resource_type: str
+    resource_id: str
+    owner_id: Optional[int] = None
+    action: str
+    status: str
+    object_keys: Optional[list[str]] = None
+    retry_count: int
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class KnowledgeChunkResponse(BaseModel):

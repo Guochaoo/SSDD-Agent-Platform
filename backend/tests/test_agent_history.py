@@ -104,7 +104,7 @@ async def _consume(iterator):
         pass
 
 
-def test_delete_chat_session_removes_persisted_messages(db_session):
+def test_delete_chat_session_moves_persisted_messages_to_recycle_bin(db_session):
     user = User(
         username="delete-chat", email="delete-chat@example.com", hashed_password="x"
     )
@@ -121,8 +121,9 @@ def test_delete_chat_session_removes_persisted_messages(db_session):
     )
 
     assert result["id"] == session.session_uuid
-    assert db_session.query(ChatSession).filter_by(id=session.id).first() is None
-    assert db_session.query(ChatMessage).filter_by(session_id=session.id).count() == 0
+    recycled = db_session.query(ChatSession).filter_by(id=session.id).one()
+    assert recycled.deletion_status == "trashed"
+    assert db_session.query(ChatMessage).filter_by(session_id=session.id).count() == 1
 
 
 def test_saved_assistant_message_keeps_agent_tool_trace(db_session, monkeypatch):

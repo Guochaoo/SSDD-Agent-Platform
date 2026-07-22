@@ -7,13 +7,21 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.database.session import get_db
+from app.entity.db_models import (
+    DetectionTask,
+    KnowledgeDocument,
+    ModelVersion,
+    TrainingDataset,
+    TrainingTask,
+    User,
+)
 from app.entity.schemas import (
     TokenResponse,
     UserLogin,
@@ -25,6 +33,7 @@ from app.entity.schemas import (
     PasswordResetConfirm,
 )
 from app.services.operation_log_service import operation_log_service
+from app.services.authorization_service import authorization_service
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -254,6 +263,50 @@ async def confirm_password_reset(
     return {"message": "密码重置成功，请使用新密码登录"}
 
 
+@router.get("/users")
+async def list_users_for_admin(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return admin-safe user and resource metadata without private content."""
+    authorization_service.require_permission(db, current_user, "system:user:read")
+    query = db.query(User)
+    total = query.count()
+    users = (
+        query.order_by(User.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    items = []
+    for user in users:
+        items.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_active": user.is_active,
+            "roles": user_service.get_user_roles(db, user),
+            "last_login_at": user.last_login_at,
+            "created_at": user.created_at,
+            "resource_counts": {
+                "detection_tasks": db.query(DetectionTask).filter(DetectionTask.user_id == user.id).count(),
+                "training_tasks": db.query(TrainingTask).filter(TrainingTask.user_id == user.id).count(),
+                "datasets": db.query(TrainingDataset).filter(TrainingDataset.owner_id == user.id).count(),
+                "models": db.query(ModelVersion).filter(ModelVersion.owner_id == user.id).count(),
+                "knowledge_documents": db.query(KnowledgeDocument).filter(KnowledgeDocument.user_id == user.id).count(),
+            },
+        })
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+        "items": items,
+    }
+
+
 @router.post("/users/{user_id}/deactivate")
 async def deactivate_user(
     user_id: int,
@@ -262,8 +315,7 @@ async def deactivate_user(
     db: Session = Depends(get_db),
 ):
     """管理员禁用某个用户账号"""
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
+    authorization_service.require_permission(db, current_user, "system:user:status")
     user_service.set_active(db, user_id, is_active=False)
     operation_log_service.record(
         db,
@@ -286,8 +338,7 @@ async def activate_user(
     db: Session = Depends(get_db),
 ):
     """管理员重新启用某个用户账号"""
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
+    authorization_service.require_permission(db, current_user, "system:user:status")
     user_service.set_active(db, user_id, is_active=True)
     operation_log_service.record(
         db,
@@ -310,9 +361,23 @@ async def delete_user(
     db: Session = Depends(get_db),
 ):
     """管理员删除用户，事务化级联清理其全部关联数据（对应任务文档步骤 13）"""
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
-    # 先记录日志（此时 user 还没被删，target_id 才能引用到）
+    authorization_service.require_permission(db, current_user, "system:user:delete")
+    try:
+        user_service.delete_user_cascade(db, user_id)
+    except HTTPException as exc:
+        operation_log_service.record(
+            db,
+            user=current_user,
+            module="system",
+            action="delete_user",
+            target_type="user",
+            target_id=str(user_id),
+            description=f"删除用户 id={user_id} 及其关联数据失败",
+            status="failure",
+            error_message=str(exc.detail),
+            request=http_request,
+        )
+        raise
     operation_log_service.record(
         db,
         user=current_user,
@@ -323,5 +388,4 @@ async def delete_user(
         description=f"删除用户 id={user_id} 及其关联数据",
         request=http_request,
     )
-    user_service.delete_user_cascade(db, user_id)
     return {"message": "用户及其关联数据已删除"}

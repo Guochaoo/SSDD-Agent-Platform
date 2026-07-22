@@ -10,17 +10,18 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.database.session import get_db
-from app.entity.db_models import User
+from app.entity.db_models import ModelVersion, User
 from app.entity.schemas import SceneCreate, SceneResponse, ModelVersionBrief, ModelVersionResponse
 from app.services.operation_log_service import operation_log_service
 from app.services.scene_service import scene_service
+from app.services.authorization_service import authorization_service
+from app.services.resource_lifecycle_service import resource_lifecycle_service
 
 router = APIRouter(prefix="/api/scenes", tags=["检测场景"])
 
 
-def _require_admin(current_user: User):
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
+def _require_permission(db: Session, current_user: User, code: str):
+    authorization_service.require_permission(db, current_user, code)
 
 
 def _scene_to_response(db: Session, scene) -> SceneResponse:
@@ -49,11 +50,78 @@ def get_scene(scene_id: int, db: Session = Depends(get_db)):
 @router.get("/{scene_id}/models", response_model=list[ModelVersionResponse])
 def list_scene_models(
     scene_id: int,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """List every non-deleted model version that can be inspected or selected."""
-    return scene_service.list_model_versions(db, scene_id)
+    can_read_all = authorization_service.has_permission(db, current_user, "model:read_all")
+    return scene_service.list_model_versions(
+        db, scene_id, user_id=current_user.id, is_superuser=can_read_all
+    )
+
+
+@router.delete("/{scene_id}/models/{model_version_id}", response_model=ModelVersionResponse)
+def delete_scene_model(
+    scene_id: int,
+    model_version_id: int,
+    http_request: Request,
+    expected_version: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    can_manage_all = authorization_service.has_permission(db, current_user, "model:manage_all")
+    model = scene_service.delete_model_version(
+        db, scene_id, model_version_id, current_user.id, can_manage_all, expected_version
+    )
+    operation_log_service.record(
+        db, user=current_user, module="training", action="trash_model",
+        target_type="model", target_id=str(model_version_id),
+        description=f"模型 {model_version_id} 移入回收站",
+        request=http_request,
+    )
+    return model
+
+
+@router.post("/{scene_id}/models/{model_version_id}/restore", response_model=ModelVersionResponse)
+def restore_scene_model(
+    scene_id: int,
+    model_version_id: int,
+    http_request: Request,
+    expected_version: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    can_manage_all = authorization_service.has_permission(db, current_user, "model:manage_all")
+    model = scene_service.restore_model_version(
+        db, scene_id, model_version_id, current_user.id, can_manage_all, expected_version
+    )
+    operation_log_service.record(
+        db, user=current_user, module="training", action="restore_model",
+        target_type="model", target_id=str(model_version_id),
+        description=f"模型 {model_version_id} 从回收站恢复",
+        request=http_request,
+    )
+    return model
+
+
+@router.delete("/{scene_id}/models/{model_version_id}/purge")
+def purge_scene_model(
+    scene_id: int,
+    model_version_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    model = db.query(ModelVersion).filter(
+        ModelVersion.id == model_version_id,
+        ModelVersion.scene_id == scene_id,
+    ).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="模型版本不存在")
+    can_manage_all = authorization_service.has_permission(db, current_user, "model:manage_all")
+    if model.owner_id != current_user.id and not can_manage_all:
+        raise HTTPException(status_code=403, detail="无权彻底删除该模型")
+    job = resource_lifecycle_service.purge_model_version(db, model)
+    return {"message": "模型已彻底删除", "cleanup_job_id": job.id, "status": job.status}
 
 
 @router.post("", response_model=SceneResponse, status_code=201)
@@ -64,7 +132,7 @@ def create_scene(
     db: Session = Depends(get_db),
 ):
     """创建检测场景，需要管理员权限"""
-    _require_admin(current_user)
+    _require_permission(db, current_user, "scene:manage")
     scene = scene_service.create_scene(
         db,
         name=payload.name,
@@ -88,11 +156,21 @@ def set_default_model(
     scene_id: int,
     model_version_id: int,
     http_request: Request,
+    expected_version: int | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """切换某场景的默认模型版本，所有已登录用户均可操作。"""
-    model = scene_service.set_default_model(db, scene_id, model_version_id)
+    """切换默认模型；需要明确的 RBAC 权限并使用可选乐观锁版本。"""
+    _require_permission(db, current_user, "model:set_default")
+    can_manage_all = authorization_service.has_permission(db, current_user, "model:manage_all")
+    model = scene_service.set_default_model(
+        db,
+        scene_id,
+        model_version_id,
+        user_id=current_user.id,
+        is_superuser=can_manage_all,
+        expected_version=expected_version,
+    )
     operation_log_service.record(
         db, user=current_user, module="training", action="set_default_model",
         target_type="model", target_id=str(model_version_id),

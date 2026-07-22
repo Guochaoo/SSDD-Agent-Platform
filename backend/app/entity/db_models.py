@@ -8,11 +8,12 @@
   智能体：  chat_sessions, chat_messages
   系统运维：operation_logs
 """
-from datetime import datetime
+from datetime import datetime, timedelta
+from uuid import uuid4
 
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, ForeignKey,
-    JSON, Text, Boolean, Table, BigInteger
+    JSON, Text, Boolean, Table, BigInteger, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
@@ -23,6 +24,24 @@ from app.database.session import Base
 # （如 bge-base-zh=768、text-embedding-3-small=1536）。
 # 一旦 knowledge_chunks 表中已有数据，修改此值需要重建列和索引。
 EMBEDDING_DIM = 768
+TRASH_RETENTION_DAYS = 30
+
+
+def _public_id(prefix: str) -> str:
+    """Generate an opaque, user-facing task identifier."""
+    return f"{prefix}_{uuid4().hex[:16]}"
+
+
+def new_detection_public_id() -> str:
+    return _public_id("det")
+
+
+def new_training_public_id() -> str:
+    return _public_id("trn")
+
+
+def default_purge_after() -> datetime:
+    return datetime.now() + timedelta(days=TRASH_RETENTION_DAYS)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -47,13 +66,13 @@ class User(Base):
 
     # 关联
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
-    detection_tasks = relationship("DetectionTask", back_populates="user")
-    training_tasks = relationship("TrainingTask", back_populates="user")
+    detection_tasks = relationship("DetectionTask", back_populates="user", foreign_keys="DetectionTask.user_id")
+    training_tasks = relationship("TrainingTask", back_populates="user", foreign_keys="TrainingTask.user_id")
     model_versions = relationship("ModelVersion", back_populates="owner", foreign_keys="ModelVersion.owner_id")
-    training_datasets = relationship("TrainingDataset", back_populates="owner")
-    chat_sessions = relationship("ChatSession", back_populates="user")
+    training_datasets = relationship("TrainingDataset", back_populates="owner", foreign_keys="TrainingDataset.owner_id")
+    chat_sessions = relationship("ChatSession", back_populates="user", foreign_keys="ChatSession.user_id")
     operation_logs = relationship("OperationLog", back_populates="user")
-    knowledge_documents = relationship("KnowledgeDocument", back_populates="user")
+    knowledge_documents = relationship("KnowledgeDocument", back_populates="user", foreign_keys="KnowledgeDocument.user_id")
 
 
 class Role(Base):
@@ -155,8 +174,12 @@ class DetectionScene(Base):
 class DetectionTask(Base):
     """检测任务表 — 每次检测操作生成一条任务记录"""
     __tablename__ = "detection_tasks"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_detection_tasks_user_idempotency"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    public_task_id = Column(String(24), unique=True, nullable=False, index=True, default=new_detection_public_id)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True, comment="操作用户")
     scene_id = Column(Integer, ForeignKey("detection_scenes.id"), nullable=False, index=True, comment="使用的检测场景")
     model_version_id = Column(Integer, ForeignKey("model_versions.id"), nullable=True, comment="使用的模型版本")
@@ -175,6 +198,17 @@ class DetectionTask(Base):
 
     # 错误信息
     error_message = Column(Text, nullable=True, comment="失败时的错误信息")
+    idempotency_key = Column(String(128), nullable=True, comment="同一用户创建任务的幂等键")
+    resource_version = Column(Integer, default=1, nullable=False, comment="乐观锁版本")
+
+    # 回收站与清理补偿
+    deletion_status = Column(String(20), default="active", nullable=False, index=True,
+                             comment="active/trashed/cleanup_pending/cleanup_failed")
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    purge_after = Column(DateTime, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
 
     # 分析与建议（AI 生成）
     analysis_report = Column(Text, nullable=True, comment="分析报告（Markdown 格式）")
@@ -186,7 +220,7 @@ class DetectionTask(Base):
     completed_at = Column(DateTime, nullable=True, comment="完成时间")
 
     # 关联
-    user = relationship("User", back_populates="detection_tasks")
+    user = relationship("User", back_populates="detection_tasks", foreign_keys=[user_id])
     scene = relationship("DetectionScene", back_populates="detection_tasks")
     model_version = relationship("ModelVersion", back_populates="detection_tasks")
     results = relationship("DetectionResult", back_populates="task", cascade="all, delete-orphan")
@@ -226,8 +260,12 @@ class DetectionResult(Base):
 class TrainingTask(Base):
     """模型训练任务表"""
     __tablename__ = "training_tasks"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_training_tasks_user_idempotency"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    public_task_id = Column(String(24), unique=True, nullable=False, index=True, default=new_training_public_id)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True, comment="操作用户")
     scene_id = Column(Integer, ForeignKey("detection_scenes.id"), nullable=False, index=True, comment="关联场景")
     task_uuid = Column(String(100), unique=True, nullable=False, index=True, comment="任务唯一标识")
@@ -254,6 +292,12 @@ class TrainingTask(Base):
 
     # 错误信息
     error_message = Column(Text, nullable=True, comment="失败错误信息")
+    idempotency_key = Column(String(128), nullable=True, comment="同一用户创建任务的幂等键")
+    resource_version = Column(Integer, default=1, nullable=False, comment="乐观锁版本")
+    deletion_status = Column(String(20), default="active", nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    purge_after = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.now, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")
@@ -261,7 +305,7 @@ class TrainingTask(Base):
     completed_at = Column(DateTime, nullable=True, comment="训练完成时间")
 
     # 关联
-    user = relationship("User", back_populates="training_tasks")
+    user = relationship("User", back_populates="training_tasks", foreign_keys=[user_id])
     scene = relationship("DetectionScene", back_populates="training_tasks")
     metrics = relationship("TrainingMetric", back_populates="task", cascade="all, delete-orphan")
     model_versions = relationship("ModelVersion", back_populates="training_task")
@@ -325,6 +369,12 @@ class ModelVersion(Base):
     description = Column(Text, nullable=True, comment="版本描述/变更说明")
     file_size = Column(BigInteger, nullable=True, comment="模型文件大小（字节）")
     is_default = Column(Boolean, default=False, comment="是否为该场景的默认模型")
+    resource_version = Column(Integer, default=1, nullable=False, comment="乐观锁版本")
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    purge_after = Column(DateTime, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.now, comment="创建时间")
 
@@ -338,14 +388,28 @@ class ModelVersion(Base):
 class TrainingDataset(Base):
     """User-uploaded dataset metadata; files remain under DATASET_BASE_DIR."""
     __tablename__ = "training_datasets"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_training_datasets_owner_idempotency"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     path = Column(String(500), unique=True, nullable=False, index=True)
+    display_name = Column(String(255), nullable=False, default="dataset", comment="用户看到的原始数据集名称")
+    storage_key = Column(String(500), unique=True, nullable=False, index=True, default=lambda: f"legacy_{uuid4().hex}",
+                         comment="由 user_id 与 UUID 生成的物理目录键")
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     is_builtin = Column(Boolean, default=False, nullable=False)
+    idempotency_key = Column(String(128), nullable=True, comment="同一用户上传数据集的幂等键")
+    resource_version = Column(Integer, default=1, nullable=False)
+    deletion_status = Column(String(20), default="active", nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    purge_after = Column(DateTime, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
-    owner = relationship("User", back_populates="training_datasets")
+    owner = relationship("User", back_populates="training_datasets", foreign_keys=[owner_id])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -361,13 +425,18 @@ class ChatSession(Base):
     session_uuid = Column(String(100), unique=True, nullable=False, index=True, comment="会话唯一标识")
     title = Column(String(200), nullable=True, comment="会话标题（取第一条消息摘要）")
     status = Column(String(20), default="active", comment="状态：active/archived")
+    resource_version = Column(Integer, default=1, nullable=False)
+    deletion_status = Column(String(20), default="active", nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    purge_after = Column(DateTime, nullable=True)
     message_count = Column(Integer, default=0, comment="消息数量")
     last_message_at = Column(DateTime, nullable=True, comment="最后消息时间")
     created_at = Column(DateTime, default=datetime.now, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     # 关联
-    user = relationship("User", back_populates="chat_sessions")
+    user = relationship("User", back_populates="chat_sessions", foreign_keys=[user_id])
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan",
                             order_by="ChatMessage.created_at")
 
@@ -449,10 +518,17 @@ class KnowledgeDocument(Base):
     file_type = Column(String(20), nullable=True, comment="pdf/docx/txt/md")
     status = Column(String(20), default="processing", index=True, comment="processing/indexed/failed")
     chunk_count = Column(Integer, default=0, comment="分块完成后的块数")
+    resource_version = Column(Integer, default=1, nullable=False)
+    deletion_status = Column(String(20), default="active", nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    purge_after = Column(DateTime, nullable=True)
+    cleanup_retry_count = Column(Integer, default=0, nullable=False)
+    cleanup_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now, comment="上传时间")
 
     # 关联
-    user = relationship("User", back_populates="knowledge_documents")
+    user = relationship("User", back_populates="knowledge_documents", foreign_keys=[user_id])
     chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
 
 
@@ -471,3 +547,21 @@ class KnowledgeChunk(Base):
 
     # 关联
     document = relationship("KnowledgeDocument", back_populates="chunks")
+
+
+class ResourceCleanupJob(Base):
+    """Auditable, retryable cleanup work for database/file/object-storage resources."""
+    __tablename__ = "resource_cleanup_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    resource_type = Column(String(50), nullable=False, index=True)
+    resource_id = Column(String(100), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    action = Column(String(30), nullable=False, default="purge")
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    object_keys = Column(JSON, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+    completed_at = Column(DateTime, nullable=True)

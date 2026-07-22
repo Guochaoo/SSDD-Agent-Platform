@@ -15,6 +15,7 @@ from app.database.session import get_db
 from app.entity.db_models import User
 from app.entity.schemas import OperationLogResponse, PageResponse
 from app.services.operation_log_service import operation_log_service
+from app.services.authorization_service import authorization_service
 
 router = APIRouter(prefix="/api/operation-logs", tags=["操作审计"])
 
@@ -31,8 +32,7 @@ def list_operation_logs(
     db: Session = Depends(get_db),
 ):
     """分页查询操作日志，仅管理员可访问"""
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
+    authorization_service.require_permission(db, current_user, "system:audit:read")
 
     items, total = operation_log_service.list_logs(
         db, user_id=user_id, module=module, action=action, status=status,

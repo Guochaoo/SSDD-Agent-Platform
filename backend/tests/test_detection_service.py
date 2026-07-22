@@ -39,6 +39,7 @@ def _seed_detection_data(db_session, model_path):
         model_type="yolo11n",
         model_path=str(model_path),
         is_default=True,
+        is_builtin=True,
     )
     db_session.add(model)
     db_session.commit()

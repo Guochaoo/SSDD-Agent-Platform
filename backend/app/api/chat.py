@@ -14,7 +14,7 @@ Agent 编排（api/agent.py 里的流式端点）是另一个模块的责任；�
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -25,6 +25,7 @@ from app.entity.schemas import (
     ChatSessionResponse, PageResponse,
 )
 from app.services.chat_service import chat_service
+from app.services.resource_lifecycle_service import resource_lifecycle_service
 
 router = APIRouter(prefix="/api/chat", tags=["对话历史"])
 
@@ -50,7 +51,7 @@ def list_sessions(
 ):
     """会话列表，普通用户只能看自己的，管理员可看全部"""
     items, total = chat_service.list_sessions(
-        db, user_id=current_user.id, is_superuser=current_user.is_superuser,
+        db, user_id=current_user.id, is_superuser=False,
         status=status, page=page, page_size=page_size,
     )
     return {
@@ -68,7 +69,7 @@ def get_session(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return chat_service.get_session(db, session_uuid, current_user.id, current_user.is_superuser)
+    return chat_service.get_session(db, session_uuid, current_user.id, False)
 
 
 @router.patch("/sessions/{session_uuid}/title", response_model=ChatSessionResponse)
@@ -79,7 +80,7 @@ def rename_session(
     db: Session = Depends(get_db),
 ):
     return chat_service.rename_session(
-        db, session_uuid, current_user.id, title, current_user.is_superuser
+        db, session_uuid, current_user.id, title, False
     )
 
 
@@ -91,21 +92,57 @@ def archive_session(
 ):
     """归档会话（软删除，仍保留在数据库中）"""
     return chat_service.archive_session(
-        db, session_uuid, current_user.id, current_user.is_superuser
+        db, session_uuid, current_user.id, False
     )
 
 
 @router.delete("/sessions/{session_uuid}")
 def delete_session(
     session_uuid: str,
+    expected_version: int | None = Query(default=None, ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """硬删除会话，同时级联删除所有消息"""
-    chat_service.delete_session(
-        db, session_uuid, current_user.id, current_user.is_superuser
+    session = chat_service.delete_session(
+        db, session_uuid, current_user.id, False, expected_version
     )
-    return {"message": "会话已删除"}
+    return {
+        "message": "会话已移入回收站",
+        "resource_version": session.resource_version,
+        "purge_after": session.purge_after,
+    }
+
+
+@router.post("/sessions/{session_uuid}/restore", response_model=ChatSessionResponse)
+def restore_session(
+    session_uuid: str,
+    expected_version: int | None = Query(default=None, ge=1),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return chat_service.restore_session(
+        db, session_uuid, current_user.id, expected_version
+    )
+
+
+@router.delete("/sessions/{session_uuid}/purge")
+def purge_session(
+    session_uuid: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.entity.db_models import ChatSession
+
+    session = db.query(ChatSession).filter(
+        ChatSession.session_uuid == session_uuid
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    if session.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权彻底删除该会话")
+    job = resource_lifecycle_service.purge_chat_session(db, session)
+    return {"message": "会话已彻底删除", "cleanup_job_id": job.id, "status": job.status}
 
 
 @router.get("/sessions/{session_uuid}/messages", response_model=list[ChatMessageResponse])
@@ -117,7 +154,7 @@ def list_messages(
     db: Session = Depends(get_db),
 ):
     return chat_service.list_messages(
-        db, session_uuid, current_user.id, current_user.is_superuser, limit=limit
+        db, session_uuid, current_user.id, False, limit=limit
     )
 
 
@@ -129,6 +166,6 @@ def get_history(
 ):
     """一次性拿到会话 + 全部消息，供前端进入某个历史会话时使用"""
     session, messages = chat_service.get_history(
-        db, session_uuid, current_user.id, current_user.is_superuser
+        db, session_uuid, current_user.id, False
     )
     return {"session": session, "messages": messages}

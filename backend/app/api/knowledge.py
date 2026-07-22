@@ -11,7 +11,7 @@ RAG 知识库 API 路由
 """
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -25,6 +25,8 @@ from app.entity.schemas import (
 from app.services.document_parser import chunk_text, extract_text, guess_file_type
 from app.services.embedding_service import embedding_service
 from app.services.knowledge_service import knowledge_service
+from app.services.authorization_service import authorization_service
+from app.services.resource_lifecycle_service import resource_lifecycle_service
 from app.storage.minio_client import MinIOClient
 
 router = APIRouter(prefix="/api/knowledge", tags=["知识库"])
@@ -54,7 +56,9 @@ async def upload_document(
     if len(content) > MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="文档大小不能超过 20MB")
 
-    owner_id = None if (is_system and current_user.is_superuser) else current_user.id
+    if is_system:
+        authorization_service.require_permission(db, current_user, "knowledge:system:manage")
+    owner_id = None if is_system else current_user.id
 
     object_name = f"knowledge/{owner_id or 'system'}/{uuid4().hex}/{filename}"
     file_url = MinIOClient().upload_bytes(object_name, content, file.content_type or "application/octet-stream")
@@ -98,9 +102,10 @@ def list_documents(
     db: Session = Depends(get_db),
 ):
     """列出可见的知识文档：自己上传的 + 系统内置的；管理员可看到全部"""
-    return knowledge_service.list_documents(
-        db, user_id=current_user.id, is_superuser=current_user.is_superuser, status=status
-    )
+    # Administrators see private document metadata only through a dedicated,
+    # audited admin surface; the user-facing API never exposes another user's
+    # file URL or chunks.
+    return knowledge_service.list_documents(db, user_id=current_user.id, is_superuser=False, status=status)
 
 
 @router.get("/documents/{document_id}", response_model=KnowledgeDocumentResponse)
@@ -110,7 +115,7 @@ def get_document(
     db: Session = Depends(get_db),
 ):
     return knowledge_service.get_document(
-        db, document_id, user_id=current_user.id, is_superuser=current_user.is_superuser
+        db, document_id, user_id=current_user.id, is_superuser=False
     )
 
 
@@ -122,7 +127,7 @@ def list_document_chunks(
 ):
     """查看某篇文档切分出的分块原文（不返回向量本身）"""
     doc = knowledge_service.get_document(
-        db, document_id, user_id=current_user.id, is_superuser=current_user.is_superuser
+        db, document_id, user_id=current_user.id, is_superuser=False
     )
     return sorted(doc.chunks, key=lambda c: c.chunk_index)
 
@@ -130,13 +135,55 @@ def list_document_chunks(
 @router.delete("/documents/{document_id}")
 def delete_document(
     document_id: int,
+    expected_version: int | None = Query(default=None, ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    knowledge_service.delete_document(
-        db, document_id, user_id=current_user.id, is_superuser=current_user.is_superuser
+    can_delete_all = authorization_service.has_permission(db, current_user, "knowledge:document:delete_all")
+    doc = knowledge_service.delete_document(
+        db, document_id, user_id=current_user.id, is_superuser=can_delete_all,
+        expected_version=expected_version,
     )
-    return {"message": "知识文档已删除"}
+    return {
+        "message": "知识文档已移入回收站",
+        "resource_version": doc.resource_version,
+        "purge_after": doc.purge_after,
+    }
+
+
+@router.post("/documents/{document_id}/restore", response_model=KnowledgeDocumentResponse)
+def restore_document(
+    document_id: int,
+    expected_version: int | None = Query(default=None, ge=1),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    can_manage_all = authorization_service.has_permission(db, current_user, "knowledge:document:delete_all")
+    return knowledge_service.restore_document(
+        db, document_id, current_user.id, can_manage_all, expected_version
+    )
+
+
+@router.delete("/documents/{document_id}/purge")
+def purge_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.entity.db_models import KnowledgeDocument
+
+    document = db.query(KnowledgeDocument).filter(
+        KnowledgeDocument.id == document_id
+    ).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="知识文档不存在")
+    can_manage_all = authorization_service.has_permission(
+        db, current_user, "knowledge:document:delete_all"
+    )
+    if document.user_id != current_user.id and not can_manage_all:
+        raise HTTPException(status_code=403, detail="无权彻底删除该文档")
+    job = resource_lifecycle_service.purge_knowledge_document(db, document)
+    return {"message": "知识文档已彻底删除", "cleanup_job_id": job.id, "status": job.status}
 
 
 @router.post("/search", response_model=list[KnowledgeChunkResponse])
@@ -151,7 +198,7 @@ def search_knowledge(
         db,
         query_embedding=query_embedding,
         user_id=current_user.id,
-        is_superuser=current_user.is_superuser,
+        is_superuser=False,
         top_k=payload.top_k,
         document_id=payload.document_id,
     )

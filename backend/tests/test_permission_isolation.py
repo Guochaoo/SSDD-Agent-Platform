@@ -94,12 +94,8 @@ def test_history_bob_cannot_read_alice_task_detail(db_session, alice, bob, scene
     assert exc.value.status_code == 403
 
 
-def test_history_bob_cannot_delete_alice_task(db_session, alice, bob, scene, monkeypatch):
+def test_history_bob_cannot_delete_alice_task(db_session, alice, bob, scene):
     """删除操作：bob 尝试删 alice 的检测任务，应该 403"""
-    monkeypatch.setattr(
-        "app.services.history_service.MinIOClient",
-        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url: None)})(),
-    )
     alice_task = history_service.create_task(db_session, alice.id, scene.id, task_type="single")
 
     with pytest.raises(HTTPException) as exc:
@@ -123,12 +119,8 @@ def test_history_admin_can_see_all_users(db_session, alice, bob, admin, scene):
     assert total == 2
 
 
-def test_history_owner_can_operate_own_task(db_session, alice, scene, monkeypatch):
+def test_history_owner_can_operate_own_task(db_session, alice, scene):
     """本人访问/删除自己的任务应该正常"""
-    monkeypatch.setattr(
-        "app.services.history_service.MinIOClient",
-        lambda: type("Stub", (), {"delete_by_url": staticmethod(lambda url: None)})(),
-    )
     task = history_service.create_task(db_session, alice.id, scene.id, task_type="single")
 
     # 查详情
@@ -138,8 +130,11 @@ def test_history_owner_can_operate_own_task(db_session, alice, scene, monkeypatc
     assert detail.id == task.id
 
     # 删任务
-    history_service.delete_task(db_session, task.id, user_id=alice.id, is_superuser=False)
-    assert db_session.query(DetectionTask).filter(DetectionTask.id == task.id).first() is None
+    deleted = history_service.delete_task(
+        db_session, task.id, user_id=alice.id, is_superuser=False
+    )
+    assert deleted.deletion_status == "trashed"
+    assert history_service.list_tasks(db_session, user_id=alice.id)[1] == 0
 
 
 # ══════════════════════════════════════════════════════════════

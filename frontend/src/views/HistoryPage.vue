@@ -62,7 +62,9 @@
         row-key="id"
         :empty-text="text.emptyHistory"
       >
-        <el-table-column prop="id" :label="text.taskId" width="92" />
+        <el-table-column :label="text.taskId" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.publicTaskId }}</template>
+        </el-table-column>
         <el-table-column :label="text.scene" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ displayScene(row.sceneName) }}</template>
         </el-table-column>
@@ -127,7 +129,7 @@
 
         <template v-if="detail.task && !detailError">
           <el-descriptions :column="2" border>
-            <el-descriptions-item :label="text.taskId">{{ detail.task.id }}</el-descriptions-item>
+            <el-descriptions-item :label="text.taskId">{{ detail.task.publicTaskId }}</el-descriptions-item>
             <el-descriptions-item :label="text.status">
               <el-tag :type="statusType(detail.task.status)" effect="light">
                 {{ statusLabel(detail.task.status) }}
@@ -471,7 +473,7 @@ async function openDetail(row) {
 async function removeHistory(row) {
   try {
     await ElMessageBox.confirm(
-      text.value.deleteConfirm(row.id),
+      text.value.deleteConfirm(row.publicTaskId),
       text.value.deleteTitle,
       { type: "warning", confirmButtonText: text.value.delete, cancelButtonText: text.value.reset },
     );

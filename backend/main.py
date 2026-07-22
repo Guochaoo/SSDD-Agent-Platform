@@ -18,6 +18,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.operation_logs import router as operation_logs_router
 from app.api.scenes import router as scenes_router
 from app.api.training import router as training_router
+from app.api.cleanup import router as cleanup_router
 from app.config.settings import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logger import get_logger, setup_logging
@@ -43,8 +44,9 @@ def init_minio():
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("Starting service")
-    init_minio()
-    asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
+    if not settings.SKIP_EXTERNAL_STARTUP:
+        init_minio()
+        asyncio.create_task(asyncio.to_thread(detection_service.warmup_models))
     yield
     logger.info("Service stopped")
 
@@ -78,6 +80,7 @@ app.include_router(knowledge_router)
 app.include_router(operation_logs_router)
 app.include_router(scenes_router)
 app.include_router(training_router)
+app.include_router(cleanup_router)
 
 
 @app.get("/")

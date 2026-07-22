@@ -75,7 +75,7 @@ class MinIOClient:
         url = self.client.presigned_get_object(
             bucket_name=self.bucket_name,
             object_name=object_name,
-            expires=timedelta(days=7),
+            expires=timedelta(minutes=15),
         )
         return url
 
@@ -86,11 +86,11 @@ class MinIOClient:
             object_name=object_name,
         )
 
-    def delete_by_url(self, url: str | None):
+    def delete_by_url(self, url: str | None, *, suppress_errors: bool = True):
         """
         按已保存的（预签名）URL 删除文件，删除类服务里统一调这个方法即可。
-        从 URL 中解析出 bucket 之后的 object_name 部分，解析失败或 url 为空时静默跳过，
-        不让文件清理失败阻断上层的数据库删除事务。
+        从 URL 中解析出 bucket 之后的 object_name 部分。默认兼容旧调用静默记录错误；
+        资源清理事务应传 suppress_errors=False，让上层生成可审计的重试任务。
         """
         if not url:
             return
@@ -99,9 +99,14 @@ class MinIOClient:
             path = urlparse(url).path.lstrip("/")
             # path 形如 "{bucket_name}/{object_name...}"
             object_name = path.split("/", 1)[1] if "/" in path else None
-            if object_name:
-                self.delete_file(object_name)
+            if not object_name:
+                raise ValueError("URL 中缺少对象存储键")
+            self.delete_file(object_name)
         except S3Error as e:
+            if not suppress_errors:
+                raise
             print(f"[warn] MinIO 删除失败 url={url}: {e}")
         except Exception as e:
+            if not suppress_errors:
+                raise
             print(f"[warn] 无法从 URL 解析 object_name url={url}: {e}")

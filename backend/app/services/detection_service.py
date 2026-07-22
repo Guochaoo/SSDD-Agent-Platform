@@ -15,6 +15,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from PIL import Image, UnidentifiedImageError
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.config.detection import (
@@ -78,12 +79,17 @@ class DetectionService:
         return {"status": self._warmup_status, "error": self._warmup_error, "loaded": len(self._models)}
 
     @staticmethod
-    def _resolve_model(db: Session, model_id: int) -> ModelVersion:
-        model_version = (
-            db.query(ModelVersion)
-            .filter(ModelVersion.id == model_id, ModelVersion.status == "active")
-            .first()
+    def _resolve_model(db: Session, model_id: int, user_id: int | None = None) -> ModelVersion:
+        query = db.query(ModelVersion).filter(
+            ModelVersion.id == model_id,
+            ModelVersion.status == "active",
         )
+        if user_id is not None:
+            query = query.filter(or_(
+                ModelVersion.is_builtin.is_(True),
+                ModelVersion.owner_id == user_id,
+            ))
+        model_version = query.first()
         if not model_version:
             raise HTTPException(status_code=404, detail="模型版本不存在或不可用")
         return model_version
@@ -252,8 +258,11 @@ class DetectionService:
             "db_results": db_results,
         }
 
-    async def detect_single(self, db, user_id, file, model_id, conf_threshold, iou_threshold):
-        model_version = self._resolve_model(db, model_id)
+    async def detect_single(
+        self, db, user_id, file, model_id, conf_threshold, iou_threshold,
+        idempotency_key=None,
+    ):
+        model_version = self._resolve_model(db, model_id, user_id)
         task = history_service.create_task(
             db,
             user_id=user_id,
@@ -263,6 +272,7 @@ class DetectionService:
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
             image_size=DEFAULT_IMAGE_SIZE,
+            idempotency_key=idempotency_key,
         )
         history_service.mark_processing(db, task.id)
         try:
@@ -280,7 +290,12 @@ class DetectionService:
             history_service.mark_failed(db, task.id, str(detail))
             raise
         result.pop("db_results")
-        return {"task_id": task.id, "status": "completed", **result}
+        return {
+            "task_id": task.id,
+            "public_task_id": task.public_task_id,
+            "status": "completed",
+            **result,
+        }
 
     async def detect_batch(
         self,
@@ -291,10 +306,11 @@ class DetectionService:
         conf_threshold,
         iou_threshold,
         task_type="batch",
+        idempotency_key=None,
     ):
         if not files or len(files) > MAX_BATCH_SIZE:
             raise HTTPException(status_code=400, detail=f"批量检测需上传 1-{MAX_BATCH_SIZE} 张图片")
-        model_version = self._resolve_model(db, model_id)
+        model_version = self._resolve_model(db, model_id, user_id)
         task = history_service.create_task(
             db,
             user_id=user_id,
@@ -304,6 +320,7 @@ class DetectionService:
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
             image_size=DEFAULT_IMAGE_SIZE,
+            idempotency_key=idempotency_key,
         )
         history_service.mark_processing(db, task.id)
         try:
@@ -342,6 +359,7 @@ class DetectionService:
         success_count = sum(item["status"] == "completed" for item in items)
         return {
             "task_id": task.id,
+            "public_task_id": task.public_task_id,
             "status": "completed",
             "source": task_type,
             "success_count": success_count,
@@ -405,6 +423,7 @@ class DetectionService:
         conf_threshold,
         iou_threshold,
         original_filename,
+        idempotency_key=None,
     ):
         """安全解压 ZIP，并复用批量检测流程。"""
         with tempfile.TemporaryDirectory(prefix="ssdd_zip_") as extract_dir:
@@ -439,6 +458,7 @@ class DetectionService:
                     conf_threshold,
                     iou_threshold,
                     task_type="zip",
+                    idempotency_key=idempotency_key,
                 )
                 result["zip_filename"] = original_filename
                 result["total_images_in_zip"] = len(image_paths)
@@ -738,10 +758,10 @@ class DetectionService:
                         pass
             db.close()
 
-    def warmup_camera(self, db, model_id, mode, conf, iou):
+    def warmup_camera(self, db, model_id, mode, conf, iou, user_id=None):
         import numpy as np
 
-        model_version = self._resolve_model(db, model_id)
+        model_version = self._resolve_model(db, model_id, user_id)
         model = self._get_model(model_version)
         device = "cpu" if mode == "cpu" else "0"
         image_size = 416 if mode == "cpu" else 640
@@ -798,7 +818,12 @@ class DetectionService:
             db.close()
 
     def _detect_file_sync(
-        self, image_path: str, *, conf: float = 0.25, iou: float = 0.45
+        self,
+        image_path: str,
+        *,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        owner_id: int = 0,
     ) -> dict:
         """同步检测本地图片文件（供 Agent Tool 调用，不写数据库）"""
         model, _ = self._get_default_model()
@@ -833,7 +858,7 @@ class DetectionService:
         artifact_dir = Path(tempfile.gettempdir()) / "rsod_agent_artifacts"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         _cleanup_agent_artifacts(artifact_dir)
-        artifact_name = f"annotated_{uuid4().hex}.jpg"
+        artifact_name = f"annotated_u{owner_id}_{uuid4().hex}.jpg"
         (artifact_dir / artifact_name).write_bytes(self._encode_annotated_image(result))
         logger.info("同步检测 %s: %d 个目标, 耗时 %s ms", image_path, total_objects, inference_time)
 

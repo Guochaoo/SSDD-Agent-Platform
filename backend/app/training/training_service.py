@@ -31,7 +31,10 @@ import os
 import shutil
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from app.config.settings import settings
 from app.core.logger import get_logger
@@ -86,6 +89,18 @@ class TrainingService:
         """
         # ── 生成唯一任务标识 ──
         task_uuid = str(uuid.uuid4())[:8]
+        idempotency_key = config.get("idempotency_key")
+        if idempotency_key:
+            existing = db.query(TrainingTask).filter(
+                TrainingTask.user_id == user_id,
+                TrainingTask.idempotency_key == idempotency_key,
+            ).first()
+            if existing:
+                raise HTTPException(status_code=409, detail={
+                    "code": "duplicate_request",
+                    "public_task_id": existing.public_task_id,
+                    "status": existing.status,
+                })
 
         # ── 查找 data.yaml ──
         data_yaml = config.get("data_yaml")
@@ -113,9 +128,24 @@ class TrainingService:
             dataset_path=dataset_path,
             data_yaml=data_yaml,
             dataset_size=config.get("dataset_size"),
+            idempotency_key=idempotency_key,
         )
-        db.add(task)
-        db.commit()
+        try:
+            db.add(task)
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            existing = db.query(TrainingTask).filter(
+                TrainingTask.user_id == user_id,
+                TrainingTask.idempotency_key == idempotency_key,
+            ).first()
+            if existing:
+                raise HTTPException(status_code=409, detail={
+                    "code": "duplicate_request",
+                    "public_task_id": existing.public_task_id,
+                    "status": existing.status,
+                }) from exc
+            raise
         db.refresh(task)
 
         # ── 启动后台训练线程 ──
@@ -383,14 +413,7 @@ class TrainingService:
 
     @staticmethod
     def _sync_results_csv(db, task: TrainingTask) -> None:
-        """Incrementally mirror completed epochs from Ultralytics results.csv.
-
-        ``on_train_epoch_end`` is not a reliable source of validation metrics
-        across Ultralytics versions: it can run before validation and before
-        results.csv is flushed.  The CSV is the durable epoch boundary, so API
-        polling synchronizes it and also repairs stale progress after a server
-        restart.
-        """
+        """Incrementally mirror durable Ultralytics CSV metrics into the database."""
         output_root = os.path.abspath(settings.TRAIN_OUTPUT_DIR)
         results_csv = os.path.join(output_root, f"task_{task.task_uuid}", "results.csv")
         parsed = TrainingService.parse_results_csv(results_csv)
@@ -405,8 +428,6 @@ class TrainingService:
             .order_by(TrainingMetric.id.asc())
             .all()
         ):
-            # Repair duplicate and out-of-range rows created by the former
-            # unconditional callback + CSV insertion behavior.
             if (
                 metric.epoch < 1
                 or metric.epoch > task.epochs
@@ -416,6 +437,7 @@ class TrainingService:
                 db.delete(metric)
                 continue
             existing[metric.epoch] = metric
+
         metric_fields = (
             "box_loss", "cls_loss", "dfl_loss", "precision", "recall",
             "map50", "map50_95", "lr",
@@ -484,6 +506,7 @@ class TrainingService:
         return {
             "task": {
                 "id": task.id,
+                "public_task_id": task.public_task_id,
                 "task_uuid": task.task_uuid,
                 "status": task.status,
                 "model_name": task.model_name,
@@ -606,7 +629,7 @@ class TrainingService:
         Returns:
             任务列表
         """
-        query = db.query(TrainingTask)
+        query = db.query(TrainingTask).filter(TrainingTask.deletion_status == "active")
         if user_id:
             query = query.filter(TrainingTask.user_id == user_id)
 
@@ -615,6 +638,7 @@ class TrainingService:
         return [
             {
                 "id": t.id,
+                "public_task_id": t.public_task_id,
                 "task_uuid": t.task_uuid,
                 "status": t.status,
                 "model_name": t.model_name,
@@ -634,38 +658,66 @@ class TrainingService:
         ]
 
     @staticmethod
-    def delete_training_task(db, task_id: int) -> dict:
-        """删除已结束的训练任务及其指标和未发布的训练输出。
-
-        已导出的 ``ModelVersion`` 代表可追溯的模型资产，删除历史任务时保留它，
-        仅解除与任务的外键关联；训练过程中的 ``runs/train/task_*`` 目录则一并清理。
-        """
+    def delete_training_task(
+        db,
+        task_id: int,
+        deleted_by_id: int | None = None,
+        expected_version: int | None = None,
+    ) -> dict:
+        """Move an ended training task to the 30-day recycle bin."""
         task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
         if not task:
             return {"error": "训练任务不存在"}
         if task.status in {"pending", "running"}:
             return {"error": "运行中的训练任务不能删除，请先停止训练"}
 
-        task_uuid = task.task_uuid
-        # Model versions can be referenced by detection history, so retain the
-        # published asset and only sever this optional provenance link.
-        db.query(ModelVersion).filter(
-            ModelVersion.training_task_id == task.id
-        ).update({"training_task_id": None}, synchronize_session=False)
-        db.delete(task)  # TrainingTask.metrics uses delete-orphan cascade.
+        if task.deletion_status != "active":
+            return {"error": "训练任务已在回收站中"}
+        if expected_version is not None and task.resource_version != expected_version:
+            return {
+                "error": "资源已被其他请求修改",
+                "code": "resource_changed",
+                "current_version": task.resource_version,
+            }
+        task.deletion_status = "trashed"
+        task.deleted_at = datetime.now()
+        task.deleted_by_id = deleted_by_id
+        task.purge_after = datetime.now() + timedelta(days=30)
+        task.resource_version += 1
         db.commit()
+        logger.info("训练历史任务已移入回收站: task_id=%d, uuid=%s", task_id, task.task_uuid)
+        return {
+            "task_id": task_id,
+            "public_task_id": task.public_task_id,
+            "resource_version": task.resource_version,
+            "message": "训练历史任务已移入回收站",
+        }
 
-        output_dir = os.path.join(
-            os.getcwd(), settings.TRAIN_OUTPUT_DIR, f"task_{task_uuid}"
-        )
-        try:
-            if os.path.isdir(output_dir):
-                shutil.rmtree(output_dir)
-        except OSError as exc:
-            logger.warning("训练任务已从数据库删除，但清理输出目录失败: %s", exc)
-
-        logger.info("训练历史任务已删除: task_id=%d, uuid=%s", task_id, task_uuid)
-        return {"task_id": task_id, "message": "训练历史任务已删除"}
+    @staticmethod
+    def restore_training_task(db, task_id: int, expected_version: int | None = None) -> dict:
+        task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+        if not task:
+            return {"error": "训练任务不存在"}
+        if task.deletion_status != "trashed":
+            return {"error": "训练任务不在可恢复状态"}
+        if expected_version is not None and task.resource_version != expected_version:
+            return {
+                "error": "资源已被其他请求修改",
+                "code": "resource_changed",
+                "current_version": task.resource_version,
+            }
+        task.deletion_status = "active"
+        task.deleted_at = None
+        task.deleted_by_id = None
+        task.purge_after = None
+        task.resource_version += 1
+        db.commit()
+        return {
+            "task_id": task.id,
+            "public_task_id": task.public_task_id,
+            "resource_version": task.resource_version,
+            "message": "训练任务已恢复",
+        }
 
     @staticmethod
     def parse_results_csv(results_csv_path: str) -> list:
@@ -687,8 +739,6 @@ class TrainingService:
                 {k.strip(): v.strip() for k, v in row.items()}
                 for row in csv.DictReader(f)
             ]
-            # Ultralytics releases have emitted both zero-based and one-based
-            # epoch columns. Normalize only when the file actually starts at 0.
             epoch_offset = 1 if rows and min(int(row.get("epoch", 0)) for row in rows) == 0 else 0
             for row in rows:
                 metrics.append(
