@@ -1,3 +1,8 @@
+# backend/requirements.txt
+pytest==8.2.2
+pytest-asyncio>=0.24.0
+pytest-cov==5.0.0
+
 # ═══════════════════════════════════════════════════════
 # 基于 YOLOv11 的目标检测智能体平台 — Python 依赖
 # ═══════════════════════════════════════════════════════
@@ -20,12 +25,18 @@ ollama==0.3.0  #本地 LLM 模型备选
 # ── 目标检测（YOLOv11）────────────────────────────────
 ultralytics==8.3.0   # Ultralytics YOLO框架（包含PyTorch）
 opencv-python==4.8.0.76 # OpenCV图像处理库
+numpy<2  # OpenCV 4.8 Windows wheels are not compatible with NumPy 2.x
 Pillow==10.0.0   # Pillow图像处理库
+PyYAML==6.0.2   # 训练数据集 data.yaml 校验
 
 # ── 数据库（PostgreSQL + ORM）─────────────────────────
 sqlalchemy==2.0.0  # SQLAlchemy ORM框架
 psycopg2-binary==2.9.9  # PostgreSQL数据库驱动
 pgvector==0.3.0   #PostgreSQL 向量存储扩展（RAG 用）
+pypdf==4.3.1  # 知识库 PDF 文档文本提取
+python-docx==1.1.2  # 知识库 DOCX 文档文本提取
+openpyxl==3.1.5  # Agent 读取 XLSX 附件
+python-pptx==1.0.2  # Agent 读取 PPTX 附件
 
 alembic==1.13.0  # Alembic 数据库迁移框架
 

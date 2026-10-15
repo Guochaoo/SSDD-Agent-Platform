@@ -1,22 +1,28 @@
-# Python
+.venv/
 __pycache__/
 *.py[cod]
-*.egg-info/
-.venv/
-venv/
-.env
 
-# Node
 node_modules/
 dist/
+.vite/
+logs/
+backend/logs/*.log
+backend/logs/*.log.*
+*.log
 
-# IDE
-.vscode/*
-!.vscode/extensions.json
-.idea/
-*.swp
-*.swo
+# Model-training outputs and local datasets
+runs/
+ultralytics/
+datasets/
+*.pt
+*.pth
+*.onnx
+*.engine
 
-# OS
+.env
+.env.production
+backend/.env
+frontend/.env
+
 .DS_Store
 Thumbs.db
